@@ -1,0 +1,39 @@
+version: '3.9'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: emotrack-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: emotrack
+      POSTGRES_USER: emotrack
+      POSTGRES_PASSWORD: emotrack
+    ports:
+      - '5432:5432'
+    volumes:
+      - emotrack_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U emotrack -d emotrack']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: emotrack-redis
+    restart: unless-stopped
+    command: ['redis-server', '--appendonly', 'yes']
+    ports:
+      - '6379:6379'
+    volumes:
+      - emotrack_redis_data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  emotrack_postgres_data:
+  emotrack_redis_data:

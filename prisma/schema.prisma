@@ -1,0 +1,161 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum SleepMode {
+  hours
+  quality
+  both
+}
+
+enum SummaryPeriodType {
+  d7
+  d30
+  all
+}
+
+enum EventType {
+  work
+  study
+  relationships
+  family
+  friends
+  health
+  sleep
+  sport
+  rest
+  money
+  travel
+  other
+}
+
+model User {
+  id                  String         @id @default(uuid())
+  telegramId          BigInt         @unique @db.BigInt
+  username            String?
+  firstName           String?
+  languageCode        String         @default("ru")
+  timezone            String         @default("Europe/Berlin")
+  onboardingCompleted Boolean        @default(false)
+  consentGiven        Boolean        @default(false)
+  remindersEnabled    Boolean        @default(true)
+  reminderTime        String?        @db.VarChar(5)
+  sleepMode           SleepMode      @default(both)
+  notesEnabled        Boolean        @default(true)
+  tagsEnabled         Boolean        @default(true)
+  eventsEnabled       Boolean        @default(true)
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+  dailyEntries        DailyEntry[]
+  events              Event[]
+  summaries           Summary[]
+  fsmSession          FsmSession?
+  productEvents       ProductEvent[]
+
+  @@map("users")
+}
+
+model DailyEntry {
+  id          String        @id @default(uuid())
+  userId      String
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  entryDate   DateTime      @db.Date
+  moodScore   Int
+  energyScore Int
+  stressScore Int
+  sleepHours  Decimal?      @db.Decimal(4, 2)
+  sleepQuality Int?
+  noteText    String?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  tags        DailyEntryTag[]
+  events      Event[]
+
+  @@unique([userId, entryDate])
+  @@index([userId, entryDate])
+  @@map("daily_entries")
+}
+
+model PredefinedTag {
+  id         String          @id @default(uuid())
+  key        String          @unique
+  label      String
+  category   String?
+  isActive   Boolean         @default(true)
+  sortOrder  Int             @default(0)
+  createdAt  DateTime        @default(now())
+  dailyLinks DailyEntryTag[]
+
+  @@map("predefined_tags")
+}
+
+model DailyEntryTag {
+  id           String       @id @default(uuid())
+  dailyEntryId String
+  dailyEntry   DailyEntry   @relation(fields: [dailyEntryId], references: [id], onDelete: Cascade)
+  tagId        String
+  tag          PredefinedTag @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@unique([dailyEntryId, tagId])
+  @@map("daily_entry_tags")
+}
+
+model Event {
+  id          String    @id @default(uuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  dailyEntryId String?
+  dailyEntry  DailyEntry? @relation(fields: [dailyEntryId], references: [id], onDelete: SetNull)
+  eventDate   DateTime  @db.Date
+  eventType   EventType
+  title       String
+  description String?
+  eventScore  Int
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([userId, eventDate])
+  @@map("events")
+}
+
+model Summary {
+  id         String            @id @default(uuid())
+  userId     String
+  user       User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  periodType SummaryPeriodType
+  periodStart DateTime         @db.Date
+  periodEnd  DateTime          @db.Date
+  payloadJson Json
+  generatedAt DateTime         @default(now())
+
+  @@index([userId, periodType, periodEnd])
+  @@map("summaries")
+}
+
+model FsmSession {
+  id         String   @id @default(uuid())
+  userId     String   @unique
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  state      String
+  payloadJson Json
+  updatedAt  DateTime @updatedAt
+
+  @@map("fsm_sessions")
+}
+
+model ProductEvent {
+  id         String   @id @default(uuid())
+  userId     String?
+  user       User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  eventName  String
+  payloadJson Json
+  createdAt  DateTime @default(now())
+
+  @@index([eventName, createdAt])
+  @@map("product_events")
+}
