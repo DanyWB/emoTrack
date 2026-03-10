@@ -5,8 +5,10 @@ import { Telegraf, type Context } from 'telegraf';
 import { AnalyticsModule } from '../analytics/analytics.module';
 import { CheckinsModule } from '../checkins/checkins.module';
 import type { TelegramConfig } from '../config/telegram.config';
+import { EventsModule } from '../events/events.module';
 import { FsmModule } from '../fsm/fsm.module';
 import { OnboardingModule } from '../onboarding/onboarding.module';
+import { TagsModule } from '../tags/tags.module';
 import { UsersModule } from '../users/users.module';
 import { TelegramRouter } from './telegram.router';
 import { TelegramUpdate } from './telegram.update';
@@ -14,7 +16,15 @@ import { TelegramUpdate } from './telegram.update';
 export const TELEGRAM_BOT = 'TELEGRAM_BOT';
 
 @Module({
-  imports: [UsersModule, OnboardingModule, FsmModule, CheckinsModule, AnalyticsModule],
+  imports: [
+    UsersModule,
+    OnboardingModule,
+    FsmModule,
+    CheckinsModule,
+    EventsModule,
+    TagsModule,
+    AnalyticsModule,
+  ],
   providers: [
     {
       provide: TELEGRAM_BOT,

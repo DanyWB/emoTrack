@@ -17,4 +17,27 @@ export class EventsRepository {
       data,
     });
   }
+
+  findByUserAndDay(userId: string, eventDate: Date): Promise<Event[]> {
+    return this.prisma.event.findMany({
+      where: {
+        userId,
+        eventDate,
+      },
+      orderBy: [{ createdAt: 'desc' }],
+    });
+  }
+
+  findByUserAndPeriod(userId: string, from: Date, to: Date): Promise<Event[]> {
+    return this.prisma.event.findMany({
+      where: {
+        userId,
+        eventDate: {
+          gte: from,
+          lte: to,
+        },
+      },
+      orderBy: [{ eventDate: 'desc' }, { createdAt: 'desc' }],
+    });
+  }
 }

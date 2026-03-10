@@ -1,4 +1,6 @@
+// eslint-disable-next-line @typescript-eslint/no-require-imports
 import dayjs = require('dayjs');
+// eslint-disable-next-line @typescript-eslint/no-require-imports
 import customParseFormat = require('dayjs/plugin/customParseFormat');
 
 dayjs.extend(customParseFormat);

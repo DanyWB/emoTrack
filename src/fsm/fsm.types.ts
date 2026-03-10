@@ -1,3 +1,5 @@
+import type { EventType } from '@prisma/client';
+
 export const FSM_STATES = {
   idle: 'idle',
   onboarding_consent: 'onboarding_consent',
@@ -24,10 +26,21 @@ export const FSM_STATES = {
 export type FsmState = (typeof FSM_STATES)[keyof typeof FSM_STATES];
 export type FsmPayload = Record<string, unknown>;
 
+export type EventFlowSource = 'standalone' | 'checkin';
+
 export interface CheckinDraftPayload extends FsmPayload {
   moodScore?: number;
   energyScore?: number;
   stressScore?: number;
   sleepHours?: number;
   sleepQuality?: number;
+  entryId?: string;
+  isUpdate?: boolean;
+  noteText?: string;
+  selectedTagIds?: string[];
+  eventAdded?: boolean;
+  eventFlowSource?: EventFlowSource;
+  eventType?: EventType;
+  eventTitle?: string;
+  eventScore?: number;
 }

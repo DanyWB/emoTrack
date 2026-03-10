@@ -1,4 +1,4 @@
-export const APP_QUEUES = {
+﻿export const APP_QUEUES = {
   reminders: 'reminders',
 } as const;
 
@@ -11,11 +11,26 @@ export const TELEGRAM_MAIN_MENU_BUTTONS = [
   'Помощь',
 ] as const;
 
+export const TEXT_LIMITS = {
+  note: 800,
+  eventTitle: 120,
+  eventDescription: 500,
+} as const;
+
 export const TELEGRAM_CALLBACKS = {
   consentAccept: 'onboarding:consent:accept',
   onboardingStartFirstCheckin: 'onboarding:first-checkin:start',
   onboardingLater: 'onboarding:first-checkin:later',
+
   scorePrefix: 'checkin:score:',
+  checkinNoteAdd: 'checkin:note:add',
+  checkinTagsStart: 'checkin:tags:start',
+  checkinTagsDone: 'checkin:tags:done',
+  checkinTagsTogglePrefix: 'checkin:tags:toggle:',
+  checkinEventAdd: 'checkin:event:add',
+
+  eventTypePrefix: 'event:type:',
+
   actionCancel: 'action:cancel',
   actionBack: 'action:back',
   actionSkip: 'action:skip',

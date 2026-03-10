@@ -1,7 +1,8 @@
+﻿import type { PredefinedTag } from '@prisma/client';
 import { Markup } from 'telegraf';
 
 import { TELEGRAM_CALLBACKS, TELEGRAM_MAIN_MENU_BUTTONS } from '../common/constants/app.constants';
-import { telegramCopy } from './telegram.copy';
+import { EVENT_TYPE_LABELS, telegramCopy } from './telegram.copy';
 
 type CallbackButton = ReturnType<typeof Markup.button.callback>;
 
@@ -26,6 +27,24 @@ function actionRow(options: { back?: boolean; skip?: boolean }): CallbackButton[
 
   row.push(Markup.button.callback(telegramCopy.buttons.cancel, TELEGRAM_CALLBACKS.actionCancel));
   return row;
+}
+
+function chunkButtons(buttons: CallbackButton[], size: number): CallbackButton[][] {
+  const rows: CallbackButton[][] = [];
+
+  for (let index = 0; index < buttons.length; index += size) {
+    rows.push(buttons.slice(index, index + size));
+  }
+
+  return rows;
+}
+
+function eventTypeButtons(): CallbackButton[][] {
+  const buttons = Object.entries(EVENT_TYPE_LABELS).map(([type, label]) =>
+    Markup.button.callback(label, `${TELEGRAM_CALLBACKS.eventTypePrefix}${type}`),
+  );
+
+  return chunkButtons(buttons, 2);
 }
 
 export const telegramKeyboards = {
@@ -65,4 +84,48 @@ export const telegramKeyboards = {
 
   sleepQualityActions: (options: { back?: boolean } = {}) =>
     Markup.inlineKeyboard([...scoreRows(), actionRow({ back: options.back, skip: true })]),
+
+  checkinNotePrompt: () =>
+    Markup.inlineKeyboard([
+      [Markup.button.callback(telegramCopy.buttons.addNote, TELEGRAM_CALLBACKS.checkinNoteAdd)],
+      actionRow({ skip: true }),
+    ]),
+
+  checkinTagsPrompt: () =>
+    Markup.inlineKeyboard([
+      [Markup.button.callback(telegramCopy.buttons.chooseTags, TELEGRAM_CALLBACKS.checkinTagsStart)],
+      actionRow({ back: true, skip: true }),
+    ]),
+
+  checkinTagsSelection: (tags: PredefinedTag[], selectedTagIds: string[]) => {
+    const selected = new Set(selectedTagIds);
+    const tagButtons = tags.map((tag) => {
+      const selectedMarker = selected.has(tag.id) ? '✅ ' : '';
+      return Markup.button.callback(
+        `${selectedMarker}${tag.label}`,
+        `${TELEGRAM_CALLBACKS.checkinTagsTogglePrefix}${tag.id}`,
+      );
+    });
+
+    return Markup.inlineKeyboard([
+      ...chunkButtons(tagButtons, 2),
+      [Markup.button.callback(telegramCopy.buttons.tagsDone, TELEGRAM_CALLBACKS.checkinTagsDone)],
+      actionRow({ back: true, skip: true }),
+    ]);
+  },
+
+  checkinAddEventPrompt: () =>
+    Markup.inlineKeyboard([
+      [Markup.button.callback(telegramCopy.buttons.addEvent, TELEGRAM_CALLBACKS.checkinEventAdd)],
+      actionRow({ back: true, skip: true }),
+    ]),
+
+  eventTypePicker: (options: { back?: boolean } = {}) =>
+    Markup.inlineKeyboard([...eventTypeButtons(), actionRow({ back: options.back })]),
+
+  eventTitleActions: (options: { back?: boolean } = {}) =>
+    Markup.inlineKeyboard([actionRow({ back: options.back })]),
+
+  eventDescriptionActions: (options: { back?: boolean } = {}) =>
+    Markup.inlineKeyboard([actionRow({ back: options.back, skip: true })]),
 };

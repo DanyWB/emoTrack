@@ -1,16 +1,20 @@
-import { Injectable, Logger } from '@nestjs/common';
+﻿import { Injectable, Logger } from '@nestjs/common';
 import type { User } from '@prisma/client';
 import type { Context, Telegraf } from 'telegraf';
 
-import { CheckinsFlowService, type CheckinFlowResult } from '../checkins/checkins.flow';
-import { TELEGRAM_CALLBACKS, TELEGRAM_MAIN_MENU_BUTTONS } from '../common/constants/app.constants';
-import { FsmService } from '../fsm/fsm.service';
-import { FSM_STATES, type FsmState } from '../fsm/fsm.types';
-import { OnboardingFlow } from '../onboarding/onboarding.flow';
-import { UsersService } from '../users/users.service';
 import { AnalyticsService } from '../analytics/analytics.service';
+import { CheckinsFlowService, type CheckinFlowResult } from '../checkins/checkins.flow';
+import { CheckinsService } from '../checkins/checkins.service';
+import { TELEGRAM_CALLBACKS, TELEGRAM_MAIN_MENU_BUTTONS } from '../common/constants/app.constants';
+import { EventsFlowService, type EventFlowResult } from '../events/events.flow';
+import { FsmService } from '../fsm/fsm.service';
+import { FSM_STATES, type CheckinDraftPayload, type FsmState } from '../fsm/fsm.types';
+import { OnboardingFlow } from '../onboarding/onboarding.flow';
+import { TagsService } from '../tags/tags.service';
+import { UsersService } from '../users/users.service';
 import {
   formatCheckinConfirmation,
+  formatHistoryEntries,
   telegramCopy,
   type CheckinConfirmationData,
 } from './telegram.copy';
@@ -29,6 +33,9 @@ export class TelegramRouter {
     private readonly usersService: UsersService,
     private readonly onboardingFlow: OnboardingFlow,
     private readonly checkinsFlow: CheckinsFlowService,
+    private readonly checkinsService: CheckinsService,
+    private readonly eventsFlow: EventsFlowService,
+    private readonly tagsService: TagsService,
     private readonly fsmService: FsmService,
     private readonly analyticsService: AnalyticsService,
   ) {}
@@ -43,7 +50,7 @@ export class TelegramRouter {
     });
 
     bot.command('event', async (ctx) => {
-      await ctx.reply(telegramCopy.placeholders.event, telegramKeyboards.mainMenu());
+      await this.handleEventCommand(ctx);
     });
 
     bot.command('stats', async (ctx) => {
@@ -51,7 +58,7 @@ export class TelegramRouter {
     });
 
     bot.command('history', async (ctx) => {
-      await ctx.reply(telegramCopy.placeholders.history, telegramKeyboards.mainMenu());
+      await this.handleHistoryCommand(ctx);
     });
 
     bot.command('settings', async (ctx) => {
@@ -67,7 +74,7 @@ export class TelegramRouter {
     });
 
     bot.hears(TELEGRAM_MAIN_MENU_BUTTONS[1], async (ctx) => {
-      await ctx.reply(telegramCopy.placeholders.event, telegramKeyboards.mainMenu());
+      await this.handleEventCommand(ctx);
     });
 
     bot.hears(TELEGRAM_MAIN_MENU_BUTTONS[2], async (ctx) => {
@@ -75,7 +82,7 @@ export class TelegramRouter {
     });
 
     bot.hears(TELEGRAM_MAIN_MENU_BUTTONS[3], async (ctx) => {
-      await ctx.reply(telegramCopy.placeholders.history, telegramKeyboards.mainMenu());
+      await this.handleHistoryCommand(ctx);
     });
 
     bot.hears(TELEGRAM_MAIN_MENU_BUTTONS[4], async (ctx) => {
@@ -126,27 +133,52 @@ export class TelegramRouter {
       return;
     }
 
-    if (!user.onboardingCompleted) {
-      await ctx.reply(telegramCopy.onboarding.incompleteRedirect);
-      const onboarding = await this.onboardingFlow.startOrResume(user, false);
+    const canContinue = await this.ensureOnboardingCompleted(ctx, user);
 
-      if (onboarding.step === 'already_ready') {
-        await ctx.reply(telegramCopy.startup.alreadyReady, telegramKeyboards.mainMenu());
-        return;
-      }
-
-      if (onboarding.step === 'invalid_reminder_time') {
-        await ctx.reply(telegramCopy.validation.invalidTime, telegramKeyboards.cancelOnly());
-        return;
-      }
-
-      await this.replyOnboardingStep(ctx, onboarding.step, onboarding.includeIntro ?? false);
+    if (!canContinue) {
       return;
     }
 
     const result = await this.checkinsFlow.start(user);
     await ctx.reply(telegramCopy.checkin.started);
     await this.replyCheckinResult(ctx, user, result);
+  }
+
+  private async handleEventCommand(ctx: Context): Promise<void> {
+    const user = await this.getOrCreateUserFromContext(ctx);
+
+    if (!user) {
+      return;
+    }
+
+    const canContinue = await this.ensureOnboardingCompleted(ctx, user);
+
+    if (!canContinue) {
+      return;
+    }
+
+    const result = await this.eventsFlow.startStandalone(user);
+    await ctx.reply(telegramCopy.event.startedStandalone);
+    await this.replyEventResult(ctx, user, result);
+  }
+
+  private async handleHistoryCommand(ctx: Context): Promise<void> {
+    const user = await this.getOrCreateUserFromContext(ctx);
+
+    if (!user) {
+      return;
+    }
+
+    const canContinue = await this.ensureOnboardingCompleted(ctx, user);
+
+    if (!canContinue) {
+      return;
+    }
+
+    await this.analyticsService.track('history_requested', {}, user.id);
+
+    const entries = await this.checkinsService.getRecentEntries(user.id, 7);
+    await ctx.reply(formatHistoryEntries(entries), telegramKeyboards.mainMenu());
   }
 
   private async handleCallbackQuery(ctx: Context): Promise<void> {
@@ -164,8 +196,9 @@ export class TelegramRouter {
 
     await ctx.answerCbQuery().catch(() => undefined);
 
+    const state = await this.fsmService.getState(user.id);
+
     if (callbackData === TELEGRAM_CALLBACKS.actionCancel) {
-      const state = await this.fsmService.getState(user.id);
       await this.checkinsFlow.cancel(user.id);
       await this.onboardingFlow.cancel(user.id);
 
@@ -179,20 +212,36 @@ export class TelegramRouter {
     }
 
     if (callbackData === TELEGRAM_CALLBACKS.actionBack) {
+      if (this.isEventState(state)) {
+        const result = await this.eventsFlow.goBack(user);
+        await this.replyEventResult(ctx, user, result);
+        return;
+      }
+
       const result = await this.checkinsFlow.goBack(user);
       await this.replyCheckinResult(ctx, user, result);
       return;
     }
 
     if (callbackData === TELEGRAM_CALLBACKS.actionSkip) {
+      if (state === FSM_STATES.event_description) {
+        const result = await this.eventsFlow.skipDescription(user);
+        await this.replyEventResult(ctx, user, result);
+        return;
+      }
+
+      if (state === FSM_STATES.checkin_add_event_confirm) {
+        const result = await this.checkinsFlow.finalizeAfterEventSkip(user);
+        await this.replyCheckinResult(ctx, user, result);
+        return;
+      }
+
       const result = await this.checkinsFlow.skipCurrentStep(user);
       await this.replyCheckinResult(ctx, user, result);
       return;
     }
 
     if (callbackData === TELEGRAM_CALLBACKS.consentAccept) {
-      const state = await this.fsmService.getState(user.id);
-
       if (state !== FSM_STATES.onboarding_consent) {
         await ctx.reply(telegramCopy.common.actionNotAllowed);
         return;
@@ -216,10 +265,55 @@ export class TelegramRouter {
       return;
     }
 
+    if (callbackData === TELEGRAM_CALLBACKS.checkinNoteAdd) {
+      const result = await this.checkinsFlow.beginNoteStep(user);
+      await this.replyCheckinResult(ctx, user, result);
+      return;
+    }
+
+    if (callbackData === TELEGRAM_CALLBACKS.checkinTagsStart) {
+      const result = await this.checkinsFlow.startTagsSelection(user);
+      await this.replyCheckinResult(ctx, user, result);
+      return;
+    }
+
+    if (callbackData === TELEGRAM_CALLBACKS.checkinTagsDone) {
+      const result = await this.checkinsFlow.confirmTags(user);
+      await this.replyCheckinResult(ctx, user, result);
+      return;
+    }
+
+    if (callbackData.startsWith(TELEGRAM_CALLBACKS.checkinTagsTogglePrefix)) {
+      const tagId = callbackData.slice(TELEGRAM_CALLBACKS.checkinTagsTogglePrefix.length);
+      const result = await this.checkinsFlow.toggleTagSelection(user, tagId);
+      await this.replyCheckinResult(ctx, user, result);
+      return;
+    }
+
+    if (callbackData === TELEGRAM_CALLBACKS.checkinEventAdd) {
+      const result = await this.eventsFlow.startFromCheckin(user);
+      await this.replyEventResult(ctx, user, result);
+      return;
+    }
+
+    if (callbackData.startsWith(TELEGRAM_CALLBACKS.eventTypePrefix)) {
+      const eventType = callbackData.slice(TELEGRAM_CALLBACKS.eventTypePrefix.length);
+      const result = await this.eventsFlow.submitType(user, eventType);
+      await this.replyEventResult(ctx, user, result);
+      return;
+    }
+
     if (callbackData.startsWith(TELEGRAM_CALLBACKS.scorePrefix)) {
       const scoreRaw = callbackData.slice(TELEGRAM_CALLBACKS.scorePrefix.length);
-      const result = await this.checkinsFlow.submitScore(user, scoreRaw);
-      await this.replyCheckinResult(ctx, user, result);
+
+      if (state === FSM_STATES.event_score) {
+        const eventResult = await this.eventsFlow.submitScore(user, scoreRaw);
+        await this.replyEventResult(ctx, user, eventResult);
+        return;
+      }
+
+      const checkinResult = await this.checkinsFlow.submitScore(user, scoreRaw);
+      await this.replyCheckinResult(ctx, user, checkinResult);
       return;
     }
 
@@ -277,6 +371,25 @@ export class TelegramRouter {
         await this.replyCheckinResult(ctx, user, result);
         return;
       }
+      case FSM_STATES.checkin_note: {
+        const result = await this.checkinsFlow.submitNote(user, text);
+        await this.replyCheckinResult(ctx, user, result);
+        return;
+      }
+      case FSM_STATES.checkin_note_prompt:
+      case FSM_STATES.checkin_tags_prompt:
+      case FSM_STATES.checkin_tags:
+      case FSM_STATES.checkin_add_event_confirm: {
+        await this.replyCheckinPromptByState(ctx, user, state);
+        return;
+      }
+      case FSM_STATES.event_type:
+      case FSM_STATES.event_title:
+      case FSM_STATES.event_score:
+      case FSM_STATES.event_description: {
+        await this.handleEventTextByState(ctx, user, state, text);
+        return;
+      }
       default: {
         if (!user.onboardingCompleted) {
           await ctx.reply(telegramCopy.onboarding.incompleteRedirect);
@@ -300,6 +413,33 @@ export class TelegramRouter {
         return;
       }
     }
+  }
+
+  private async handleEventTextByState(
+    ctx: Context,
+    user: User,
+    state: FsmState,
+    text: string,
+  ): Promise<void> {
+    if (state === FSM_STATES.event_type) {
+      await this.replyEventPromptByState(ctx, user, state);
+      return;
+    }
+
+    if (state === FSM_STATES.event_title) {
+      const result = await this.eventsFlow.submitTitle(user, text);
+      await this.replyEventResult(ctx, user, result);
+      return;
+    }
+
+    if (state === FSM_STATES.event_score) {
+      const result = await this.eventsFlow.submitScore(user, text);
+      await this.replyEventResult(ctx, user, result);
+      return;
+    }
+
+    const result = await this.eventsFlow.submitDescription(user, text);
+    await this.replyEventResult(ctx, user, result);
   }
 
   private async handleReminderTimeInput(ctx: Context, user: User, reminderTime: string): Promise<void> {
@@ -349,7 +489,7 @@ export class TelegramRouter {
     result: CheckinFlowResult,
   ): Promise<void> {
     if (result.status === 'next' && result.nextState) {
-      await this.replyCheckinPromptByState(ctx, result.nextState);
+      await this.replyCheckinPromptByState(ctx, user, result.nextState, result.selectedTagIds);
       return;
     }
 
@@ -361,6 +501,9 @@ export class TelegramRouter {
         sleepHours: result.entryPayload.sleepHours,
         sleepQuality: result.entryPayload.sleepQuality,
         updated: result.isUpdate ?? false,
+        noteAdded: result.noteAdded,
+        tagsCount: result.tagsCount,
+        eventAdded: result.eventAdded,
       };
 
       await ctx.reply(formatCheckinConfirmation(confirmation), telegramKeyboards.mainMenu());
@@ -370,7 +513,7 @@ export class TelegramRouter {
     if (result.status === 'invalid_score') {
       await ctx.reply(telegramCopy.validation.invalidScore);
       const state = await this.fsmService.getState(user.id);
-      await this.replyCheckinPromptByState(ctx, state);
+      await this.replyCheckinPromptByState(ctx, user, state);
       return;
     }
 
@@ -379,17 +522,105 @@ export class TelegramRouter {
       return;
     }
 
+    if (result.status === 'invalid_note') {
+      await ctx.reply(telegramCopy.validation.invalidNoteLength, telegramKeyboards.eventTitleActions({ back: true }));
+      return;
+    }
+
+    if (result.status === 'invalid_tag') {
+      await ctx.reply(telegramCopy.validation.invalidTagSelection);
+      const state = await this.fsmService.getState(user.id);
+      await this.replyCheckinPromptByState(ctx, user, state);
+      return;
+    }
+
     if (result.status === 'cannot_back') {
       await ctx.reply(telegramCopy.common.backUnavailable);
       const state = await this.fsmService.getState(user.id);
-      await this.replyCheckinPromptByState(ctx, state);
+      await this.replyCheckinPromptByState(ctx, user, state);
       return;
     }
 
     await ctx.reply(telegramCopy.common.actionNotAllowed);
   }
 
-  private async replyCheckinPromptByState(ctx: Context, state: FsmState): Promise<void> {
+  private async replyEventResult(ctx: Context, user: User, result: EventFlowResult): Promise<void> {
+    if (result.status === 'next' && result.nextState) {
+      await this.replyEventPromptByState(ctx, user, result.nextState, result.source);
+      return;
+    }
+
+    if (result.status === 'created') {
+      if (result.source === 'checkin' && result.checkinPayload) {
+        const checkinPayload = result.checkinPayload;
+
+        if (
+          typeof checkinPayload.moodScore === 'number' &&
+          typeof checkinPayload.energyScore === 'number' &&
+          typeof checkinPayload.stressScore === 'number'
+        ) {
+          await ctx.reply(
+            formatCheckinConfirmation({
+              moodScore: checkinPayload.moodScore,
+              energyScore: checkinPayload.energyScore,
+              stressScore: checkinPayload.stressScore,
+              sleepHours: checkinPayload.sleepHours,
+              sleepQuality: checkinPayload.sleepQuality,
+              updated: checkinPayload.isUpdate ?? false,
+              noteAdded: !!checkinPayload.noteText,
+              tagsCount: checkinPayload.selectedTagIds?.length ?? 0,
+              eventAdded: true,
+            }),
+            telegramKeyboards.mainMenu(),
+          );
+          return;
+        }
+      }
+
+      await ctx.reply(telegramCopy.event.savedStandalone, telegramKeyboards.mainMenu());
+      return;
+    }
+
+    if (result.status === 'invalid_type') {
+      await ctx.reply(telegramCopy.validation.invalidEventType);
+      await this.replyEventPromptByState(ctx, user, FSM_STATES.event_type, result.source);
+      return;
+    }
+
+    if (result.status === 'invalid_title') {
+      await ctx.reply(telegramCopy.validation.invalidEventTitle);
+      await this.replyEventPromptByState(ctx, user, FSM_STATES.event_title, result.source);
+      return;
+    }
+
+    if (result.status === 'invalid_score') {
+      await ctx.reply(telegramCopy.validation.invalidEventScore);
+      await this.replyEventPromptByState(ctx, user, FSM_STATES.event_score, result.source);
+      return;
+    }
+
+    if (result.status === 'invalid_description') {
+      await ctx.reply(telegramCopy.validation.invalidEventDescription);
+      await this.replyEventPromptByState(ctx, user, FSM_STATES.event_description, result.source);
+      return;
+    }
+
+    if (result.status === 'cannot_back') {
+      await ctx.reply(telegramCopy.common.backUnavailable);
+      const state = await this.fsmService.getState(user.id);
+      await this.replyEventPromptByState(ctx, user, state, result.source);
+      return;
+    }
+
+    await ctx.reply(telegramCopy.common.actionNotAllowed);
+  }
+
+  private async replyCheckinPromptByState(
+    ctx: Context,
+    user: User,
+    state: FsmState,
+    selectedTagIds: string[] = [],
+  ): Promise<void> {
     switch (state) {
       case FSM_STATES.checkin_mood:
         await ctx.reply(telegramCopy.checkin.moodPrompt, telegramKeyboards.scorePicker());
@@ -406,9 +637,120 @@ export class TelegramRouter {
       case FSM_STATES.checkin_sleep_quality:
         await ctx.reply(telegramCopy.checkin.sleepQualityPrompt, telegramKeyboards.sleepQualityActions({ back: true }));
         return;
+      case FSM_STATES.checkin_note_prompt:
+        await ctx.reply(telegramCopy.checkin.notePrompt, telegramKeyboards.checkinNotePrompt());
+        return;
+      case FSM_STATES.checkin_note:
+        await ctx.reply(telegramCopy.checkin.noteInputPrompt, telegramKeyboards.eventTitleActions({ back: true }));
+        return;
+      case FSM_STATES.checkin_tags_prompt:
+        await ctx.reply(telegramCopy.checkin.tagsPrompt, telegramKeyboards.checkinTagsPrompt());
+        return;
+      case FSM_STATES.checkin_tags: {
+        const tags = await this.tagsService.getActiveTags();
+
+        if (tags.length === 0) {
+          const result = await this.checkinsFlow.skipCurrentStep(user);
+          await ctx.reply(telegramCopy.checkin.noActiveTags);
+          await this.replyCheckinResult(ctx, user, result);
+          return;
+        }
+
+        const effectiveSelected =
+          selectedTagIds.length > 0 ? selectedTagIds : await this.getSelectedTagIdsFromSession(user.id);
+
+        await ctx.reply(
+          telegramCopy.checkin.tagsSelectionPrompt,
+          telegramKeyboards.checkinTagsSelection(tags, effectiveSelected),
+        );
+        return;
+      }
+      case FSM_STATES.checkin_add_event_confirm:
+        await ctx.reply(telegramCopy.checkin.addEventPrompt, telegramKeyboards.checkinAddEventPrompt());
+        return;
       default:
         await ctx.reply(telegramCopy.checkin.repeatedStepPrompt, telegramKeyboards.mainMenu());
     }
+  }
+
+  private async replyEventPromptByState(
+    ctx: Context,
+    user: User,
+    state: FsmState,
+    source?: 'standalone' | 'checkin',
+  ): Promise<void> {
+    const isFromCheckin = source === 'checkin';
+
+    switch (state) {
+      case FSM_STATES.event_type:
+        await ctx.reply(telegramCopy.event.typePrompt, telegramKeyboards.eventTypePicker({ back: isFromCheckin }));
+        return;
+      case FSM_STATES.event_title:
+        await ctx.reply(telegramCopy.event.titlePrompt, telegramKeyboards.eventTitleActions({ back: true }));
+        return;
+      case FSM_STATES.event_score:
+        await ctx.reply(telegramCopy.event.scorePrompt, telegramKeyboards.scorePicker({ back: true }));
+        return;
+      case FSM_STATES.event_description:
+        await ctx.reply(
+          telegramCopy.event.descriptionPrompt,
+          telegramKeyboards.eventDescriptionActions({ back: true }),
+        );
+        return;
+      case FSM_STATES.checkin_add_event_confirm:
+        await this.replyCheckinPromptByState(ctx, user, FSM_STATES.checkin_add_event_confirm);
+        return;
+      default:
+        await ctx.reply(telegramCopy.common.actionNotAllowed, telegramKeyboards.mainMenu());
+    }
+  }
+
+  private async ensureOnboardingCompleted(ctx: Context, user: User): Promise<boolean> {
+    if (user.onboardingCompleted) {
+      return true;
+    }
+
+    await ctx.reply(telegramCopy.onboarding.incompleteRedirect);
+    const onboarding = await this.onboardingFlow.startOrResume(user, false);
+
+    if (onboarding.step === 'already_ready') {
+      await ctx.reply(telegramCopy.startup.alreadyReady, telegramKeyboards.mainMenu());
+      return false;
+    }
+
+    if (onboarding.step === 'invalid_reminder_time') {
+      await ctx.reply(telegramCopy.validation.invalidTime, telegramKeyboards.cancelOnly());
+      return false;
+    }
+
+    await this.replyOnboardingStep(ctx, onboarding.step, onboarding.includeIntro ?? false);
+    return false;
+  }
+
+  private async getSelectedTagIdsFromSession(userId: string): Promise<string[]> {
+    const session = await this.fsmService.getSession(userId);
+
+    if (!session?.payloadJson || typeof session.payloadJson !== 'object') {
+      return [];
+    }
+
+    const payload = session.payloadJson as CheckinDraftPayload;
+    const selectedTagIds = payload.selectedTagIds;
+
+    if (!Array.isArray(selectedTagIds)) {
+      return [];
+    }
+
+    return selectedTagIds.filter((item): item is string => typeof item === 'string');
+  }
+
+  private isEventState(state: FsmState): boolean {
+    return (
+      state === FSM_STATES.event_type ||
+      state === FSM_STATES.event_title ||
+      state === FSM_STATES.event_score ||
+      state === FSM_STATES.event_description
+    );
   }
 
   private async getOrCreateUserFromContext(ctx: Context): Promise<User | null> {

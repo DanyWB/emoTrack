@@ -1,5 +1,8 @@
+// eslint-disable-next-line @typescript-eslint/no-require-imports
 import dayjs = require('dayjs');
+// eslint-disable-next-line @typescript-eslint/no-require-imports
 import utc = require('dayjs/plugin/utc');
+// eslint-disable-next-line @typescript-eslint/no-require-imports
 import timezone = require('dayjs/plugin/timezone');
 
 dayjs.extend(utc);

@@ -2,7 +2,9 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { DailyEntry } from '@prisma/client';
 
+import { TEXT_LIMITS } from '../common/constants/app.constants';
 import { buildNormalizedEntryDate } from '../common/utils/date.utils';
+import { TagsService } from '../tags/tags.service';
 import { CheckinsRepository } from './checkins.repository';
 import type { UpsertDailyEntryDto } from './dto/upsert-daily-entry.dto';
 
@@ -16,12 +18,25 @@ export interface CheckinUpsertResult {
   isUpdate: boolean;
 }
 
+export interface RecentEntryView {
+  id: string;
+  entryDate: Date;
+  moodScore: number;
+  energyScore: number;
+  stressScore: number;
+  sleepHours?: number;
+  sleepQuality?: number;
+  hasNote: boolean;
+  eventsCount: number;
+}
+
 @Injectable()
 export class CheckinsService {
   private readonly defaultTimezone: string;
 
   constructor(
     private readonly checkinsRepository: CheckinsRepository,
+    private readonly tagsService: TagsService,
     private readonly configService: ConfigService,
   ) {
     this.defaultTimezone =
@@ -64,20 +79,54 @@ export class CheckinsService {
     };
   }
 
-  saveNote(_entryId: string, _text: string): Promise<void> {
-    return Promise.resolve();
+  async saveNote(entryId: string, text: string): Promise<void> {
+    const note = text.trim();
+
+    if (note.length === 0 || note.length > TEXT_LIMITS.note) {
+      throw new Error('INVALID_NOTE_LENGTH');
+    }
+
+    await this.checkinsRepository.updateNote(entryId, note);
   }
 
-  attachTags(_entryId: string, _tagIds: string[]): Promise<void> {
-    return Promise.resolve();
+  async attachTags(entryId: string, tagIds: string[]): Promise<void> {
+    const uniqueTagIds = [...new Set(tagIds)];
+
+    if (uniqueTagIds.length === 0) {
+      await this.checkinsRepository.replaceTags(entryId, []);
+      return;
+    }
+
+    const activeTags = await this.tagsService.getActiveTags();
+    const activeTagIds = new Set(activeTags.map((tag) => tag.id));
+    const validTagIds = uniqueTagIds.filter((tagId) => activeTagIds.has(tagId));
+
+    if (validTagIds.length !== uniqueTagIds.length) {
+      throw new Error('INVALID_TAG_SELECTION');
+    }
+
+    await this.checkinsRepository.replaceTags(entryId, validTagIds);
   }
 
   getEntriesForPeriod(_userId: string, _from: Date, _to: Date): Promise<unknown[]> {
     return Promise.resolve([]);
   }
 
-  getRecentEntries(_userId: string, _limit: number, _cursor?: string): Promise<unknown[]> {
-    return Promise.resolve([]);
+  async getRecentEntries(userId: string, limit: number, _cursor?: string): Promise<RecentEntryView[]> {
+    const safeLimit = Number.isInteger(limit) && limit > 0 ? Math.min(limit, 20) : 5;
+    const rows = await this.checkinsRepository.findRecentByUser(userId, safeLimit);
+
+    return rows.map((row) => ({
+      id: row.id,
+      entryDate: row.entryDate,
+      moodScore: row.moodScore,
+      energyScore: row.energyScore,
+      stressScore: row.stressScore,
+      sleepHours: row.sleepHours ? Number(row.sleepHours) : undefined,
+      sleepQuality: row.sleepQuality ?? undefined,
+      hasNote: !!row.noteText?.trim(),
+      eventsCount: row._count.events,
+    }));
   }
 
   async countTodayEntry(userId: string, options: TodayEntryOptions = {}): Promise<number> {

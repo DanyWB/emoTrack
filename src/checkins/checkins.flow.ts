@@ -1,10 +1,11 @@
-import { Injectable } from '@nestjs/common';
+﻿import { Injectable } from '@nestjs/common';
 import { type User } from '@prisma/client';
 
 import { AnalyticsService } from '../analytics/analytics.service';
 import { parseIntegerScore, parseSleepHours } from '../common/utils/validation.utils';
 import { FsmService } from '../fsm/fsm.service';
 import { FSM_STATES, type CheckinDraftPayload, type FsmState } from '../fsm/fsm.types';
+import { TagsService } from '../tags/tags.service';
 import { CheckinsService } from './checkins.service';
 import type { UpsertDailyEntryDto } from './dto/upsert-daily-entry.dto';
 
@@ -13,20 +14,28 @@ export type CheckinFlowStatus =
   | 'saved'
   | 'invalid_score'
   | 'invalid_sleep_hours'
+  | 'invalid_note'
+  | 'invalid_tag'
   | 'cannot_back'
-  | 'not_in_checkin';
+  | 'not_in_checkin'
+  | 'missing_context';
 
 export interface CheckinFlowResult {
   status: CheckinFlowStatus;
   nextState?: FsmState;
   isUpdate?: boolean;
   entryPayload?: UpsertDailyEntryDto;
+  selectedTagIds?: string[];
+  noteAdded?: boolean;
+  tagsCount?: number;
+  eventAdded?: boolean;
 }
 
 @Injectable()
 export class CheckinsFlowService {
   constructor(
     private readonly checkinsService: CheckinsService,
+    private readonly tagsService: TagsService,
     private readonly fsmService: FsmService,
     private readonly analyticsService: AnalyticsService,
   ) {}
@@ -82,7 +91,7 @@ export class CheckinsFlowService {
         return { status: 'next', nextState: FSM_STATES.checkin_sleep_quality };
       }
       case FSM_STATES.checkin_sleep_quality: {
-        return this.finalizeCheckin(user, {
+        return this.persistCoreEntryAndMoveToOptional(user, {
           ...payload,
           sleepQuality: score,
         });
@@ -118,10 +127,177 @@ export class CheckinsFlowService {
       };
     }
 
-    return this.finalizeCheckin(user, {
+    return this.persistCoreEntryAndMoveToOptional(user, {
       ...payload,
       sleepHours: parsed,
     });
+  }
+
+  async beginNoteStep(user: User): Promise<CheckinFlowResult> {
+    const session = await this.fsmService.getSession(user.id);
+    const state = (session?.state as FsmState | undefined) ?? FSM_STATES.idle;
+
+    if (state !== FSM_STATES.checkin_note_prompt) {
+      return { status: 'not_in_checkin' };
+    }
+
+    const payload = this.extractPayload(session?.payloadJson);
+
+    await this.fsmService.setState(user.id, FSM_STATES.checkin_note, payload);
+
+    return {
+      status: 'next',
+      nextState: FSM_STATES.checkin_note,
+    };
+  }
+
+  async submitNote(user: User, noteText: string): Promise<CheckinFlowResult> {
+    const session = await this.fsmService.getSession(user.id);
+    const state = (session?.state as FsmState | undefined) ?? FSM_STATES.idle;
+
+    if (state !== FSM_STATES.checkin_note) {
+      return { status: 'not_in_checkin' };
+    }
+
+    const payload = this.extractPayload(session?.payloadJson);
+
+    if (!payload.entryId) {
+      return { status: 'missing_context' };
+    }
+
+    try {
+      await this.checkinsService.saveNote(payload.entryId, noteText);
+    } catch {
+      return { status: 'invalid_note' };
+    }
+
+    await this.analyticsService.track('note_added', { entryId: payload.entryId }, user.id);
+
+    await this.fsmService.setState(user.id, FSM_STATES.checkin_tags_prompt, {
+      ...payload,
+      noteText: noteText.trim(),
+    });
+
+    return {
+      status: 'next',
+      nextState: FSM_STATES.checkin_tags_prompt,
+    };
+  }
+
+  async startTagsSelection(user: User): Promise<CheckinFlowResult> {
+    const session = await this.fsmService.getSession(user.id);
+    const state = (session?.state as FsmState | undefined) ?? FSM_STATES.idle;
+
+    if (state !== FSM_STATES.checkin_tags_prompt) {
+      return { status: 'not_in_checkin' };
+    }
+
+    const payload = this.extractPayload(session?.payloadJson);
+    const selectedTagIds = [...new Set(payload.selectedTagIds ?? [])];
+
+    await this.fsmService.setState(user.id, FSM_STATES.checkin_tags, {
+      ...payload,
+      selectedTagIds,
+    });
+
+    return {
+      status: 'next',
+      nextState: FSM_STATES.checkin_tags,
+      selectedTagIds,
+    };
+  }
+
+  async toggleTagSelection(user: User, tagId: string): Promise<CheckinFlowResult> {
+    const session = await this.fsmService.getSession(user.id);
+    const state = (session?.state as FsmState | undefined) ?? FSM_STATES.idle;
+
+    if (state !== FSM_STATES.checkin_tags) {
+      return { status: 'not_in_checkin' };
+    }
+
+    const payload = this.extractPayload(session?.payloadJson);
+    const activeTag = await this.tagsService.findActiveTagById(tagId);
+
+    if (!activeTag) {
+      return { status: 'invalid_tag' };
+    }
+
+    const selectedSet = new Set(payload.selectedTagIds ?? []);
+
+    if (selectedSet.has(tagId)) {
+      selectedSet.delete(tagId);
+    } else {
+      selectedSet.add(tagId);
+    }
+
+    const selectedTagIds = [...selectedSet];
+
+    await this.fsmService.setState(user.id, FSM_STATES.checkin_tags, {
+      ...payload,
+      selectedTagIds,
+    });
+
+    return {
+      status: 'next',
+      nextState: FSM_STATES.checkin_tags,
+      selectedTagIds,
+    };
+  }
+
+  async confirmTags(user: User): Promise<CheckinFlowResult> {
+    const session = await this.fsmService.getSession(user.id);
+    const state = (session?.state as FsmState | undefined) ?? FSM_STATES.idle;
+
+    if (state !== FSM_STATES.checkin_tags) {
+      return { status: 'not_in_checkin' };
+    }
+
+    const payload = this.extractPayload(session?.payloadJson);
+
+    if (!payload.entryId) {
+      return { status: 'missing_context' };
+    }
+
+    const selectedTagIds = [...new Set(payload.selectedTagIds ?? [])];
+
+    try {
+      await this.checkinsService.attachTags(payload.entryId, selectedTagIds);
+    } catch {
+      return { status: 'invalid_tag' };
+    }
+
+    if (selectedTagIds.length > 0) {
+      await this.analyticsService.track(
+        'tags_attached',
+        {
+          entryId: payload.entryId,
+          count: selectedTagIds.length,
+        },
+        user.id,
+      );
+    }
+
+    await this.fsmService.setState(user.id, FSM_STATES.checkin_add_event_confirm, {
+      ...payload,
+      selectedTagIds,
+    });
+
+    return {
+      status: 'next',
+      nextState: FSM_STATES.checkin_add_event_confirm,
+    };
+  }
+
+  async finalizeAfterEventSkip(user: User): Promise<CheckinFlowResult> {
+    const session = await this.fsmService.getSession(user.id);
+    const state = (session?.state as FsmState | undefined) ?? FSM_STATES.idle;
+
+    if (state !== FSM_STATES.checkin_add_event_confirm) {
+      return { status: 'not_in_checkin' };
+    }
+
+    const payload = this.extractPayload(session?.payloadJson);
+    return this.finishOptionalFlow(user, payload);
   }
 
   async skipCurrentStep(user: User): Promise<CheckinFlowResult> {
@@ -140,12 +316,40 @@ export class CheckinsFlowService {
       }
 
       const nextPayload = this.withoutKeys(payload, ['sleepHours']);
-      return this.finalizeCheckin(user, nextPayload);
+      return this.persistCoreEntryAndMoveToOptional(user, nextPayload);
     }
 
     if (state === FSM_STATES.checkin_sleep_quality) {
       const nextPayload = this.withoutKeys(payload, ['sleepQuality']);
-      return this.finalizeCheckin(user, nextPayload);
+      return this.persistCoreEntryAndMoveToOptional(user, nextPayload);
+    }
+
+    if (state === FSM_STATES.checkin_note_prompt) {
+      await this.fsmService.setState(user.id, FSM_STATES.checkin_tags_prompt, payload);
+      return {
+        status: 'next',
+        nextState: FSM_STATES.checkin_tags_prompt,
+      };
+    }
+
+    if (state === FSM_STATES.checkin_tags_prompt) {
+      await this.fsmService.setState(user.id, FSM_STATES.checkin_add_event_confirm, payload);
+      return {
+        status: 'next',
+        nextState: FSM_STATES.checkin_add_event_confirm,
+      };
+    }
+
+    if (state === FSM_STATES.checkin_tags) {
+      await this.fsmService.setState(user.id, FSM_STATES.checkin_add_event_confirm, payload);
+      return {
+        status: 'next',
+        nextState: FSM_STATES.checkin_add_event_confirm,
+      };
+    }
+
+    if (state === FSM_STATES.checkin_add_event_confirm) {
+      return this.finishOptionalFlow(user, payload);
     }
 
     return { status: 'not_in_checkin' };
@@ -200,6 +404,31 @@ export class CheckinsFlowService {
         );
         return { status: 'next', nextState: FSM_STATES.checkin_stress };
       }
+      case FSM_STATES.checkin_note_prompt: {
+        const previousSleepState = this.resolvePreviousSleepState(user);
+        await this.fsmService.setState(
+          user.id,
+          previousSleepState,
+          this.withoutKeys(payload, ['entryId', 'isUpdate', 'noteText', 'selectedTagIds', 'eventAdded']),
+        );
+        return { status: 'next', nextState: previousSleepState };
+      }
+      case FSM_STATES.checkin_note: {
+        await this.fsmService.setState(user.id, FSM_STATES.checkin_note_prompt, payload);
+        return { status: 'next', nextState: FSM_STATES.checkin_note_prompt };
+      }
+      case FSM_STATES.checkin_tags_prompt: {
+        await this.fsmService.setState(user.id, FSM_STATES.checkin_note_prompt, payload);
+        return { status: 'next', nextState: FSM_STATES.checkin_note_prompt };
+      }
+      case FSM_STATES.checkin_tags: {
+        await this.fsmService.setState(user.id, FSM_STATES.checkin_tags_prompt, payload);
+        return { status: 'next', nextState: FSM_STATES.checkin_tags_prompt };
+      }
+      case FSM_STATES.checkin_add_event_confirm: {
+        await this.fsmService.setState(user.id, FSM_STATES.checkin_tags_prompt, payload);
+        return { status: 'next', nextState: FSM_STATES.checkin_tags_prompt };
+      }
       default:
         return { status: 'not_in_checkin' };
     }
@@ -209,7 +438,10 @@ export class CheckinsFlowService {
     await this.fsmService.clearSession(userId);
   }
 
-  private async finalizeCheckin(user: User, payload: CheckinDraftPayload): Promise<CheckinFlowResult> {
+  private async persistCoreEntryAndMoveToOptional(
+    user: User,
+    payload: CheckinDraftPayload,
+  ): Promise<CheckinFlowResult> {
     if (
       typeof payload.moodScore !== 'number' ||
       typeof payload.energyScore !== 'number' ||
@@ -231,18 +463,61 @@ export class CheckinsFlowService {
       timezone: user.timezone,
     });
 
-    await this.fsmService.setIdle(user.id);
     await this.analyticsService.track(
       result.isUpdate ? 'checkin_updated' : 'checkin_completed',
       { entryId: result.entry.id },
       user.id,
     );
 
+    await this.fsmService.setState(user.id, FSM_STATES.checkin_note_prompt, {
+      ...payload,
+      entryId: result.entry.id,
+      isUpdate: result.isUpdate,
+    });
+
+    return {
+      status: 'next',
+      nextState: FSM_STATES.checkin_note_prompt,
+    };
+  }
+
+  private async finishOptionalFlow(user: User, payload: CheckinDraftPayload): Promise<CheckinFlowResult> {
+    if (
+      typeof payload.moodScore !== 'number' ||
+      typeof payload.energyScore !== 'number' ||
+      typeof payload.stressScore !== 'number'
+    ) {
+      await this.fsmService.setState(user.id, FSM_STATES.checkin_mood, {});
+      return { status: 'next', nextState: FSM_STATES.checkin_mood };
+    }
+
+    const entryPayload: UpsertDailyEntryDto = {
+      moodScore: payload.moodScore,
+      energyScore: payload.energyScore,
+      stressScore: payload.stressScore,
+      sleepHours: payload.sleepHours,
+      sleepQuality: payload.sleepQuality,
+      noteText: payload.noteText,
+    };
+
+    await this.fsmService.setIdle(user.id);
+
     return {
       status: 'saved',
-      isUpdate: result.isUpdate,
+      isUpdate: payload.isUpdate ?? false,
       entryPayload,
+      noteAdded: !!payload.noteText,
+      tagsCount: payload.selectedTagIds?.length ?? 0,
+      eventAdded: !!payload.eventAdded,
     };
+  }
+
+  private resolvePreviousSleepState(user: User): FsmState {
+    if (user.sleepMode === 'hours') {
+      return FSM_STATES.checkin_sleep_hours;
+    }
+
+    return FSM_STATES.checkin_sleep_quality;
   }
 
   private extractPayload(payload: unknown): CheckinDraftPayload {

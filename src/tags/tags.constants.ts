@@ -1,4 +1,4 @@
-export const DEFAULT_PREDEFINED_TAGS = [
+﻿export const DEFAULT_PREDEFINED_TAGS = [
   { key: 'anxiety', label: 'Тревога' },
   { key: 'fatigue', label: 'Усталость' },
   { key: 'motivation', label: 'Мотивация' },
