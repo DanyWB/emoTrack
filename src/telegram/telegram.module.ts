@@ -3,11 +3,14 @@ import { ConfigService } from '@nestjs/config';
 import { Telegraf, type Context } from 'telegraf';
 
 import { AnalyticsModule } from '../analytics/analytics.module';
+import { ChartsModule } from '../charts/charts.module';
 import { CheckinsModule } from '../checkins/checkins.module';
 import type { TelegramConfig } from '../config/telegram.config';
 import { EventsModule } from '../events/events.module';
 import { FsmModule } from '../fsm/fsm.module';
 import { OnboardingModule } from '../onboarding/onboarding.module';
+import { RemindersModule } from '../reminders/reminders.module';
+import { SummariesModule } from '../summaries/summaries.module';
 import { TagsModule } from '../tags/tags.module';
 import { UsersModule } from '../users/users.module';
 import { TelegramRouter } from './telegram.router';
@@ -24,6 +27,9 @@ export const TELEGRAM_BOT = 'TELEGRAM_BOT';
     EventsModule,
     TagsModule,
     AnalyticsModule,
+    SummariesModule,
+    ChartsModule,
+    RemindersModule,
   ],
   providers: [
     {

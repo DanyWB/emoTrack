@@ -8,6 +8,6 @@ export interface ChartPoint {
 }
 
 export interface GeneratedCharts {
-  combinedChartPath?: string;
-  sleepChartPath?: string;
+  combinedChartBuffer?: Buffer;
+  sleepChartBuffer?: Buffer;
 }

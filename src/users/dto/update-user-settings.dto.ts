@@ -1,5 +1,5 @@
+﻿import { SleepMode } from '@prisma/client';
 import { IsBoolean, IsEnum, IsOptional, Matches } from 'class-validator';
-import { SleepMode } from '@prisma/client';
 
 export class UpdateUserSettingsDto {
   @IsOptional()

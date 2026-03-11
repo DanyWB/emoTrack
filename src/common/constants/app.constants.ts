@@ -30,6 +30,11 @@ export const TELEGRAM_CALLBACKS = {
   checkinEventAdd: 'checkin:event:add',
 
   eventTypePrefix: 'event:type:',
+  statsPeriodPrefix: 'stats:period:',
+  settingsRemindersToggle: 'settings:reminders:toggle',
+  settingsReminderTimeEdit: 'settings:reminder-time:edit',
+  settingsSleepModeSelect: 'settings:sleep-mode:select',
+  settingsSleepModePrefix: 'settings:sleep-mode:',
 
   actionCancel: 'action:cancel',
   actionBack: 'action:back',

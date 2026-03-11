@@ -5,6 +5,7 @@ import { AnalyticsService } from '../analytics/analytics.service';
 import { FsmService } from '../fsm/fsm.service';
 import { FSM_STATES } from '../fsm/fsm.types';
 import { isValidTimeFormat } from '../common/utils/validation.utils';
+import { RemindersService } from '../reminders/reminders.service';
 import { OnboardingService } from './onboarding.service';
 
 export type OnboardingStepType =
@@ -25,6 +26,7 @@ export class OnboardingFlow {
     private readonly onboardingService: OnboardingService,
     private readonly fsmService: FsmService,
     private readonly analyticsService: AnalyticsService,
+    private readonly remindersService: RemindersService,
   ) {}
 
   async startOrResume(user: User, includeIntro = false): Promise<OnboardingStepResult> {
@@ -71,6 +73,7 @@ export class OnboardingFlow {
 
     await this.onboardingService.setReminderTime(user.id, reminderTime);
     await this.analyticsService.track('reminder_time_set', { reminderTime }, user.id);
+    await this.remindersService.rescheduleDailyReminder(user.id);
 
     if (!user.onboardingCompleted) {
       await this.onboardingService.completeOnboarding(user.id);

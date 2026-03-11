@@ -1,4 +1,4 @@
-﻿import type { EventType } from '@prisma/client';
+﻿import type { EventType, SleepMode, SummaryPeriodType } from '@prisma/client';
 
 import { formatDateKey } from '../common/utils/date.utils';
 
@@ -17,6 +17,18 @@ export const EVENT_TYPE_LABELS: Record<EventType, string> = {
   other: 'Другое',
 };
 
+export const SLEEP_MODE_LABELS: Record<SleepMode, string> = {
+  hours: 'Только часы',
+  quality: 'Только качество',
+  both: 'Часы и качество',
+};
+
+export const STATS_PERIOD_LABELS: Record<SummaryPeriodType, string> = {
+  d7: '7 дней',
+  d30: '30 дней',
+  all: 'За всё время',
+};
+
 export const telegramCopy = {
   buttons: {
     consentAccept: 'Согласен',
@@ -29,20 +41,28 @@ export const telegramCopy = {
     chooseTags: 'Выбрать теги',
     tagsDone: 'Готово',
     addEvent: 'Добавить событие',
+    stats7d: '7 дней',
+    stats30d: '30 дней',
+    statsAll: 'За всё время',
+    settingsToggleReminders: 'Вкл/выкл напоминания',
+    settingsEditReminderTime: 'Изменить время',
+    settingsSleepMode: 'Режим сна',
+    sleepModeHours: 'Только часы',
+    sleepModeQuality: 'Только качество',
+    sleepModeBoth: 'Часы и качество',
   },
   startup: {
     alreadyReady: 'Профиль уже настроен. Можно отмечать состояние.',
     unknownInput: 'Не понял сообщение. Выбери действие из меню или используй команду.',
   },
   placeholders: {
-    stats: 'Статистика будет доступна на следующем этапе.',
-    settings: 'Настройки будут расширены на следующем этапе.',
-    help: 'emoTrack помогает отслеживать состояние по дням. Это не диагностика и не замена специалиста.',
+    help: 'Справка временно недоступна.',
   },
   common: {
     cancelled: 'Действие отменено.',
     backUnavailable: 'Назад на этом шаге недоступно.',
     actionNotAllowed: 'Это действие сейчас недоступно. Продолжим текущий шаг.',
+    updated: 'Сохранено.',
   },
   onboarding: {
     intro: 'Привет. emoTrack поможет фиксировать состояние по дням.',
@@ -85,6 +105,43 @@ export const telegramCopy = {
   history: {
     title: 'Последние записи:',
     empty: 'Пока нет записей. Начни с /checkin.',
+  },
+  stats: {
+    periodPrompt: 'Выбери период статистики.',
+    loading: 'Собираю сводку…',
+    empty: 'Недостаточно данных для сводки. Сделай несколько отметок и попробуй снова.',
+    chartCombinedCaption: 'График настроения, энергии и стресса.',
+    chartSleepCaption: 'График сна.',
+    chartUnavailable: 'Сейчас не удалось построить графики. Текстовая сводка доступна.',
+  },
+  settings: {
+    title: 'Настройки:',
+    remindersEnabled: 'Напоминания: включены',
+    remindersDisabled: 'Напоминания: выключены',
+    reminderTimeLabel: 'Время напоминания',
+    reminderTimePrompt: 'Введи новое время напоминания в формате HH:mm.',
+    sleepModePrompt: 'Выбери режим сна.',
+    reminderTimeUpdated: 'Время напоминания обновлено.',
+    sleepModeUpdated: 'Режим сна обновлен.',
+    remindersToggled: 'Настройка напоминаний обновлена.',
+  },
+  reminders: {
+    dailyPrompt: 'Напоминание: отметь состояние за сегодня командой /checkin.',
+  },
+  help: {
+    text: [
+      'emoTrack помогает отслеживать состояние, сон и события по дням.',
+      '',
+      'Команды:',
+      '/checkin — отметить состояние',
+      '/event — добавить событие',
+      '/history — последние записи',
+      '/stats — сводка и графики',
+      '/settings — настройки',
+      '/help — помощь',
+      '',
+      'Это не диагностика и не замена специалиста.',
+    ].join('\n'),
   },
   validation: {
     invalidTime: 'Некорректное время. Используй формат HH:mm, например 09:15.',

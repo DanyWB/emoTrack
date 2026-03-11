@@ -1,15 +1,31 @@
-import { Injectable } from '@nestjs/common';
-import { SummaryPeriodType } from '@prisma/client';
+﻿import { Injectable } from '@nestjs/common';
 
-import type { GeneratedCharts } from './charts.types';
+import type { ChartPoint, GeneratedCharts } from './charts.types';
 import { ChartsRenderer } from './charts.renderer';
 
 @Injectable()
 export class ChartsService {
   constructor(private readonly chartsRenderer: ChartsRenderer) {}
 
-  generatePeriodCharts(_userId: string, _periodType: SummaryPeriodType): Promise<GeneratedCharts> {
-    return Promise.resolve({});
+  async generatePeriodCharts(points: ChartPoint[]): Promise<GeneratedCharts> {
+    if (points.length === 0) {
+      return {};
+    }
+
+    const combinedChartBuffer = await this.renderCombinedChart(points);
+    const hasSleepData = points.some(
+      (point) => typeof point.sleepHours === 'number' || typeof point.sleepQuality === 'number',
+    );
+
+    if (!hasSleepData) {
+      return { combinedChartBuffer };
+    }
+
+    const sleepChartBuffer = await this.renderSleepChart(points);
+    return {
+      combinedChartBuffer,
+      sleepChartBuffer,
+    };
   }
 
   renderCombinedChart(points: Parameters<ChartsRenderer['renderCombinedChart']>[0]) {

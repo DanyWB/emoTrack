@@ -43,4 +43,5 @@ export interface CheckinDraftPayload extends FsmPayload {
   eventType?: EventType;
   eventTitle?: string;
   eventScore?: number;
+  settingsAwaiting?: 'reminder_time' | 'sleep_mode';
 }

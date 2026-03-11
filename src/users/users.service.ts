@@ -19,6 +19,10 @@ export class UsersService {
     return this.usersRepository.findByTelegramId(telegramId);
   }
 
+  findById(userId: string): Promise<User | null> {
+    return this.usersRepository.findById(userId);
+  }
+
   createFromTelegramProfile(profile: TelegramProfile): Promise<User> {
     return this.usersRepository.create({
       telegramId: profile.telegramId,
@@ -48,6 +52,10 @@ export class UsersService {
 
   setReminderTime(userId: string, time: string): Promise<User> {
     return this.usersRepository.setReminderTime(userId, time);
+  }
+
+  setRemindersEnabled(userId: string, remindersEnabled: boolean): Promise<User> {
+    return this.usersRepository.update(userId, { remindersEnabled });
   }
 
   setConsentGiven(userId: string, consentGiven: boolean): Promise<User> {

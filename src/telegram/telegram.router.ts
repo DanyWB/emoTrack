@@ -1,28 +1,30 @@
 ﻿import { Injectable, Logger } from '@nestjs/common';
-import type { User } from '@prisma/client';
+import { SleepMode, SummaryPeriodType, type User } from '@prisma/client';
 import type { Context, Telegraf } from 'telegraf';
 
 import { AnalyticsService } from '../analytics/analytics.service';
+import { ChartsService } from '../charts/charts.service';
 import { CheckinsFlowService, type CheckinFlowResult } from '../checkins/checkins.flow';
 import { CheckinsService } from '../checkins/checkins.service';
 import { TELEGRAM_CALLBACKS, TELEGRAM_MAIN_MENU_BUTTONS } from '../common/constants/app.constants';
+import { isValidTimeFormat } from '../common/utils/validation.utils';
 import { EventsFlowService, type EventFlowResult } from '../events/events.flow';
 import { FsmService } from '../fsm/fsm.service';
 import { FSM_STATES, type CheckinDraftPayload, type FsmState } from '../fsm/fsm.types';
 import { OnboardingFlow } from '../onboarding/onboarding.flow';
+import { RemindersService } from '../reminders/reminders.service';
+import { SummariesService } from '../summaries/summaries.service';
+import { type PeriodStatsPayload } from '../stats/stats.types';
 import { TagsService } from '../tags/tags.service';
 import { UsersService } from '../users/users.service';
 import {
+  SLEEP_MODE_LABELS,
   formatCheckinConfirmation,
   formatHistoryEntries,
   telegramCopy,
   type CheckinConfirmationData,
 } from './telegram.copy';
-import {
-  extractTelegramProfile,
-  getCallbackData,
-  normalizeTelegramText,
-} from './telegram.helpers';
+import { extractTelegramProfile, getCallbackData, normalizeTelegramText } from './telegram.helpers';
 import { telegramKeyboards } from './telegram.keyboards';
 
 @Injectable()
@@ -35,76 +37,36 @@ export class TelegramRouter {
     private readonly checkinsFlow: CheckinsFlowService,
     private readonly checkinsService: CheckinsService,
     private readonly eventsFlow: EventsFlowService,
+    private readonly summariesService: SummariesService,
+    private readonly chartsService: ChartsService,
+    private readonly remindersService: RemindersService,
     private readonly tagsService: TagsService,
     private readonly fsmService: FsmService,
     private readonly analyticsService: AnalyticsService,
   ) {}
 
   register(bot: Telegraf<Context>): void {
-    bot.start(async (ctx) => {
-      await this.handleStartCommand(ctx);
-    });
+    bot.start((ctx) => this.handleStartCommand(ctx));
+    bot.command('checkin', (ctx) => this.handleCheckinCommand(ctx));
+    bot.command('event', (ctx) => this.handleEventCommand(ctx));
+    bot.command('stats', (ctx) => this.handleStatsCommand(ctx));
+    bot.command('history', (ctx) => this.handleHistoryCommand(ctx));
+    bot.command('settings', (ctx) => this.handleSettingsCommand(ctx));
+    bot.command('help', (ctx) => this.handleHelpCommand(ctx));
 
-    bot.command('checkin', async (ctx) => {
-      await this.handleCheckinCommand(ctx);
-    });
+    bot.hears(TELEGRAM_MAIN_MENU_BUTTONS[0], (ctx) => this.handleCheckinCommand(ctx));
+    bot.hears(TELEGRAM_MAIN_MENU_BUTTONS[1], (ctx) => this.handleEventCommand(ctx));
+    bot.hears(TELEGRAM_MAIN_MENU_BUTTONS[2], (ctx) => this.handleStatsCommand(ctx));
+    bot.hears(TELEGRAM_MAIN_MENU_BUTTONS[3], (ctx) => this.handleHistoryCommand(ctx));
+    bot.hears(TELEGRAM_MAIN_MENU_BUTTONS[4], (ctx) => this.handleSettingsCommand(ctx));
+    bot.hears(TELEGRAM_MAIN_MENU_BUTTONS[5], (ctx) => this.handleHelpCommand(ctx));
 
-    bot.command('event', async (ctx) => {
-      await this.handleEventCommand(ctx);
-    });
-
-    bot.command('stats', async (ctx) => {
-      await ctx.reply(telegramCopy.placeholders.stats, telegramKeyboards.mainMenu());
-    });
-
-    bot.command('history', async (ctx) => {
-      await this.handleHistoryCommand(ctx);
-    });
-
-    bot.command('settings', async (ctx) => {
-      await ctx.reply(telegramCopy.placeholders.settings, telegramKeyboards.mainMenu());
-    });
-
-    bot.command('help', async (ctx) => {
-      await ctx.reply(telegramCopy.placeholders.help, telegramKeyboards.mainMenu());
-    });
-
-    bot.hears(TELEGRAM_MAIN_MENU_BUTTONS[0], async (ctx) => {
-      await this.handleCheckinCommand(ctx);
-    });
-
-    bot.hears(TELEGRAM_MAIN_MENU_BUTTONS[1], async (ctx) => {
-      await this.handleEventCommand(ctx);
-    });
-
-    bot.hears(TELEGRAM_MAIN_MENU_BUTTONS[2], async (ctx) => {
-      await ctx.reply(telegramCopy.placeholders.stats, telegramKeyboards.mainMenu());
-    });
-
-    bot.hears(TELEGRAM_MAIN_MENU_BUTTONS[3], async (ctx) => {
-      await this.handleHistoryCommand(ctx);
-    });
-
-    bot.hears(TELEGRAM_MAIN_MENU_BUTTONS[4], async (ctx) => {
-      await ctx.reply(telegramCopy.placeholders.settings, telegramKeyboards.mainMenu());
-    });
-
-    bot.hears(TELEGRAM_MAIN_MENU_BUTTONS[5], async (ctx) => {
-      await ctx.reply(telegramCopy.placeholders.help, telegramKeyboards.mainMenu());
-    });
-
-    bot.on('callback_query', async (ctx) => {
-      await this.handleCallbackQuery(ctx);
-    });
-
-    bot.on('text', async (ctx) => {
-      await this.handleTextMessage(ctx);
-    });
+    bot.on('callback_query', (ctx) => this.handleCallbackQuery(ctx));
+    bot.on('text', (ctx) => this.handleTextMessage(ctx));
   }
 
   private async handleStartCommand(ctx: Context): Promise<void> {
     const user = await this.getOrCreateUserFromContext(ctx);
-
     if (!user) {
       return;
     }
@@ -128,14 +90,7 @@ export class TelegramRouter {
 
   private async handleCheckinCommand(ctx: Context): Promise<void> {
     const user = await this.getOrCreateUserFromContext(ctx);
-
-    if (!user) {
-      return;
-    }
-
-    const canContinue = await this.ensureOnboardingCompleted(ctx, user);
-
-    if (!canContinue) {
+    if (!user || !(await this.ensureOnboardingCompleted(ctx, user))) {
       return;
     }
 
@@ -146,14 +101,7 @@ export class TelegramRouter {
 
   private async handleEventCommand(ctx: Context): Promise<void> {
     const user = await this.getOrCreateUserFromContext(ctx);
-
-    if (!user) {
-      return;
-    }
-
-    const canContinue = await this.ensureOnboardingCompleted(ctx, user);
-
-    if (!canContinue) {
+    if (!user || !(await this.ensureOnboardingCompleted(ctx, user))) {
       return;
     }
 
@@ -162,40 +110,55 @@ export class TelegramRouter {
     await this.replyEventResult(ctx, user, result);
   }
 
-  private async handleHistoryCommand(ctx: Context): Promise<void> {
+  private async handleStatsCommand(ctx: Context): Promise<void> {
     const user = await this.getOrCreateUserFromContext(ctx);
-
-    if (!user) {
+    if (!user || !(await this.ensureOnboardingCompleted(ctx, user))) {
       return;
     }
 
-    const canContinue = await this.ensureOnboardingCompleted(ctx, user);
+    await this.fsmService.setState(user.id, FSM_STATES.stats_period_select, {});
+    await this.analyticsService.track('stats_requested', {}, user.id);
+    await ctx.reply(telegramCopy.stats.periodPrompt, telegramKeyboards.statsPeriodSelector());
+  }
 
-    if (!canContinue) {
+  private async handleHistoryCommand(ctx: Context): Promise<void> {
+    const user = await this.getOrCreateUserFromContext(ctx);
+    if (!user || !(await this.ensureOnboardingCompleted(ctx, user))) {
       return;
     }
 
     await this.analyticsService.track('history_requested', {}, user.id);
-
     const entries = await this.checkinsService.getRecentEntries(user.id, 7);
     await ctx.reply(formatHistoryEntries(entries), telegramKeyboards.mainMenu());
   }
 
+  private async handleSettingsCommand(ctx: Context): Promise<void> {
+    const user = await this.getOrCreateUserFromContext(ctx);
+    if (!user || !(await this.ensureOnboardingCompleted(ctx, user))) {
+      return;
+    }
+
+    await this.fsmService.setState(user.id, FSM_STATES.settings_menu, {});
+    await this.analyticsService.track('settings_opened', {}, user.id);
+    await this.replySettingsMenu(ctx, user);
+  }
+
+  private async handleHelpCommand(ctx: Context): Promise<void> {
+    await ctx.reply(telegramCopy.help.text, telegramKeyboards.mainMenu());
+  }
+
   private async handleCallbackQuery(ctx: Context): Promise<void> {
     const callbackData = getCallbackData(ctx);
-
     if (!callbackData) {
       return;
     }
 
     const user = await this.getOrCreateUserFromContext(ctx);
-
     if (!user) {
       return;
     }
 
     await ctx.answerCbQuery().catch(() => undefined);
-
     const state = await this.fsmService.getState(user.id);
 
     if (callbackData === TELEGRAM_CALLBACKS.actionCancel) {
@@ -212,6 +175,15 @@ export class TelegramRouter {
     }
 
     if (callbackData === TELEGRAM_CALLBACKS.actionBack) {
+      if (state === FSM_STATES.settings_menu) {
+        const payload = await this.getSessionPayload(user.id);
+        if (payload.settingsAwaiting === 'sleep_mode') {
+          await this.fsmService.setState(user.id, FSM_STATES.settings_menu, {});
+          await this.replySettingsMenu(ctx, user);
+          return;
+        }
+      }
+
       if (this.isEventState(state)) {
         const result = await this.eventsFlow.goBack(user);
         await this.replyEventResult(ctx, user, result);
@@ -240,7 +212,6 @@ export class TelegramRouter {
       await this.replyCheckinResult(ctx, user, result);
       return;
     }
-
     if (callbackData === TELEGRAM_CALLBACKS.consentAccept) {
       if (state !== FSM_STATES.onboarding_consent) {
         await ctx.reply(telegramCopy.common.actionNotAllowed);
@@ -303,6 +274,98 @@ export class TelegramRouter {
       return;
     }
 
+    if (callbackData.startsWith(TELEGRAM_CALLBACKS.statsPeriodPrefix)) {
+      if (state !== FSM_STATES.stats_period_select) {
+        await ctx.reply(telegramCopy.common.actionNotAllowed);
+        return;
+      }
+
+      const periodRaw = callbackData.slice(TELEGRAM_CALLBACKS.statsPeriodPrefix.length);
+      const periodType = this.parseSummaryPeriod(periodRaw);
+
+      if (!periodType) {
+        await ctx.reply(telegramCopy.common.actionNotAllowed);
+        return;
+      }
+
+      await this.handleStatsPeriodSelection(ctx, user, periodType);
+      return;
+    }
+
+    if (callbackData === TELEGRAM_CALLBACKS.settingsRemindersToggle) {
+      if (state !== FSM_STATES.settings_menu) {
+        await ctx.reply(telegramCopy.common.actionNotAllowed);
+        return;
+      }
+
+      const updatedUser = await this.usersService.setRemindersEnabled(user.id, !user.remindersEnabled);
+
+      if (updatedUser.remindersEnabled) {
+        await this.remindersService.rescheduleDailyReminder(user.id);
+      } else {
+        await this.remindersService.cancelDailyReminder(user.id);
+      }
+
+      await this.analyticsService.track(
+        'settings_updated',
+        { field: 'remindersEnabled', value: updatedUser.remindersEnabled },
+        user.id,
+      );
+
+      await ctx.reply(telegramCopy.settings.remindersToggled);
+      await this.replySettingsMenu(ctx, updatedUser);
+      return;
+    }
+
+    if (callbackData === TELEGRAM_CALLBACKS.settingsReminderTimeEdit) {
+      if (state !== FSM_STATES.settings_menu) {
+        await ctx.reply(telegramCopy.common.actionNotAllowed);
+        return;
+      }
+
+      await this.fsmService.setState(user.id, FSM_STATES.settings_menu, {
+        settingsAwaiting: 'reminder_time',
+      });
+      await ctx.reply(telegramCopy.settings.reminderTimePrompt, telegramKeyboards.cancelOnly());
+      return;
+    }
+
+    if (callbackData === TELEGRAM_CALLBACKS.settingsSleepModeSelect) {
+      if (state !== FSM_STATES.settings_menu) {
+        await ctx.reply(telegramCopy.common.actionNotAllowed);
+        return;
+      }
+
+      await this.fsmService.setState(user.id, FSM_STATES.settings_menu, {
+        settingsAwaiting: 'sleep_mode',
+      });
+      await ctx.reply(telegramCopy.settings.sleepModePrompt, telegramKeyboards.settingsSleepMode());
+      return;
+    }
+
+    if (callbackData.startsWith(TELEGRAM_CALLBACKS.settingsSleepModePrefix)) {
+      if (state !== FSM_STATES.settings_menu) {
+        await ctx.reply(telegramCopy.common.actionNotAllowed);
+        return;
+      }
+
+      const modeRaw = callbackData.slice(TELEGRAM_CALLBACKS.settingsSleepModePrefix.length);
+      const sleepMode = this.parseSleepMode(modeRaw);
+
+      if (!sleepMode) {
+        await ctx.reply(telegramCopy.common.actionNotAllowed);
+        return;
+      }
+
+      const updatedUser = await this.usersService.setSleepMode(user.id, sleepMode);
+      await this.fsmService.setState(user.id, FSM_STATES.settings_menu, {});
+      await this.analyticsService.track('settings_updated', { field: 'sleepMode', value: sleepMode }, user.id);
+
+      await ctx.reply(telegramCopy.settings.sleepModeUpdated);
+      await this.replySettingsMenu(ctx, updatedUser);
+      return;
+    }
+
     if (callbackData.startsWith(TELEGRAM_CALLBACKS.scorePrefix)) {
       const scoreRaw = callbackData.slice(TELEGRAM_CALLBACKS.scorePrefix.length);
 
@@ -353,10 +416,7 @@ export class TelegramRouter {
         await ctx.reply(telegramCopy.onboarding.consentPrompt, telegramKeyboards.consent());
         return;
       case FSM_STATES.onboarding_first_checkin:
-        await ctx.reply(
-          telegramCopy.onboarding.firstCheckinOffer,
-          telegramKeyboards.onboardingFirstCheckin(),
-        );
+        await ctx.reply(telegramCopy.onboarding.firstCheckinOffer, telegramKeyboards.onboardingFirstCheckin());
         return;
       case FSM_STATES.checkin_mood:
       case FSM_STATES.checkin_energy:
@@ -386,33 +446,125 @@ export class TelegramRouter {
       case FSM_STATES.event_type:
       case FSM_STATES.event_title:
       case FSM_STATES.event_score:
-      case FSM_STATES.event_description: {
+      case FSM_STATES.event_description:
         await this.handleEventTextByState(ctx, user, state, text);
         return;
-      }
-      default: {
-        if (!user.onboardingCompleted) {
-          await ctx.reply(telegramCopy.onboarding.incompleteRedirect);
-          const onboarding = await this.onboardingFlow.startOrResume(user, false);
+      case FSM_STATES.settings_menu:
+        await this.handleSettingsTextInput(ctx, user, text);
+        return;
+      case FSM_STATES.stats_period_select:
+        await ctx.reply(telegramCopy.stats.periodPrompt, telegramKeyboards.statsPeriodSelector());
+        return;
+      default:
+        break;
+    }
 
-          if (onboarding.step === 'already_ready') {
-            await ctx.reply(telegramCopy.startup.alreadyReady, telegramKeyboards.mainMenu());
-            return;
-          }
+    if (!user.onboardingCompleted) {
+      await ctx.reply(telegramCopy.onboarding.incompleteRedirect);
+      const onboarding = await this.onboardingFlow.startOrResume(user, false);
 
-          if (onboarding.step === 'invalid_reminder_time') {
-            await ctx.reply(telegramCopy.validation.invalidTime, telegramKeyboards.cancelOnly());
-            return;
-          }
-
-          await this.replyOnboardingStep(ctx, onboarding.step, onboarding.includeIntro ?? false);
-          return;
-        }
-
-        await ctx.reply(telegramCopy.startup.unknownInput, telegramKeyboards.mainMenu());
+      if (onboarding.step === 'already_ready') {
+        await ctx.reply(telegramCopy.startup.alreadyReady, telegramKeyboards.mainMenu());
         return;
       }
+
+      if (onboarding.step === 'invalid_reminder_time') {
+        await ctx.reply(telegramCopy.validation.invalidTime, telegramKeyboards.cancelOnly());
+        return;
+      }
+
+      await this.replyOnboardingStep(ctx, onboarding.step, onboarding.includeIntro ?? false);
+      return;
     }
+
+    await ctx.reply(telegramCopy.startup.unknownInput, telegramKeyboards.mainMenu());
+  }
+
+  private async handleStatsPeriodSelection(
+    ctx: Context,
+    user: User,
+    periodType: SummaryPeriodType,
+  ): Promise<void> {
+    await this.analyticsService.track('summary_requested', { periodType }, user.id);
+    await ctx.reply(telegramCopy.stats.loading);
+
+    const payload = await this.summariesService.generateSummary(user.id, periodType, {
+      timezone: user.timezone,
+      persist: true,
+    });
+
+    if (payload.entriesCount === 0) {
+      await this.fsmService.setIdle(user.id);
+      await ctx.reply(telegramCopy.stats.empty, telegramKeyboards.mainMenu());
+      return;
+    }
+
+    await ctx.reply(this.summariesService.formatSummaryText(payload), telegramKeyboards.mainMenu());
+    await this.analyticsService.track('summary_sent', { periodType }, user.id);
+
+    await this.sendStatsCharts(ctx, user, payload);
+    await this.fsmService.setIdle(user.id);
+  }
+
+  private async sendStatsCharts(ctx: Context, user: User, payload: PeriodStatsPayload): Promise<void> {
+    try {
+      const charts = await this.chartsService.generatePeriodCharts(payload.chartPoints);
+
+      if (charts.combinedChartBuffer) {
+        await ctx.replyWithPhoto(
+          { source: charts.combinedChartBuffer },
+          { caption: telegramCopy.stats.chartCombinedCaption },
+        );
+      }
+
+      if (charts.sleepChartBuffer) {
+        await ctx.replyWithPhoto(
+          { source: charts.sleepChartBuffer },
+          { caption: telegramCopy.stats.chartSleepCaption },
+        );
+      }
+
+      if (charts.combinedChartBuffer || charts.sleepChartBuffer) {
+        await this.analyticsService.track(
+          'chart_generated',
+          {
+            combined: !!charts.combinedChartBuffer,
+            sleep: !!charts.sleepChartBuffer,
+          },
+          user.id,
+        );
+      }
+    } catch (error) {
+      this.logger.warn(`Chart generation failed: ${(error as Error).message}`);
+      await this.analyticsService.track('chart_generation_failed', { reason: (error as Error).message }, user.id);
+      await ctx.reply(telegramCopy.stats.chartUnavailable);
+    }
+  }
+
+  private async handleSettingsTextInput(ctx: Context, user: User, text: string): Promise<void> {
+    const payload = await this.getSessionPayload(user.id);
+
+    if (payload.settingsAwaiting !== 'reminder_time') {
+      await this.replySettingsMenu(ctx, user);
+      return;
+    }
+
+    if (!isValidTimeFormat(text)) {
+      await ctx.reply(telegramCopy.validation.invalidTime, telegramKeyboards.cancelOnly());
+      return;
+    }
+
+    const updatedUser = await this.usersService.setReminderTime(user.id, text);
+
+    if (updatedUser.remindersEnabled) {
+      await this.remindersService.rescheduleDailyReminder(user.id);
+    }
+
+    await this.fsmService.setState(user.id, FSM_STATES.settings_menu, {});
+    await this.analyticsService.track('settings_updated', { field: 'reminderTime', value: text }, user.id);
+
+    await ctx.reply(telegramCopy.settings.reminderTimeUpdated);
+    await this.replySettingsMenu(ctx, updatedUser);
   }
 
   private async handleEventTextByState(
@@ -483,11 +635,7 @@ export class TelegramRouter {
     await ctx.reply(telegramCopy.onboarding.firstCheckinOffer, telegramKeyboards.onboardingFirstCheckin());
   }
 
-  private async replyCheckinResult(
-    ctx: Context,
-    user: User,
-    result: CheckinFlowResult,
-  ): Promise<void> {
+  private async replyCheckinResult(ctx: Context, user: User, result: CheckinFlowResult): Promise<void> {
     if (result.status === 'next' && result.nextState) {
       await this.replyCheckinPromptByState(ctx, user, result.nextState, result.selectedTagIds);
       return;
@@ -705,6 +853,17 @@ export class TelegramRouter {
     }
   }
 
+  private async replySettingsMenu(ctx: Context, user: User): Promise<void> {
+    const lines = [
+      telegramCopy.settings.title,
+      user.remindersEnabled ? telegramCopy.settings.remindersEnabled : telegramCopy.settings.remindersDisabled,
+      `${telegramCopy.settings.reminderTimeLabel}: ${user.reminderTime ?? '—'}`,
+      `Режим сна: ${SLEEP_MODE_LABELS[user.sleepMode]}`,
+    ];
+
+    await ctx.reply(lines.join('\n'), telegramKeyboards.settingsMenu(user.remindersEnabled));
+  }
+
   private async ensureOnboardingCompleted(ctx: Context, user: User): Promise<boolean> {
     if (user.onboardingCompleted) {
       return true;
@@ -751,6 +910,32 @@ export class TelegramRouter {
       state === FSM_STATES.event_score ||
       state === FSM_STATES.event_description
     );
+  }
+
+  private parseSummaryPeriod(value: string): SummaryPeriodType | null {
+    if (value === SummaryPeriodType.d7 || value === SummaryPeriodType.d30 || value === SummaryPeriodType.all) {
+      return value;
+    }
+
+    return null;
+  }
+
+  private parseSleepMode(value: string): SleepMode | null {
+    if (value === SleepMode.hours || value === SleepMode.quality || value === SleepMode.both) {
+      return value;
+    }
+
+    return null;
+  }
+
+  private async getSessionPayload(userId: string): Promise<CheckinDraftPayload> {
+    const session = await this.fsmService.getSession(userId);
+
+    if (!session?.payloadJson || typeof session.payloadJson !== 'object') {
+      return {};
+    }
+
+    return session.payloadJson as CheckinDraftPayload;
   }
 
   private async getOrCreateUserFromContext(ctx: Context): Promise<User | null> {

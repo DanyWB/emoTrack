@@ -2,7 +2,7 @@
 import { Markup } from 'telegraf';
 
 import { TELEGRAM_CALLBACKS, TELEGRAM_MAIN_MENU_BUTTONS } from '../common/constants/app.constants';
-import { EVENT_TYPE_LABELS, telegramCopy } from './telegram.copy';
+import { EVENT_TYPE_LABELS, SLEEP_MODE_LABELS, telegramCopy } from './telegram.copy';
 
 type CallbackButton = ReturnType<typeof Markup.button.callback>;
 
@@ -128,4 +128,34 @@ export const telegramKeyboards = {
 
   eventDescriptionActions: (options: { back?: boolean } = {}) =>
     Markup.inlineKeyboard([actionRow({ back: options.back, skip: true })]),
+
+  statsPeriodSelector: () =>
+    Markup.inlineKeyboard([
+      [Markup.button.callback(telegramCopy.buttons.stats7d, `${TELEGRAM_CALLBACKS.statsPeriodPrefix}d7`)],
+      [Markup.button.callback(telegramCopy.buttons.stats30d, `${TELEGRAM_CALLBACKS.statsPeriodPrefix}d30`)],
+      [Markup.button.callback(telegramCopy.buttons.statsAll, `${TELEGRAM_CALLBACKS.statsPeriodPrefix}all`)],
+      [Markup.button.callback(telegramCopy.buttons.cancel, TELEGRAM_CALLBACKS.actionCancel)],
+    ]),
+
+  settingsMenu: (remindersEnabled: boolean) =>
+    Markup.inlineKeyboard([
+      [
+        Markup.button.callback(
+          `${telegramCopy.buttons.settingsToggleReminders}: ${remindersEnabled ? 'ON' : 'OFF'}`,
+          TELEGRAM_CALLBACKS.settingsRemindersToggle,
+        ),
+      ],
+      [Markup.button.callback(telegramCopy.buttons.settingsEditReminderTime, TELEGRAM_CALLBACKS.settingsReminderTimeEdit)],
+      [Markup.button.callback(telegramCopy.buttons.settingsSleepMode, TELEGRAM_CALLBACKS.settingsSleepModeSelect)],
+      [Markup.button.callback(telegramCopy.buttons.cancel, TELEGRAM_CALLBACKS.actionCancel)],
+    ]),
+
+  settingsSleepMode: () =>
+    Markup.inlineKeyboard([
+      [Markup.button.callback(SLEEP_MODE_LABELS.hours, `${TELEGRAM_CALLBACKS.settingsSleepModePrefix}hours`)],
+      [Markup.button.callback(SLEEP_MODE_LABELS.quality, `${TELEGRAM_CALLBACKS.settingsSleepModePrefix}quality`)],
+      [Markup.button.callback(SLEEP_MODE_LABELS.both, `${TELEGRAM_CALLBACKS.settingsSleepModePrefix}both`)],
+      [Markup.button.callback(telegramCopy.buttons.back, TELEGRAM_CALLBACKS.actionBack)],
+      [Markup.button.callback(telegramCopy.buttons.cancel, TELEGRAM_CALLBACKS.actionCancel)],
+    ]),
 };

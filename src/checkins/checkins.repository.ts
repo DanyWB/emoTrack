@@ -96,4 +96,17 @@ export class CheckinsRepository {
       },
     });
   }
+
+  findByUserAndDateRange(userId: string, from: Date, to: Date): Promise<DailyEntry[]> {
+    return this.prisma.dailyEntry.findMany({
+      where: {
+        userId,
+        entryDate: {
+          gte: from,
+          lte: to,
+        },
+      },
+      orderBy: [{ entryDate: 'asc' }],
+    });
+  }
 }

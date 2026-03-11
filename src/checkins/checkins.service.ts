@@ -108,8 +108,8 @@ export class CheckinsService {
     await this.checkinsRepository.replaceTags(entryId, validTagIds);
   }
 
-  getEntriesForPeriod(_userId: string, _from: Date, _to: Date): Promise<unknown[]> {
-    return Promise.resolve([]);
+  getEntriesForPeriod(userId: string, from: Date, to: Date): Promise<DailyEntry[]> {
+    return this.checkinsRepository.findByUserAndDateRange(userId, from, to);
   }
 
   async getRecentEntries(userId: string, limit: number, _cursor?: string): Promise<RecentEntryView[]> {
