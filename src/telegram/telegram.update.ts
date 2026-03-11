@@ -55,7 +55,8 @@ export class TelegramUpdate implements OnModuleInit, OnModuleDestroy {
       this.isLaunched = true;
       this.logger.log('Telegram bot launched in polling mode.');
     } catch (error) {
-      this.logger.error('Failed to launch Telegram bot', error as Error);
+      const err = error as Error;
+      this.logger.error(`Failed to launch Telegram bot: ${err.message}`, err.stack);
     }
   }
 

@@ -34,6 +34,10 @@ export class SummariesService {
       }
     }
 
+    this.logger.log(
+      `Generated summary for user ${userId}: period=${periodType}, entries=${payload.entriesCount}, events=${payload.eventsCount}`,
+    );
+
     return payload;
   }
 

@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { DailyEntry } from '@prisma/client';
 
@@ -32,6 +32,7 @@ export interface RecentEntryView {
 
 @Injectable()
 export class CheckinsService {
+  private readonly logger = new Logger(CheckinsService.name);
   private readonly defaultTimezone: string;
 
   constructor(
@@ -72,6 +73,10 @@ export class CheckinsService {
       sleepQuality: payload.sleepQuality,
       noteText: payload.noteText,
     });
+
+    this.logger.log(
+      `${existing ? 'Updated' : 'Created'} daily entry ${entry.id} for user ${userId} on ${entryDate.toISOString().slice(0, 10)}`,
+    );
 
     return {
       entry,

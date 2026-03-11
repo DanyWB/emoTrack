@@ -37,6 +37,7 @@ export class RemindersService {
 
   async scheduleDailyReminder(userId: string): Promise<void> {
     if (!this.jobsEnabled || !this.remindersQueue) {
+      this.logger.debug(`Skipped scheduling reminder for user ${userId} because jobs are disabled.`);
       return;
     }
 
@@ -69,10 +70,13 @@ export class RemindersService {
         },
       },
     );
+
+    this.logger.log(`Scheduled daily reminder for user ${userId} at ${user.reminderTime} (${user.timezone})`);
   }
 
   async rescheduleDailyReminder(userId: string): Promise<void> {
     if (!this.jobsEnabled || !this.remindersQueue) {
+      this.logger.debug(`Skipped rescheduling reminder for user ${userId} because jobs are disabled.`);
       return;
     }
 
@@ -82,10 +86,12 @@ export class RemindersService {
 
   async cancelDailyReminder(userId: string): Promise<void> {
     if (!this.jobsEnabled || !this.remindersQueue) {
+      this.logger.debug(`Skipped reminder cancel for user ${userId} because jobs are disabled.`);
       return;
     }
 
     await this.removeExistingDailyReminder(userId);
+    this.logger.log(`Cancelled daily reminder for user ${userId}`);
   }
 
   async enqueueWeeklySummary(userId: string): Promise<void> {
@@ -124,6 +130,7 @@ export class RemindersService {
     try {
       await this.telegramApi.sendMessage(String(user.telegramId), telegramCopy.reminders.dailyPrompt);
       await this.analyticsService.track('reminder_sent', {}, userId);
+      this.logger.log(`Sent daily reminder to user ${userId}`);
     } catch (error) {
       this.logger.warn(`Failed to send reminder to user ${userId}: ${(error as Error).message}`);
     }

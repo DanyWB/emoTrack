@@ -1,4 +1,4 @@
-﻿import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { SummaryPeriodType, type DailyEntry, type Event } from '@prisma/client';
 
 import { CheckinsService } from '../checkins/checkins.service';
@@ -17,6 +17,8 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 @Injectable()
 export class StatsService {
+  private readonly logger = new Logger(StatsService.name);
+
   constructor(
     private readonly checkinsService: CheckinsService,
     private readonly eventsService: EventsService,
@@ -46,6 +48,10 @@ export class StatsService {
         range.previousPeriodEnd,
       );
     }
+
+    this.logger.log(
+      `Built stats for user ${userId}: period=${periodType}, entries=${entries.length}, events=${events.length}`,
+    );
 
     return {
       periodType,

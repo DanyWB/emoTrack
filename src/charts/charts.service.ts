@@ -1,14 +1,17 @@
-﻿import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 
 import type { ChartPoint, GeneratedCharts } from './charts.types';
 import { ChartsRenderer } from './charts.renderer';
 
 @Injectable()
 export class ChartsService {
+  private readonly logger = new Logger(ChartsService.name);
+
   constructor(private readonly chartsRenderer: ChartsRenderer) {}
 
   async generatePeriodCharts(points: ChartPoint[]): Promise<GeneratedCharts> {
     if (points.length === 0) {
+      this.logger.debug('Skipped chart generation because there are no chart points.');
       return {};
     }
 
@@ -18,10 +21,13 @@ export class ChartsService {
     );
 
     if (!hasSleepData) {
+      this.logger.log(`Generated combined chart for ${points.length} points.`);
       return { combinedChartBuffer };
     }
 
     const sleepChartBuffer = await this.renderSleepChart(points);
+    this.logger.log(`Generated combined and sleep charts for ${points.length} points.`);
+
     return {
       combinedChartBuffer,
       sleepChartBuffer,

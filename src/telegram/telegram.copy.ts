@@ -63,6 +63,7 @@ export const telegramCopy = {
     backUnavailable: 'Назад на этом шаге недоступно.',
     actionNotAllowed: 'Это действие сейчас недоступно. Продолжим текущий шаг.',
     updated: 'Сохранено.',
+    unexpectedError: 'Что-то пошло не так. Попробуй еще раз.',
   },
   onboarding: {
     intro: 'Привет. emoTrack поможет фиксировать состояние по дням.',

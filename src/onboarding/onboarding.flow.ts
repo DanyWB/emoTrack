@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import type { User } from '@prisma/client';
 
 import { AnalyticsService } from '../analytics/analytics.service';
@@ -22,6 +22,8 @@ export interface OnboardingStepResult {
 
 @Injectable()
 export class OnboardingFlow {
+  private readonly logger = new Logger(OnboardingFlow.name);
+
   constructor(
     private readonly onboardingService: OnboardingService,
     private readonly fsmService: FsmService,
@@ -51,6 +53,7 @@ export class OnboardingFlow {
     await this.onboardingService.completeOnboarding(user.id);
     await this.analyticsService.track('onboarding_completed', {}, user.id);
     await this.fsmService.setState(user.id, FSM_STATES.onboarding_first_checkin, {});
+    this.logger.log(`Completed onboarding for user ${user.id}`);
 
     return { step: 'first_checkin_offer' };
   }
@@ -78,6 +81,7 @@ export class OnboardingFlow {
     if (!user.onboardingCompleted) {
       await this.onboardingService.completeOnboarding(user.id);
       await this.analyticsService.track('onboarding_completed', {}, user.id);
+      this.logger.log(`Completed onboarding for user ${user.id}`);
     }
 
     await this.fsmService.setState(user.id, FSM_STATES.onboarding_first_checkin, {});

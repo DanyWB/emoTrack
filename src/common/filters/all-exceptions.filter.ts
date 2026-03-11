@@ -13,6 +13,13 @@ export class AllExceptionsFilter implements ExceptionFilter {
   private readonly logger = new Logger(AllExceptionsFilter.name);
 
   catch(exception: unknown, host: ArgumentsHost): void {
+    const err = exception instanceof Error ? exception : new Error(String(exception));
+
+    if (host.getType() !== 'http') {
+      this.logger.error(`Unhandled non-HTTP exception: ${err.message}`, err.stack);
+      return;
+    }
+
     const ctx = host.switchToHttp();
     const response = ctx.getResponse<Response>();
     const request = ctx.getRequest<Request>();
@@ -25,7 +32,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
         : 'Внутренняя ошибка сервиса. Попробуйте позже.';
 
     if (!(exception instanceof HttpException)) {
-      this.logger.error('Unhandled exception', exception as Error);
+      this.logger.error(`Unhandled exception: ${err.message}`, err.stack);
     }
 
     response.status(status).json({

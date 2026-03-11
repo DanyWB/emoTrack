@@ -46,23 +46,23 @@ export class TelegramRouter {
   ) {}
 
   register(bot: Telegraf<Context>): void {
-    bot.start((ctx) => this.handleStartCommand(ctx));
-    bot.command('checkin', (ctx) => this.handleCheckinCommand(ctx));
-    bot.command('event', (ctx) => this.handleEventCommand(ctx));
-    bot.command('stats', (ctx) => this.handleStatsCommand(ctx));
-    bot.command('history', (ctx) => this.handleHistoryCommand(ctx));
-    bot.command('settings', (ctx) => this.handleSettingsCommand(ctx));
-    bot.command('help', (ctx) => this.handleHelpCommand(ctx));
+    bot.start((ctx) => this.runSafely(ctx, () => this.handleStartCommand(ctx), 'start'));
+    bot.command('checkin', (ctx) => this.runSafely(ctx, () => this.handleCheckinCommand(ctx), 'checkin'));
+    bot.command('event', (ctx) => this.runSafely(ctx, () => this.handleEventCommand(ctx), 'event'));
+    bot.command('stats', (ctx) => this.runSafely(ctx, () => this.handleStatsCommand(ctx), 'stats'));
+    bot.command('history', (ctx) => this.runSafely(ctx, () => this.handleHistoryCommand(ctx), 'history'));
+    bot.command('settings', (ctx) => this.runSafely(ctx, () => this.handleSettingsCommand(ctx), 'settings'));
+    bot.command('help', (ctx) => this.runSafely(ctx, () => this.handleHelpCommand(ctx), 'help'));
 
-    bot.hears(TELEGRAM_MAIN_MENU_BUTTONS[0], (ctx) => this.handleCheckinCommand(ctx));
-    bot.hears(TELEGRAM_MAIN_MENU_BUTTONS[1], (ctx) => this.handleEventCommand(ctx));
-    bot.hears(TELEGRAM_MAIN_MENU_BUTTONS[2], (ctx) => this.handleStatsCommand(ctx));
-    bot.hears(TELEGRAM_MAIN_MENU_BUTTONS[3], (ctx) => this.handleHistoryCommand(ctx));
-    bot.hears(TELEGRAM_MAIN_MENU_BUTTONS[4], (ctx) => this.handleSettingsCommand(ctx));
-    bot.hears(TELEGRAM_MAIN_MENU_BUTTONS[5], (ctx) => this.handleHelpCommand(ctx));
+    bot.hears(TELEGRAM_MAIN_MENU_BUTTONS[0], (ctx) => this.runSafely(ctx, () => this.handleCheckinCommand(ctx), 'menu:checkin'));
+    bot.hears(TELEGRAM_MAIN_MENU_BUTTONS[1], (ctx) => this.runSafely(ctx, () => this.handleEventCommand(ctx), 'menu:event'));
+    bot.hears(TELEGRAM_MAIN_MENU_BUTTONS[2], (ctx) => this.runSafely(ctx, () => this.handleStatsCommand(ctx), 'menu:stats'));
+    bot.hears(TELEGRAM_MAIN_MENU_BUTTONS[3], (ctx) => this.runSafely(ctx, () => this.handleHistoryCommand(ctx), 'menu:history'));
+    bot.hears(TELEGRAM_MAIN_MENU_BUTTONS[4], (ctx) => this.runSafely(ctx, () => this.handleSettingsCommand(ctx), 'menu:settings'));
+    bot.hears(TELEGRAM_MAIN_MENU_BUTTONS[5], (ctx) => this.runSafely(ctx, () => this.handleHelpCommand(ctx), 'menu:help'));
 
-    bot.on('callback_query', (ctx) => this.handleCallbackQuery(ctx));
-    bot.on('text', (ctx) => this.handleTextMessage(ctx));
+    bot.on('callback_query', (ctx) => this.runSafely(ctx, () => this.handleCallbackQuery(ctx), 'callback_query'));
+    bot.on('text', (ctx) => this.runSafely(ctx, () => this.handleTextMessage(ctx), 'text'));
   }
 
   private async handleStartCommand(ctx: Context): Promise<void> {
@@ -118,6 +118,7 @@ export class TelegramRouter {
 
     await this.fsmService.setState(user.id, FSM_STATES.stats_period_select, {});
     await this.analyticsService.track('stats_requested', {}, user.id);
+    this.logger.log(`Opened stats period selector for user ${user.id}`);
     await ctx.reply(telegramCopy.stats.periodPrompt, telegramKeyboards.statsPeriodSelector());
   }
 
@@ -936,6 +937,47 @@ export class TelegramRouter {
     }
 
     return session.payloadJson as CheckinDraftPayload;
+  }
+
+  private async runSafely(
+    ctx: Context,
+    handler: () => Promise<void>,
+    routeKey: string,
+  ): Promise<void> {
+    try {
+      await handler();
+    } catch (error) {
+      const err = error as Error;
+      this.logger.error(`Telegram route failed: ${routeKey}: ${err.message}`, err.stack);
+      await this.recoverFromUnexpectedFlow(ctx);
+
+      try {
+        await ctx.reply(telegramCopy.common.unexpectedError, telegramKeyboards.mainMenu());
+      } catch (replyError) {
+        this.logger.warn(`Failed to send fallback reply for ${routeKey}: ${(replyError as Error).message}`);
+      }
+    }
+  }
+
+  private async recoverFromUnexpectedFlow(ctx: Context): Promise<void> {
+    const profile = extractTelegramProfile(ctx);
+
+    if (!profile) {
+      return;
+    }
+
+    const user = await this.usersService.findByTelegramId(profile.telegramId);
+
+    if (!user) {
+      return;
+    }
+
+    const state = await this.fsmService.getState(user.id);
+
+    if (state !== FSM_STATES.idle) {
+      await this.fsmService.setIdle(user.id);
+      this.logger.warn(`FSM session reset after unexpected error for user ${user.id}`);
+    }
   }
 
   private async getOrCreateUserFromContext(ctx: Context): Promise<User | null> {
