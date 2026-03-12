@@ -1,4 +1,4 @@
-import { SummaryPeriodType } from '@prisma/client';
+import { Prisma, SummaryPeriodType } from '@prisma/client';
 
 import { StatsService } from '../../src/stats/stats.service';
 import { buildDailyEntry, buildEvent } from '../helpers/in-memory';
@@ -119,6 +119,73 @@ describe('StatsService', () => {
       stress: -4,
       sleepHours: null,
       sleepQuality: 2,
+    });
+  });
+
+  it('detects one clear sleep-state pattern and omits weaker competitors', () => {
+    const service = new StatsService({} as never, {} as never);
+    const entries = [
+      buildDailyEntry({ entryDate: new Date('2026-03-01T00:00:00.000Z'), sleepHours: new Prisma.Decimal(5), sleepQuality: null, moodScore: 4, energyScore: 3, stressScore: 5 }),
+      buildDailyEntry({ entryDate: new Date('2026-03-02T00:00:00.000Z'), sleepHours: new Prisma.Decimal(5), sleepQuality: null, moodScore: 4, energyScore: 3, stressScore: 5 }),
+      buildDailyEntry({ entryDate: new Date('2026-03-03T00:00:00.000Z'), sleepHours: new Prisma.Decimal(5), sleepQuality: null, moodScore: 4, energyScore: 3, stressScore: 5 }),
+      buildDailyEntry({ entryDate: new Date('2026-03-04T00:00:00.000Z'), sleepHours: new Prisma.Decimal(8), sleepQuality: null, moodScore: 5, energyScore: 6, stressScore: 4 }),
+      buildDailyEntry({ entryDate: new Date('2026-03-05T00:00:00.000Z'), sleepHours: new Prisma.Decimal(8), sleepQuality: null, moodScore: 5, energyScore: 6, stressScore: 4 }),
+      buildDailyEntry({ entryDate: new Date('2026-03-06T00:00:00.000Z'), sleepHours: new Prisma.Decimal(8), sleepQuality: null, moodScore: 5, energyScore: 6, stressScore: 4 }),
+    ];
+
+    expect(service.findSleepStatePattern(entries)).toEqual({
+      kind: 'sleep_hours_energy',
+      delta: 3,
+    });
+  });
+
+  it('builds a weekday mood pattern only when one best and one worst weekday are clearly separated', () => {
+    const service = new StatsService({} as never, {} as never);
+    const entries = [
+      buildDailyEntry({ entryDate: new Date('2026-03-02T00:00:00.000Z'), moodScore: 4 }),
+      buildDailyEntry({ entryDate: new Date('2026-03-03T00:00:00.000Z'), moodScore: 8 }),
+      buildDailyEntry({ entryDate: new Date('2026-03-04T00:00:00.000Z'), moodScore: 6 }),
+      buildDailyEntry({ entryDate: new Date('2026-03-05T00:00:00.000Z'), moodScore: 6 }),
+      buildDailyEntry({ entryDate: new Date('2026-03-06T00:00:00.000Z'), moodScore: 6 }),
+      buildDailyEntry({ entryDate: new Date('2026-03-07T00:00:00.000Z'), moodScore: 6 }),
+      buildDailyEntry({ entryDate: new Date('2026-03-08T00:00:00.000Z'), moodScore: 6 }),
+      buildDailyEntry({ entryDate: new Date('2026-03-09T00:00:00.000Z'), moodScore: 4 }),
+      buildDailyEntry({ entryDate: new Date('2026-03-10T00:00:00.000Z'), moodScore: 8 }),
+      buildDailyEntry({ entryDate: new Date('2026-03-11T00:00:00.000Z'), moodScore: 6 }),
+      buildDailyEntry({ entryDate: new Date('2026-03-12T00:00:00.000Z'), moodScore: 6 }),
+      buildDailyEntry({ entryDate: new Date('2026-03-13T00:00:00.000Z'), moodScore: 6 }),
+      buildDailyEntry({ entryDate: new Date('2026-03-14T00:00:00.000Z'), moodScore: 6 }),
+      buildDailyEntry({ entryDate: new Date('2026-03-15T00:00:00.000Z'), moodScore: 6 }),
+    ];
+
+    expect(service.findWeekdayMoodPattern(entries)).toEqual({
+      bestWeekday: 2,
+      bestMood: 8,
+      worstWeekday: 1,
+      worstMood: 4,
+    });
+  });
+
+  it('builds a minimal event companion block only for a clear leader and a strong day-level difference', () => {
+    const service = new StatsService({} as never, {} as never);
+    const entries = [
+      buildDailyEntry({ entryDate: new Date('2026-03-01T00:00:00.000Z'), moodScore: 8 }),
+      buildDailyEntry({ entryDate: new Date('2026-03-02T00:00:00.000Z'), moodScore: 8 }),
+      buildDailyEntry({ entryDate: new Date('2026-03-03T00:00:00.000Z'), moodScore: 8 }),
+      buildDailyEntry({ entryDate: new Date('2026-03-04T00:00:00.000Z'), moodScore: 5 }),
+      buildDailyEntry({ entryDate: new Date('2026-03-05T00:00:00.000Z'), moodScore: 5 }),
+      buildDailyEntry({ entryDate: new Date('2026-03-06T00:00:00.000Z'), moodScore: 5 }),
+    ];
+    const events = [
+      buildEvent({ id: 'event-1', eventDate: new Date('2026-03-01T00:00:00.000Z'), eventType: 'work' }),
+      buildEvent({ id: 'event-2', eventDate: new Date('2026-03-02T00:00:00.000Z'), eventType: 'work' }),
+      buildEvent({ id: 'event-3', eventDate: new Date('2026-03-03T00:00:00.000Z'), eventType: 'work' }),
+    ];
+
+    expect(service.buildEventCompanion(entries, events)).toEqual({
+      topEventType: 'work',
+      topEventCount: 3,
+      moodDeltaOnEventDays: 3,
     });
   });
 });

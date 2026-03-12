@@ -333,6 +333,17 @@ Low-data contract:
 
 This threshold is explicit by design. It is only a presentation rule and does not change the underlying stats calculations.
 
+Stage B comparison and pattern notes:
+
+- `d7` and `d30` can show a compact comparison block versus the previous period
+- `all-time` keeps the existing summary semantics and does not invent a previous-period comparison
+- pattern blocks are intentionally conservative and are omitted when the data is sparse, tied, noisy, or weak
+- current pattern set is limited to:
+  - one sleep-to-state observation if the split is strong enough
+  - one weekday mood tendency if repeated weekday data is clearly strong enough
+  - a minimal event companion note with the most frequent event type and at most one simple mood comparison
+- low-data behavior from Stage A is unchanged: low-data summaries do not show comparison or pattern blocks
+
 ## Logging and Error Handling
 
 Operational logging is added around:

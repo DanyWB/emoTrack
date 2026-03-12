@@ -29,6 +29,24 @@ export const STATS_PERIOD_LABELS: Record<SummaryPeriodType, string> = {
   all: 'За всё время',
 };
 
+export const STATS_METRIC_LABELS = {
+  mood: 'Настроение',
+  energy: 'Энергия',
+  stress: 'Стресс',
+  sleepHours: 'Часы сна',
+  sleepQuality: 'Качество сна',
+} as const;
+
+export const WEEKDAY_LABELS = {
+  0: 'воскресенье',
+  1: 'понедельник',
+  2: 'вторник',
+  3: 'среда',
+  4: 'четверг',
+  5: 'пятница',
+  6: 'суббота',
+} as const;
+
 export const telegramCopy = {
   buttons: {
     consentAccept: 'Согласен',
@@ -118,12 +136,21 @@ export const telegramCopy = {
     daysLabel: 'Опорные дни',
     bestDayLabel: 'Лучший день',
     worstDayLabel: 'Сложный день',
+    comparisonLabel: 'Изменение к предыдущему периоду',
+    patternsLabel: 'Наблюдения',
     eventsBreakdownLabel: 'События по типам',
     lowDataLead: 'Данных пока мало, поэтому сводка предварительная.',
     lowDataNote: 'Подробная сводка и графики появятся, когда будет хотя бы 3 записи за период.',
     chartCombinedCaption: 'График настроения, энергии и стресса.',
     chartSleepCaption: 'График сна.',
     chartUnavailable: 'Сейчас не удалось построить графики. Текстовая сводка доступна.',
+    sleepHoursMoodPattern: 'При более долгом сне настроение в среднем выше на {delta}.',
+    sleepHoursEnergyPattern: 'При более долгом сне энергия в среднем выше на {delta}.',
+    sleepQualityStressPattern: 'При более низком качестве сна стресс в среднем выше на {delta}.',
+    weekdayMoodPattern: 'По настроению чаще лучше проходит {best}, сложнее — {worst}.',
+    topEventTypePattern: 'Чаще всего встречалось: {label} ({count}).',
+    eventMoodHigherPattern: 'В дни с событиями настроение в среднем выше на {delta}.',
+    eventMoodLowerPattern: 'В дни с событиями настроение в среднем ниже на {delta}.',
   },
   settings: {
     title: 'Настройки:',

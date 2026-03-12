@@ -81,9 +81,67 @@ describe('Summaries integration', () => {
       sleepHours: 7,
       sleepQuality: 6.33,
     });
+    expect(payload.patternInsights).toBeNull();
     expect(ctx.summariesRepository.summaries).toHaveLength(1);
     expect(text).toContain('Сводка за период: 7 дней');
     expect(text).toContain('Опорные дни:');
+  });
+
+  it('builds comparison and conservative pattern blocks when the dataset is strong enough', async () => {
+    const user = await createReadyUser();
+    const today = ctx.checkinsService.buildEntryDate({
+      date: new Date(),
+      timezone: user.timezone,
+    });
+
+    for (let index = 0; index < 7; index += 1) {
+      const entryDate = new Date(today.getTime() - index * 24 * 60 * 60 * 1000);
+      const isHighSleepDay = index < 3;
+
+      await ctx.checkinsRepository.upsertByUserAndDate(user.id, entryDate, {
+        moodScore: isHighSleepDay ? 8 : 6,
+        energyScore: isHighSleepDay ? 8 : 5,
+        stressScore: isHighSleepDay ? 3 : 5,
+        sleepHours: isHighSleepDay ? 8 : 5,
+        sleepQuality: isHighSleepDay ? 8 : 6,
+      });
+    }
+
+    for (let index = 7; index < 14; index += 1) {
+      const entryDate = new Date(today.getTime() - index * 24 * 60 * 60 * 1000);
+
+      await ctx.checkinsRepository.upsertByUserAndDate(user.id, entryDate, {
+        moodScore: 5,
+        energyScore: 4,
+        stressScore: 6,
+        sleepHours: 6,
+        sleepQuality: 6,
+      });
+    }
+
+    const payload = await ctx.summariesService.generateSummary(user.id, SummaryPeriodType.d7, {
+      timezone: user.timezone,
+      persist: false,
+    });
+    const text = ctx.summariesService.formatSummaryText(payload);
+
+    expect(payload.isLowData).toBe(false);
+    expect(payload.deltaVsPreviousPeriod).toMatchObject({
+      mood: 1.86,
+      energy: 2.29,
+      stress: -1.86,
+      sleepHours: 0.29,
+      sleepQuality: 0.86,
+    });
+    expect(payload.patternInsights?.sleepState).toEqual({
+      kind: 'sleep_hours_energy',
+      delta: 3,
+    });
+    expect(payload.patternInsights?.weekdayMood).toBeNull();
+    expect(payload.patternInsights?.eventCompanion).toBeNull();
+    expect(text).toContain('Изменение к предыдущему периоду:');
+    expect(text).toContain('Наблюдения:');
+    expect(text).toContain('При более долгом сне энергия в среднем выше на 3.00.');
   });
 
   it('uses the low-data summary path and skips charts for sparse periods', async () => {
@@ -137,6 +195,13 @@ describe('Summaries integration', () => {
         ([message]: [string]) =>
           typeof message === 'string' &&
           message.includes('Данных пока мало, поэтому сводка предварительная.'),
+      ),
+    ).toBe(true);
+    expect(
+      telegramCtx.reply.mock.calls.every(
+        ([message]: [string]) =>
+          typeof message !== 'string' ||
+          (!message.includes('Изменение к предыдущему периоду:') && !message.includes('Наблюдения:')),
       ),
     ).toBe(true);
     expect(telegramCtx.replyWithPhoto).not.toHaveBeenCalled();
@@ -200,8 +265,7 @@ describe('Summaries integration', () => {
     expect(telegramCtx.reply).toHaveBeenCalledWith(telegramCopy.stats.loading);
     expect(
       telegramCtx.reply.mock.calls.some(
-        ([message]: [string]) =>
-          typeof message === 'string' && message.includes('Сводка за период: 7 дней'),
+        ([message]: [string]) => typeof message === 'string' && message.includes('Сводка за период: 7 дней'),
       ),
     ).toBe(true);
     expect(telegramCtx.reply).toHaveBeenCalledWith(telegramCopy.stats.chartUnavailable);

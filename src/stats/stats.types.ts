@@ -25,6 +25,35 @@ export interface StatsDelta {
   sleepQuality: number | null;
 }
 
+export type StatsSleepPatternKind =
+  | 'sleep_hours_mood'
+  | 'sleep_hours_energy'
+  | 'sleep_quality_stress';
+
+export interface StatsSleepStatePattern {
+  kind: StatsSleepPatternKind;
+  delta: number;
+}
+
+export interface StatsWeekdayMoodPattern {
+  bestWeekday: number;
+  bestMood: number;
+  worstWeekday: number;
+  worstMood: number;
+}
+
+export interface StatsEventCompanionPattern {
+  topEventType?: EventType;
+  topEventCount?: number;
+  moodDeltaOnEventDays?: number;
+}
+
+export interface StatsPatternInsights {
+  sleepState?: StatsSleepStatePattern | null;
+  weekdayMood?: StatsWeekdayMoodPattern | null;
+  eventCompanion?: StatsEventCompanionPattern | null;
+}
+
 export interface PeriodStatsPayload {
   periodType: SummaryPeriodType;
   periodStart: Date;
@@ -37,6 +66,7 @@ export interface PeriodStatsPayload {
   worstDay: StatsDaySummary | null;
   eventBreakdown: Partial<Record<EventType, number>>;
   deltaVsPreviousPeriod?: StatsDelta | null;
+  patternInsights?: StatsPatternInsights | null;
   chartPoints: ChartPoint[];
 }
 

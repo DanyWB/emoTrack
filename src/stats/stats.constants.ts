@@ -1,4 +1,16 @@
 export const STATS_MIN_ENTRIES_FOR_DETAILED_SUMMARY = 3;
+export const STATS_MIN_ENTRIES_FOR_SLEEP_PATTERN = 6;
+export const STATS_MIN_GROUP_SIZE_FOR_SPLIT_PATTERN = 3;
+export const STATS_MIN_SLEEP_PATTERN_DELTA = 1;
+export const STATS_MIN_SLEEP_PATTERN_WIN_GAP = 0.25;
+export const STATS_MIN_ENTRIES_FOR_WEEKDAY_PATTERN = 10;
+export const STATS_MIN_WEEKDAY_OCCURRENCES = 2;
+export const STATS_MIN_WEEKDAY_PATTERN_DELTA = 1;
+export const STATS_MIN_WEEKDAY_CLEAR_LEAD = 0.5;
+export const STATS_MIN_ENTRIES_FOR_EVENT_PATTERN = 6;
+export const STATS_MIN_EVENT_COMPARISON_GROUP = 3;
+export const STATS_MIN_EVENT_MOOD_DELTA = 1;
+export const STATS_MIN_TOP_EVENT_COUNT = 2;
 
 export function isLowDataStats(entriesCount: number): boolean {
   return entriesCount > 0 && entriesCount < STATS_MIN_ENTRIES_FOR_DETAILED_SUMMARY;

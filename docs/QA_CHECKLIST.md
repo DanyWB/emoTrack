@@ -124,6 +124,11 @@ Use this checklist before a local handoff or release candidate review.
 - with 3 or more entries, `/stats` returns the full summary path
 - summary includes counts and averages
 - best/worst day lines are shown when data exists
+- for `7 days` and `30 days`, a previous-period comparison block appears only when the period is not low-data
+- the comparison block is omitted when the previous period has no usable data
+- pattern blocks appear only when the dataset is clearly strong enough
+- weak or tied signals do not produce a pattern block
+- low-data summaries do not show comparison or pattern blocks
 
 ## Charts
 
