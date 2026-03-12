@@ -22,6 +22,7 @@ import { SummariesModule } from './summaries/summaries.module';
 import { ChartsModule } from './charts/charts.module';
 import { RemindersModule } from './reminders/reminders.module';
 import { AnalyticsModule } from './analytics/analytics.module';
+import { HealthModule } from './health/health.module';
 
 const jobsEnabled = parseBooleanEnv(process.env.JOBS_ENABLED, false);
 
@@ -71,6 +72,7 @@ const jobsEnabled = parseBooleanEnv(process.env.JOBS_ENABLED, false);
     ChartsModule,
     RemindersModule,
     AnalyticsModule,
+    HealthModule,
   ],
 })
 export class AppModule {}

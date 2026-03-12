@@ -64,6 +64,7 @@ Core modules:
 - `charts`: server-side PNG chart rendering
 - `reminders`: reminder scheduling/sending with graceful no-op behavior when jobs are disabled
 - `analytics`: internal product event tracking
+- `health`: liveness and readiness endpoints for operational checks
 - `database`: Prisma and optional Redis wiring
 
 Important design choices:
@@ -272,6 +273,25 @@ npm run prisma:migrate
 npm run prisma:seed
 ```
 
+## Health Endpoints
+
+Operational health endpoints:
+
+- `GET /health/live`
+  - process liveness only
+  - does not depend on PostgreSQL, Redis, or BullMQ
+- `GET /health/ready`
+  - always requires database readiness
+  - requires Redis readiness only when Redis or jobs are enabled
+  - stays healthy in the accepted local no-Docker mode with `REDIS_ENABLED=false` and `JOBS_ENABLED=false`
+
+Example local smoke checks:
+
+```powershell
+Invoke-WebRequest http://localhost:3000/health/live
+Invoke-WebRequest http://localhost:3000/health/ready
+```
+
 ## Testing Strategy
 
 Tests are split into:
@@ -383,6 +403,20 @@ Safety behavior:
 - chart failures do not break `/stats`
 - analytics persistence failures do not break user flows
 - summary persistence failures do not break `/stats`
+
+## Staging and Release Discipline
+
+This repository does not include a full CI/CD pipeline or automatic rollback tooling.
+
+Current Stage B operational discipline includes:
+
+- lightweight health endpoints for smoke checks
+- explicit local vs staging expectations
+- manual release and rollback guidance
+
+See:
+
+- [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)
 
 ## Charts and Temp Files
 

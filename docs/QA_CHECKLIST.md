@@ -17,6 +17,8 @@ Use this checklist before a local handoff or release candidate review.
 - app boots with `JOBS_ENABLED=false`
 - polling mode works with `TELEGRAM_MODE=polling`
 - startup does not require webhook variables in polling mode
+- `GET /health/live` returns `200`
+- `GET /health/ready` returns `200` with database `up` and Redis `skipped`
 
 ## Onboarding
 
@@ -171,6 +173,7 @@ Run this section only when Redis is available and enabled.
 - app boots with `JOBS_ENABLED=true`
 - reminder scheduling does not crash startup
 - disabling reminders cancels scheduling path cleanly
+- `GET /health/ready` returns `200` and includes Redis `up`
 
 ## Weekly Digest
 
@@ -186,3 +189,4 @@ Run this section only when Redis is available and enabled.
 - `npm run lint` passes
 - `npm run build` passes
 - `npm test` passes
+- release/runbook docs were reviewed before handoff

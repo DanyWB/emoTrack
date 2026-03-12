@@ -43,6 +43,7 @@ async function bootstrap(): Promise<void> {
   bootstrapLogger.log(
     `emoTrack backend is running on port ${port} (env=${nodeEnv}, telegram=${telegramMode}, redis=${redisEnabled}, jobs=${jobsEnabled})`,
   );
+  bootstrapLogger.log('Health endpoints available at /health/live and /health/ready.');
 }
 
 void bootstrap();
