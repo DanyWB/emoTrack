@@ -80,19 +80,15 @@ export const telegramCopy = {
   },
   checkin: {
     started: 'Отметь состояние за сегодня.',
-    moodPrompt: 'Шаг 1/5. Оцени настроение: 0..10',
-    energyPrompt: 'Шаг 2/5. Оцени энергию: 0..10',
-    stressPrompt: 'Шаг 3/5. Оцени стресс: 0..10',
-    sleepHoursPrompt: 'Шаг сна. Сколько часов спал? Можно число от 0 до 24, например 7.5',
-    sleepQualityPrompt: 'Шаг сна. Оцени качество сна: 0..10',
+    resumed: 'Продолжим текущий check-in.',
+    interrupted: 'Текущий check-in сбился. Начни заново командой /checkin.',
     notePrompt: 'Если хочешь, можно добавить заметку за день.',
     noteInputPrompt: 'Отправь текст заметки одним сообщением.',
-    tagsPrompt: 'Хочешь отметить теги состояния?',
+    tagsPrompt: 'Если хочешь, можно отметить теги состояния.',
     tagsSelectionPrompt: 'Выбери один или несколько тегов и нажми «Готово».',
     tagsSaved: 'Теги сохранены.',
     noActiveTags: 'Сейчас нет активных тегов. Пропускаем этот шаг.',
-    addEventPrompt: 'Добавить событие за этот день?',
-    eventLinked: 'Событие добавлено и связано с отметкой дня.',
+    addEventPrompt: 'Если хочешь, можно добавить событие за этот день.',
     repeatedStepPrompt: 'Продолжим текущий шаг.',
   },
   event: {
@@ -182,33 +178,75 @@ export interface HistoryEntryData {
 
 export function formatCheckinConfirmation(data: CheckinConfirmationData): string {
   const lines = [
-    data.updated ? 'Запись за сегодня обновлена.' : 'Запись за сегодня сохранена.',
+    data.updated ? 'Готово. Запись за сегодня обновлена.' : 'Готово. Запись за сегодня сохранена.',
     `Настроение: ${data.moodScore}`,
     `Энергия: ${data.energyScore}`,
     `Стресс: ${data.stressScore}`,
   ];
 
-  if (typeof data.sleepHours === 'number') {
-    lines.push(`Сон (часы): ${data.sleepHours}`);
+  if (typeof data.sleepHours === 'number' && typeof data.sleepQuality === 'number') {
+    lines.push(`Сон: ${data.sleepHours} ч, качество ${data.sleepQuality}`);
+  } else if (typeof data.sleepHours === 'number') {
+    lines.push(`Сон: ${data.sleepHours} ч`);
+  } else if (typeof data.sleepQuality === 'number') {
+    lines.push(`Качество сна: ${data.sleepQuality}`);
   }
 
-  if (typeof data.sleepQuality === 'number') {
-    lines.push(`Сон (качество): ${data.sleepQuality}`);
-  }
+  const extras: string[] = [];
 
   if (data.noteAdded) {
-    lines.push('Заметка: добавлена');
+    extras.push('заметка');
   }
 
   if ((data.tagsCount ?? 0) > 0) {
-    lines.push(`Теги: ${data.tagsCount}`);
+    extras.push(formatTagsCount(data.tagsCount ?? 0));
   }
 
   if (data.eventAdded) {
-    lines.push('Событие: добавлено');
+    extras.push('событие');
+  }
+
+  if (extras.length > 0) {
+    lines.push(`Дополнительно: ${extras.join(', ')}`);
   }
 
   return lines.join('\n');
+}
+
+export function getCheckinPrompt(
+  state: 'checkin_mood' | 'checkin_energy' | 'checkin_stress' | 'checkin_sleep_hours' | 'checkin_sleep_quality',
+  sleepMode: SleepMode,
+): string {
+  const totalSteps = sleepMode === 'both' ? 5 : 4;
+
+  switch (state) {
+    case 'checkin_mood':
+      return `Шаг 1/${totalSteps}. Оцени настроение: 0..10`;
+    case 'checkin_energy':
+      return `Шаг 2/${totalSteps}. Оцени энергию: 0..10`;
+    case 'checkin_stress':
+      return `Шаг 3/${totalSteps}. Оцени стресс: 0..10`;
+    case 'checkin_sleep_hours':
+      return `Шаг 4/${totalSteps}. Сколько часов спал? Можно число от 0 до 24, например 7.5`;
+    case 'checkin_sleep_quality':
+      return `Шаг ${sleepMode === 'both' ? 5 : 4}/${totalSteps}. Оцени качество сна: 0..10`;
+  }
+}
+
+function formatTagsCount(tagsCount: number): string {
+  if (tagsCount % 10 === 1 && tagsCount % 100 !== 11) {
+    return `${tagsCount} тег`;
+  }
+
+  if (
+    tagsCount % 10 >= 2 &&
+    tagsCount % 10 <= 4 &&
+    (tagsCount % 100 < 12 || tagsCount % 100 > 14)
+  ) {
+    return `${tagsCount} тега`;
+  }
+
+  return `${tagsCount} тегов`;
 }
 
 export function formatHistoryEntries(entries: HistoryEntryData[]): string {

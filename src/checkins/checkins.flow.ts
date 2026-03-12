@@ -29,6 +29,7 @@ export interface CheckinFlowResult {
   noteAdded?: boolean;
   tagsCount?: number;
   eventAdded?: boolean;
+  resumed?: boolean;
 }
 
 @Injectable()
@@ -41,12 +42,26 @@ export class CheckinsFlowService {
   ) {}
 
   async start(user: User): Promise<CheckinFlowResult> {
+    const session = await this.fsmService.getSession(user.id);
+    const state = (session?.state as FsmState | undefined) ?? FSM_STATES.idle;
+    const payload = this.extractPayload(session?.payloadJson);
+
+    if (this.isCheckinState(state) || this.isCheckinEventState(state, payload)) {
+      return {
+        status: 'next',
+        nextState: state,
+        selectedTagIds: payload.selectedTagIds,
+        resumed: true,
+      };
+    }
+
     await this.fsmService.setState(user.id, FSM_STATES.checkin_mood, {});
     await this.analyticsService.track('checkin_started', {}, user.id);
 
     return {
       status: 'next',
       nextState: FSM_STATES.checkin_mood,
+      resumed: false,
     };
   }
 
@@ -409,7 +424,7 @@ export class CheckinsFlowService {
         await this.fsmService.setState(
           user.id,
           previousSleepState,
-          this.withoutKeys(payload, ['entryId', 'isUpdate', 'noteText', 'selectedTagIds', 'eventAdded']),
+          this.withoutKeys(payload, ['entryId', 'isUpdate']),
         );
         return { status: 'next', nextState: previousSleepState };
       }
@@ -526,6 +541,34 @@ export class CheckinsFlowService {
     }
 
     return payload as CheckinDraftPayload;
+  }
+
+  private isCheckinState(state: FsmState): boolean {
+    return (
+      state === FSM_STATES.checkin_mood ||
+      state === FSM_STATES.checkin_energy ||
+      state === FSM_STATES.checkin_stress ||
+      state === FSM_STATES.checkin_sleep_hours ||
+      state === FSM_STATES.checkin_sleep_quality ||
+      state === FSM_STATES.checkin_note_prompt ||
+      state === FSM_STATES.checkin_note ||
+      state === FSM_STATES.checkin_tags_prompt ||
+      state === FSM_STATES.checkin_tags ||
+      state === FSM_STATES.checkin_add_event_confirm
+    );
+  }
+
+  private isCheckinEventState(state: FsmState, payload: CheckinDraftPayload): boolean {
+    if (
+      state !== FSM_STATES.event_type &&
+      state !== FSM_STATES.event_title &&
+      state !== FSM_STATES.event_score &&
+      state !== FSM_STATES.event_description
+    ) {
+      return false;
+    }
+
+    return payload.eventFlowSource === 'checkin';
   }
 
   private withoutKeys(payload: CheckinDraftPayload, keys: Array<keyof CheckinDraftPayload>): CheckinDraftPayload {

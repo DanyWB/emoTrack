@@ -107,4 +107,73 @@ describe('Check-in flow integration', () => {
       sleepQuality: 8,
     });
   });
+
+  it('resumes an active check-in and preserves saved optional markers after going back', async () => {
+    const user = await createReadyUser({
+      id: 'user-checkin-3',
+      telegramId: BigInt(6003),
+    });
+
+    await ctx.checkinsFlow.start(user);
+    await ctx.checkinsFlow.submitScore(user, '7');
+    await ctx.checkinsFlow.submitScore(user, '6');
+
+    const resumed = await ctx.checkinsFlow.start(user);
+    expect(resumed).toMatchObject({
+      status: 'next',
+      nextState: FSM_STATES.checkin_stress,
+      resumed: true,
+    });
+
+    await ctx.checkinsFlow.submitScore(user, '4');
+    await ctx.checkinsFlow.submitSleepHours(user, '7.5');
+    await ctx.checkinsFlow.submitScore(user, '8');
+
+    await ctx.checkinsFlow.beginNoteStep(user);
+    await ctx.checkinsFlow.submitNote(user, 'Был насыщенный день');
+    await ctx.checkinsFlow.startTagsSelection(user);
+    await ctx.checkinsFlow.toggleTagSelection(user, 'tag-1');
+    await ctx.checkinsFlow.confirmTags(user);
+
+    expect(await ctx.fsmService.getState(user.id)).toBe(FSM_STATES.checkin_add_event_confirm);
+
+    await ctx.checkinsFlow.goBack(user);
+    await ctx.checkinsFlow.goBack(user);
+    const backToSleep = await ctx.checkinsFlow.goBack(user);
+
+    expect(backToSleep).toMatchObject({
+      status: 'next',
+      nextState: FSM_STATES.checkin_sleep_quality,
+    });
+
+    const repersisted = await ctx.checkinsFlow.submitScore(user, '9');
+    expect(repersisted).toMatchObject({
+      status: 'next',
+      nextState: FSM_STATES.checkin_note_prompt,
+    });
+
+    await ctx.checkinsFlow.skipCurrentStep(user);
+    await ctx.checkinsFlow.skipCurrentStep(user);
+    const finalResult = await ctx.checkinsFlow.skipCurrentStep(user);
+
+    const savedEntry = ctx.checkinsRepository.listEntries()[0];
+
+    expect(finalResult).toMatchObject({
+      status: 'saved',
+      isUpdate: true,
+      noteAdded: true,
+      tagsCount: 1,
+      eventAdded: false,
+      entryPayload: {
+        moodScore: 7,
+        energyScore: 6,
+        stressScore: 4,
+        sleepHours: 7.5,
+        sleepQuality: 9,
+        noteText: 'Был насыщенный день',
+      },
+    });
+    expect(savedEntry.noteText).toBe('Был насыщенный день');
+    expect(ctx.checkinsRepository.getTagIdsForEntry(savedEntry.id)).toEqual(['tag-1']);
+  });
 });

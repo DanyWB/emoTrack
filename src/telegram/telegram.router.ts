@@ -21,6 +21,7 @@ import {
   SLEEP_MODE_LABELS,
   formatCheckinConfirmation,
   formatHistoryEntries,
+  getCheckinPrompt,
   telegramCopy,
   type CheckinConfirmationData,
 } from './telegram.copy';
@@ -95,7 +96,13 @@ export class TelegramRouter {
     }
 
     const result = await this.checkinsFlow.start(user);
-    await ctx.reply(telegramCopy.checkin.started);
+    await ctx.reply(result.resumed ? telegramCopy.checkin.resumed : telegramCopy.checkin.started);
+
+    if (result.nextState && this.isEventState(result.nextState)) {
+      await this.replyEventPromptByState(ctx, user, result.nextState, 'checkin');
+      return;
+    }
+
     await this.replyCheckinResult(ctx, user, result);
   }
 
@@ -690,6 +697,12 @@ export class TelegramRouter {
       return;
     }
 
+    if (result.status === 'not_in_checkin' || result.status === 'missing_context') {
+      await this.fsmService.setIdle(user.id);
+      await ctx.reply(telegramCopy.checkin.interrupted, telegramKeyboards.mainMenu());
+      return;
+    }
+
     await ctx.reply(telegramCopy.common.actionNotAllowed);
   }
 
@@ -772,19 +785,31 @@ export class TelegramRouter {
   ): Promise<void> {
     switch (state) {
       case FSM_STATES.checkin_mood:
-        await ctx.reply(telegramCopy.checkin.moodPrompt, telegramKeyboards.scorePicker());
+        await ctx.reply(getCheckinPrompt(FSM_STATES.checkin_mood, user.sleepMode), telegramKeyboards.scorePicker());
         return;
       case FSM_STATES.checkin_energy:
-        await ctx.reply(telegramCopy.checkin.energyPrompt, telegramKeyboards.scorePicker({ back: true }));
+        await ctx.reply(
+          getCheckinPrompt(FSM_STATES.checkin_energy, user.sleepMode),
+          telegramKeyboards.scorePicker({ back: true }),
+        );
         return;
       case FSM_STATES.checkin_stress:
-        await ctx.reply(telegramCopy.checkin.stressPrompt, telegramKeyboards.scorePicker({ back: true }));
+        await ctx.reply(
+          getCheckinPrompt(FSM_STATES.checkin_stress, user.sleepMode),
+          telegramKeyboards.scorePicker({ back: true }),
+        );
         return;
       case FSM_STATES.checkin_sleep_hours:
-        await ctx.reply(telegramCopy.checkin.sleepHoursPrompt, telegramKeyboards.sleepHoursActions({ back: true }));
+        await ctx.reply(
+          getCheckinPrompt(FSM_STATES.checkin_sleep_hours, user.sleepMode),
+          telegramKeyboards.sleepHoursActions({ back: true }),
+        );
         return;
       case FSM_STATES.checkin_sleep_quality:
-        await ctx.reply(telegramCopy.checkin.sleepQualityPrompt, telegramKeyboards.sleepQualityActions({ back: true }));
+        await ctx.reply(
+          getCheckinPrompt(FSM_STATES.checkin_sleep_quality, user.sleepMode),
+          telegramKeyboards.sleepQualityActions({ back: true }),
+        );
         return;
       case FSM_STATES.checkin_note_prompt:
         await ctx.reply(telegramCopy.checkin.notePrompt, telegramKeyboards.checkinNotePrompt());

@@ -88,7 +88,7 @@ export const telegramKeyboards = {
   checkinNotePrompt: () =>
     Markup.inlineKeyboard([
       [Markup.button.callback(telegramCopy.buttons.addNote, TELEGRAM_CALLBACKS.checkinNoteAdd)],
-      actionRow({ skip: true }),
+      actionRow({ back: true, skip: true }),
     ]),
 
   checkinTagsPrompt: () =>

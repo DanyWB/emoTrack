@@ -196,15 +196,18 @@ export class InMemoryCheckinsRepository {
       id: existing?.id ?? randomUUID(),
       userId,
       entryDate,
-      moodScore: data.moodScore as number,
-      energyScore: data.energyScore as number,
-      stressScore: data.stressScore as number,
+      moodScore: (data.moodScore as number | undefined) ?? existing?.moodScore ?? 0,
+      energyScore: (data.energyScore as number | undefined) ?? existing?.energyScore ?? 0,
+      stressScore: (data.stressScore as number | undefined) ?? existing?.stressScore ?? 0,
       sleepHours:
-        data.sleepHours === undefined || data.sleepHours === null
-          ? null
+        data.sleepHours === undefined
+          ? (existing?.sleepHours ?? null)
+          : data.sleepHours === null
+            ? null
           : new Prisma.Decimal(data.sleepHours as number),
-      sleepQuality: (data.sleepQuality as number | undefined) ?? null,
-      noteText: (data.noteText as string | undefined) ?? null,
+      sleepQuality:
+        data.sleepQuality === undefined ? (existing?.sleepQuality ?? null) : (data.sleepQuality as number | null),
+      noteText: data.noteText === undefined ? (existing?.noteText ?? null) : ((data.noteText as string | undefined) ?? null),
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
     };
@@ -261,6 +264,10 @@ export class InMemoryCheckinsRepository {
 
   listEntries(): DailyEntry[] {
     return [...this.entries.values()].sort((left, right) => left.entryDate.getTime() - right.entryDate.getTime());
+  }
+
+  getTagIdsForEntry(entryId: string): string[] {
+    return [...(this.tagsByEntry.get(entryId) ?? [])];
   }
 
   setEventCount(entryId: string, count: number): void {
