@@ -4,6 +4,7 @@ import { SummaryPeriodType, type DailyEntry, type Event } from '@prisma/client';
 import { CheckinsService } from '../checkins/checkins.service';
 import { formatDateKey } from '../common/utils/date.utils';
 import { EventsService } from '../events/events.service';
+import { doesEventOverlapDay } from '../events/events.utils';
 import { average, roundToTwo } from './calculators/stats.calculator';
 import {
   isLowDataStats,
@@ -57,7 +58,7 @@ export class StatsService {
     const bestDay = this.findBestDay(entries);
     const worstDay = this.findWorstDay(entries);
     const eventBreakdown = this.buildEventBreakdown(events);
-    const eventDayKeys = new Set(events.map((event) => formatDateKey(event.eventDate)));
+    const eventDayKeys = this.buildEventDayKeys(entries, events);
     const bestDayKey = bestDay?.date;
     const worstDayKey = worstDay?.date;
 
@@ -291,7 +292,7 @@ export class StatsService {
       eventCompanion.topEventCount = topEvent[1];
     }
 
-    const eventDayKeys = new Set(events.map((event) => formatDateKey(event.eventDate)));
+    const eventDayKeys = this.buildEventDayKeys(entries, events);
     const eventDayEntries = entries.filter((entry) => eventDayKeys.has(formatDateKey(entry.entryDate)));
     const quietDayEntries = entries.filter((entry) => !eventDayKeys.has(formatDateKey(entry.entryDate)));
 
@@ -543,5 +544,17 @@ export class StatsService {
     }
 
     return average(entries.map((entry) => entry.stressScore)) ?? 0;
+  }
+
+  private buildEventDayKeys(entries: DailyEntry[], events: Event[]): Set<string> {
+    const dayKeys = new Set<string>();
+
+    for (const entry of entries) {
+      if (events.some((event) => doesEventOverlapDay(event, entry.entryDate))) {
+        dayKeys.add(formatDateKey(entry.entryDate));
+      }
+    }
+
+    return dayKeys;
   }
 }

@@ -1,7 +1,9 @@
 import { CheckinsService } from '../../src/checkins/checkins.service';
+import { EventsService } from '../../src/events/events.service';
 import { TagsService } from '../../src/tags/tags.service';
 import {
   InMemoryCheckinsRepository,
+  InMemoryEventsRepository,
   InMemoryTagsRepository,
   createConfigService,
 } from '../helpers/in-memory';
@@ -9,9 +11,11 @@ import {
 describe('CheckinsService', () => {
   function createService(): { service: CheckinsService; repository: InMemoryCheckinsRepository } {
     const repository = new InMemoryCheckinsRepository();
+    const eventsService = new EventsService(new InMemoryEventsRepository() as never, createConfigService());
     const tagsService = new TagsService(new InMemoryTagsRepository() as never);
     const service = new CheckinsService(
       repository as never,
+      eventsService,
       tagsService,
       createConfigService({
         app: {

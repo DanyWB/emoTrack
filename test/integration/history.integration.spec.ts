@@ -50,7 +50,7 @@ describe('History integration', () => {
 
     for (let index = 0; index < count; index += 1) {
       const entryDate = new Date(newestDate.getTime() - index * 24 * 60 * 60 * 1000);
-      const entry = await ctx.checkinsRepository.upsertByUserAndDate(userId, entryDate, {
+      await ctx.checkinsRepository.upsertByUserAndDate(userId, entryDate, {
         moodScore: 8 - index,
         energyScore: 7 - index,
         stressScore: 3 + index,
@@ -58,11 +58,42 @@ describe('History integration', () => {
         sleepQuality: index === 0 ? 8 : undefined,
         noteText: index === 0 ? 'Busy day' : undefined,
       });
-
-      if (index === 0) {
-        ctx.checkinsRepository.setEventCount(entry.id, 2);
-      }
     }
+
+    await ctx.eventsService.createEvent(userId, {
+      eventType: 'work',
+      title: 'Sprint review',
+      eventScore: 7,
+      eventDate: newestDate.toISOString(),
+    });
+    await ctx.eventsService.createEvent(userId, {
+      eventType: 'family',
+      title: 'Dinner',
+      eventScore: 8,
+      eventDate: newestDate.toISOString(),
+    });
+  }
+
+  async function seedOverlapHistory(userId: string): Promise<void> {
+    const newestDate = new Date('2026-03-12T00:00:00.000Z');
+
+    for (let index = 0; index < 3; index += 1) {
+      const entryDate = new Date(newestDate.getTime() - index * 24 * 60 * 60 * 1000);
+
+      await ctx.checkinsRepository.upsertByUserAndDate(userId, entryDate, {
+        moodScore: 6,
+        energyScore: 5,
+        stressScore: 4,
+      });
+    }
+
+    await ctx.eventsService.createEvent(userId, {
+      eventType: 'travel',
+      title: 'Trip',
+      eventScore: 7,
+      eventDate: new Date('2026-03-11T00:00:00.000Z').toISOString(),
+      eventEndDate: new Date('2026-03-12T00:00:00.000Z').toISOString(),
+    });
   }
 
   function buildBaseContext() {
@@ -140,6 +171,27 @@ describe('History integration', () => {
     await (router as any).handleHistoryCommand(telegramCtx);
 
     expect(telegramCtx.reply).toHaveBeenCalledWith(telegramCopy.history.empty, expect.any(Object));
+  });
+
+  it('counts a multi-day standalone event on each overlapped history day', async () => {
+    const user = await createReadyUser();
+    await seedOverlapHistory(user.id);
+
+    const page = await ctx.checkinsService.getRecentEntriesPage(user.id, 5);
+
+    expect(page.entries).toHaveLength(3);
+    expect(page.entries[0]).toMatchObject({
+      entryDate: new Date('2026-03-12T00:00:00.000Z'),
+      eventsCount: 1,
+    });
+    expect(page.entries[1]).toMatchObject({
+      entryDate: new Date('2026-03-11T00:00:00.000Z'),
+      eventsCount: 1,
+    });
+    expect(page.entries[2]).toMatchObject({
+      entryDate: new Date('2026-03-10T00:00:00.000Z'),
+      eventsCount: 0,
+    });
   });
 
   it('degrades gracefully for a stale more callback', async () => {

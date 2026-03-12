@@ -100,6 +100,10 @@ Use this checklist before a local handoff or release candidate review.
 - score must be 0..10
 - description can be skipped
 - valid standalone event is saved successfully
+- standalone event can be saved without an end date and remains single-day
+- standalone event can be saved with an inclusive end date for a bounded multi-day period
+- end date earlier than start date is rejected
+- check-in-created event remains single-day only
 
 ## History
 
@@ -110,6 +114,7 @@ Use this checklist before a local handoff or release candidate review.
 - sleep data appears when present
 - note marker appears when note exists
 - linked event count appears when events exist
+- a multi-day standalone event is counted on each overlapped history day
 - when more than 5 entries exist, `Еще` loads older entries
 - `Еще` edits the same history message instead of sending duplicated history blocks
 - stale `Еще` callback is handled gracefully and asks the user to reopen `/history`
@@ -131,6 +136,7 @@ Use this checklist before a local handoff or release candidate review.
 - pattern blocks appear only when the dataset is clearly strong enough
 - weak or tied signals do not produce a pattern block
 - low-data summaries do not show comparison or pattern blocks
+- stats event count includes a multi-day event when its inclusive span overlaps the selected period
 
 ## Charts
 
@@ -190,3 +196,4 @@ Run this section only when Redis is available and enabled.
 - `npm run build` passes
 - `npm test` passes
 - release/runbook docs were reviewed before handoff
+

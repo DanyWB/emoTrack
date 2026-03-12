@@ -32,3 +32,13 @@ export function parseSleepHours(value: string): number | null {
 
   return parsed;
 }
+
+export function parseDateKey(value: string): string | null {
+  const trimmed = value.trim();
+
+  if (!dayjs(trimmed, 'YYYY-MM-DD', true).isValid()) {
+    return null;
+  }
+
+  return trimmed;
+}

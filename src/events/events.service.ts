@@ -3,8 +3,8 @@ import { ConfigService } from '@nestjs/config';
 import { EventType, type Event } from '@prisma/client';
 
 import { TEXT_LIMITS } from '../common/constants/app.constants';
-import { buildNormalizedEntryDate } from '../common/utils/date.utils';
-import { parseIntegerScore } from '../common/utils/validation.utils';
+import { buildNormalizedEntryDate, normalizeDayKeyToUtcDate } from '../common/utils/date.utils';
+import { parseDateKey, parseIntegerScore } from '../common/utils/validation.utils';
 import { EventsRepository } from './events.repository';
 import type { CreateEventDto } from './dto/create-event.dto';
 
@@ -21,10 +21,18 @@ export class EventsService {
   }
 
   createEvent(userId: string, dto: CreateEventDto): Promise<Event> {
+    const eventDate = new Date(dto.eventDate);
+    const eventEndDate = dto.eventEndDate ? new Date(dto.eventEndDate) : null;
+
+    if (eventEndDate && eventEndDate.getTime() < eventDate.getTime()) {
+      throw new Error('INVALID_EVENT_END_DATE');
+    }
+
     return this.eventsRepository.create({
       userId,
       dailyEntryId: dto.dailyEntryId,
-      eventDate: new Date(dto.eventDate),
+      eventDate,
+      eventEndDate: eventEndDate ?? undefined,
       eventType: dto.eventType,
       title: dto.title,
       description: dto.description,
@@ -60,6 +68,10 @@ export class EventsService {
     );
   }
 
+  buildEventDateFromDayKey(dayKey: string): Date {
+    return normalizeDayKeyToUtcDate(dayKey);
+  }
+
   validateEventType(value: string): EventType | null {
     return Object.values(EventType).includes(value as EventType) ? (value as EventType) : null;
   }
@@ -90,5 +102,21 @@ export class EventsService {
     }
 
     return parseIntegerScore(value);
+  }
+
+  validateEventEndDate(value: string, eventStartDate: Date): Date | null {
+    const dateKey = parseDateKey(value);
+
+    if (!dateKey) {
+      return null;
+    }
+
+    const eventEndDate = normalizeDayKeyToUtcDate(dateKey);
+
+    if (eventEndDate.getTime() < eventStartDate.getTime()) {
+      return null;
+    }
+
+    return eventEndDate;
   }
 }

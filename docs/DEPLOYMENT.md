@@ -103,6 +103,7 @@ Run these steps before and during a manual release.
 5. Run Prisma generation and migration steps:
    - `npm run prisma:generate`
    - `npm run prisma:migrate`
+   - note any additive schema changes in the release notes before deployment
 6. Start the app.
 7. Verify startup logs:
    - app port
@@ -144,6 +145,9 @@ Database rollback:
 
 - there is no automatic Prisma migration rollback flow in this repository
 - if a release contains schema changes, rollback must be planned manually before deployment
+- the current multi-day event schema change is additive only:
+  - `events.eventEndDate` is nullable
+  - legacy single-day rows remain valid with `eventEndDate = null`
 - recommended safety measure:
   - take a database backup before applying non-trivial migrations
 - if rollback is required after a migration:

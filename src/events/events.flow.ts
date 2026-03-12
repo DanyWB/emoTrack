@@ -2,6 +2,7 @@
 import { type User } from '@prisma/client';
 
 import { AnalyticsService } from '../analytics/analytics.service';
+import { formatDateKey } from '../common/utils/date.utils';
 import { FsmService } from '../fsm/fsm.service';
 import {
   FSM_STATES,
@@ -18,6 +19,7 @@ export type EventFlowStatus =
   | 'invalid_title'
   | 'invalid_score'
   | 'invalid_description'
+  | 'invalid_end_date'
   | 'cannot_back'
   | 'not_in_event_flow'
   | 'missing_context';
@@ -38,8 +40,11 @@ export class EventsFlowService {
   ) {}
 
   async startStandalone(user: User): Promise<EventFlowResult> {
+    const eventStartDate = this.eventsService.buildEventDate(new Date(), user.timezone);
+
     await this.fsmService.setState(user.id, FSM_STATES.event_type, {
       eventFlowSource: 'standalone',
+      eventStartDateKey: formatDateKey(eventStartDate),
     });
 
     await this.analyticsService.track('event_started', { source: 'standalone' }, user.id);
@@ -63,6 +68,7 @@ export class EventsFlowService {
     await this.fsmService.setState(user.id, FSM_STATES.event_type, {
       ...payload,
       eventFlowSource: 'checkin',
+      eventStartDateKey: payload.entryDateKey,
     });
 
     await this.analyticsService.track('event_started', { source: 'checkin' }, user.id);
@@ -170,6 +176,19 @@ export class EventsFlowService {
       return { status: 'invalid_description', source: payload.eventFlowSource };
     }
 
+    if (payload.eventFlowSource === 'standalone') {
+      await this.fsmService.setState(user.id, FSM_STATES.event_end_date, {
+        ...this.withoutKeys(payload, ['eventEndDateKey']),
+        eventDescription: description,
+      });
+
+      return {
+        status: 'next',
+        nextState: FSM_STATES.event_end_date,
+        source: 'standalone',
+      };
+    }
+
     return this.complete(user, description);
   }
 
@@ -178,6 +197,62 @@ export class EventsFlowService {
     const state = (session?.state as FsmState | undefined) ?? FSM_STATES.idle;
 
     if (state !== FSM_STATES.event_description) {
+      return { status: 'not_in_event_flow' };
+    }
+
+    const payload = this.extractPayload(session?.payloadJson);
+
+    if (payload.eventFlowSource === 'standalone') {
+      await this.fsmService.setState(
+        user.id,
+        FSM_STATES.event_end_date,
+        this.withoutKeys(payload, ['eventDescription', 'eventEndDateKey']),
+      );
+
+      return {
+        status: 'next',
+        nextState: FSM_STATES.event_end_date,
+        source: 'standalone',
+      };
+    }
+
+    return this.complete(user);
+  }
+
+  async submitEndDate(user: User, rawEndDate: string): Promise<EventFlowResult> {
+    const session = await this.fsmService.getSession(user.id);
+    const state = (session?.state as FsmState | undefined) ?? FSM_STATES.idle;
+
+    if (state !== FSM_STATES.event_end_date) {
+      return { status: 'not_in_event_flow' };
+    }
+
+    const payload = this.extractPayload(session?.payloadJson);
+    const eventStartDate = this.resolveEventStartDate(payload, user);
+
+    if (!eventStartDate) {
+      return { status: 'missing_context' };
+    }
+
+    const eventEndDate = this.eventsService.validateEventEndDate(rawEndDate, eventStartDate);
+
+    if (!eventEndDate) {
+      return { status: 'invalid_end_date', source: payload.eventFlowSource };
+    }
+
+    await this.fsmService.setState(user.id, FSM_STATES.event_end_date, {
+      ...payload,
+      eventEndDateKey: formatDateKey(eventEndDate),
+    });
+
+    return this.complete(user, payload.eventDescription);
+  }
+
+  async skipEndDate(user: User): Promise<EventFlowResult> {
+    const session = await this.fsmService.getSession(user.id);
+    const state = (session?.state as FsmState | undefined) ?? FSM_STATES.idle;
+
+    if (state !== FSM_STATES.event_end_date) {
       return { status: 'not_in_event_flow' };
     }
 
@@ -195,7 +270,13 @@ export class EventsFlowService {
           await this.fsmService.setState(
             user.id,
             FSM_STATES.checkin_add_event_confirm,
-            this.withoutKeys(payload, ['eventType', 'eventTitle', 'eventScore']),
+            this.withoutKeys(payload, [
+              'eventType',
+              'eventTitle',
+              'eventScore',
+              'eventDescription',
+              'eventEndDateKey',
+            ]),
           );
 
           return {
@@ -211,7 +292,7 @@ export class EventsFlowService {
         await this.fsmService.setState(
           user.id,
           FSM_STATES.event_type,
-          this.withoutKeys(payload, ['eventTitle', 'eventScore']),
+          this.withoutKeys(payload, ['eventTitle', 'eventScore', 'eventDescription', 'eventEndDateKey']),
         );
 
         return {
@@ -224,7 +305,7 @@ export class EventsFlowService {
         await this.fsmService.setState(
           user.id,
           FSM_STATES.event_title,
-          this.withoutKeys(payload, ['eventScore']),
+          this.withoutKeys(payload, ['eventScore', 'eventDescription', 'eventEndDateKey']),
         );
 
         return {
@@ -234,11 +315,28 @@ export class EventsFlowService {
         };
       }
       case FSM_STATES.event_description: {
-        await this.fsmService.setState(user.id, FSM_STATES.event_score, payload);
+        await this.fsmService.setState(
+          user.id,
+          FSM_STATES.event_score,
+          this.withoutKeys(payload, ['eventDescription', 'eventEndDateKey']),
+        );
 
         return {
           status: 'next',
           nextState: FSM_STATES.event_score,
+          source: payload.eventFlowSource,
+        };
+      }
+      case FSM_STATES.event_end_date: {
+        await this.fsmService.setState(
+          user.id,
+          FSM_STATES.event_description,
+          this.withoutKeys(payload, ['eventEndDateKey']),
+        );
+
+        return {
+          status: 'next',
+          nextState: FSM_STATES.event_description,
           source: payload.eventFlowSource,
         };
       }
@@ -251,7 +349,7 @@ export class EventsFlowService {
     const session = await this.fsmService.getSession(user.id);
     const state = (session?.state as FsmState | undefined) ?? FSM_STATES.idle;
 
-    if (state !== FSM_STATES.event_description) {
+    if (state !== FSM_STATES.event_description && state !== FSM_STATES.event_end_date) {
       return { status: 'not_in_event_flow' };
     }
 
@@ -261,14 +359,21 @@ export class EventsFlowService {
       return { status: 'missing_context' };
     }
 
-    const eventDate = this.eventsService.buildEventDate(new Date(), user.timezone).toISOString();
+    const eventStartDate = this.resolveEventStartDate(payload, user);
+
+    if (!eventStartDate) {
+      return { status: 'missing_context' };
+    }
 
     const event = await this.eventsService.createEvent(user.id, {
       eventType: payload.eventType,
       title: payload.eventTitle,
       eventScore: payload.eventScore,
-      eventDate,
-      description,
+      eventDate: eventStartDate.toISOString(),
+      eventEndDate: payload.eventEndDateKey
+        ? this.eventsService.buildEventDateFromDayKey(payload.eventEndDateKey).toISOString()
+        : undefined,
+      description: description ?? payload.eventDescription,
     });
 
     if (payload.eventFlowSource === 'checkin' && payload.entryId) {
@@ -334,5 +439,19 @@ export class EventsFlowService {
     }
 
     return next;
+  }
+
+  private resolveEventStartDate(payload: CheckinDraftPayload, user: User): Date | null {
+    const dayKey = payload.eventStartDateKey ?? payload.entryDateKey;
+
+    if (dayKey) {
+      return this.eventsService.buildEventDateFromDayKey(dayKey);
+    }
+
+    if (payload.eventFlowSource === 'standalone') {
+      return this.eventsService.buildEventDate(new Date(), user.timezone);
+    }
+
+    return null;
   }
 }

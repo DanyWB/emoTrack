@@ -42,6 +42,10 @@ export class CreateEventDto {
   eventDate!: string;
 
   @IsOptional()
+  @IsDateString()
+  eventEndDate?: string;
+
+  @IsOptional()
   @IsString()
   dailyEntryId?: string;
 }

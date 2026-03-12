@@ -22,9 +22,24 @@ export class EventsRepository {
     return this.prisma.event.findMany({
       where: {
         userId,
-        eventDate,
+        eventDate: {
+          lte: eventDate,
+        },
+        OR: [
+          {
+            eventEndDate: null,
+            eventDate: {
+              gte: eventDate,
+            },
+          },
+          {
+            eventEndDate: {
+              gte: eventDate,
+            },
+          },
+        ],
       },
-      orderBy: [{ createdAt: 'desc' }],
+      orderBy: [{ eventDate: 'desc' }, { createdAt: 'desc' }],
     });
   }
 
@@ -33,9 +48,21 @@ export class EventsRepository {
       where: {
         userId,
         eventDate: {
-          gte: from,
           lte: to,
         },
+        OR: [
+          {
+            eventEndDate: null,
+            eventDate: {
+              gte: from,
+            },
+          },
+          {
+            eventEndDate: {
+              gte: from,
+            },
+          },
+        ],
       },
       orderBy: [{ eventDate: 'desc' }, { createdAt: 'desc' }],
     });

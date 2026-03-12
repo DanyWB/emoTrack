@@ -112,6 +112,7 @@ model Event {
   dailyEntryId String?
   dailyEntry  DailyEntry? @relation(fields: [dailyEntryId], references: [id], onDelete: SetNull)
   eventDate   DateTime  @db.Date
+  eventEndDate DateTime? @db.Date
   eventType   EventType
   title       String
   description String?
@@ -120,6 +121,7 @@ model Event {
   updatedAt   DateTime  @updatedAt
 
   @@index([userId, eventDate])
+  @@index([userId, eventDate, eventEndDate])
   @@map("events")
 }
 

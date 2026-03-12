@@ -219,6 +219,12 @@ export class TelegramRouter {
         return;
       }
 
+      if (state === FSM_STATES.event_end_date) {
+        const result = await this.eventsFlow.skipEndDate(user);
+        await this.replyEventResult(ctx, user, result);
+        return;
+      }
+
       if (state === FSM_STATES.checkin_add_event_confirm) {
         const result = await this.checkinsFlow.finalizeAfterEventSkip(user);
         await this.replyCheckinResult(ctx, user, result);
@@ -469,6 +475,7 @@ export class TelegramRouter {
       case FSM_STATES.event_title:
       case FSM_STATES.event_score:
       case FSM_STATES.event_description:
+      case FSM_STATES.event_end_date:
         await this.handleEventTextByState(ctx, user, state, text);
         return;
       case FSM_STATES.settings_menu:
@@ -627,6 +634,12 @@ export class TelegramRouter {
 
     if (state === FSM_STATES.event_score) {
       const result = await this.eventsFlow.submitScore(user, text);
+      await this.replyEventResult(ctx, user, result);
+      return;
+    }
+
+    if (state === FSM_STATES.event_end_date) {
+      const result = await this.eventsFlow.submitEndDate(user, text);
       await this.replyEventResult(ctx, user, result);
       return;
     }
@@ -800,6 +813,12 @@ export class TelegramRouter {
       return;
     }
 
+    if (result.status === 'invalid_end_date') {
+      await ctx.reply(telegramCopy.validation.invalidEventEndDate);
+      await this.replyEventPromptByState(ctx, user, FSM_STATES.event_end_date, result.source);
+      return;
+    }
+
     if (result.status === 'cannot_back') {
       await ctx.reply(telegramCopy.common.backUnavailable);
       const state = await this.fsmService.getState(user.id);
@@ -902,6 +921,12 @@ export class TelegramRouter {
         await ctx.reply(
           telegramCopy.event.descriptionPrompt,
           telegramKeyboards.eventDescriptionActions({ back: true }),
+        );
+        return;
+      case FSM_STATES.event_end_date:
+        await ctx.reply(
+          telegramCopy.event.endDatePrompt,
+          telegramKeyboards.eventEndDateActions({ back: true }),
         );
         return;
       case FSM_STATES.checkin_add_event_confirm:
@@ -1016,7 +1041,8 @@ export class TelegramRouter {
       state === FSM_STATES.event_type ||
       state === FSM_STATES.event_title ||
       state === FSM_STATES.event_score ||
-      state === FSM_STATES.event_description
+      state === FSM_STATES.event_description ||
+      state === FSM_STATES.event_end_date
     );
   }
 

@@ -11,7 +11,7 @@ The bot helps a user:
 - log one daily check-in per day
 - update the same day entry instead of creating duplicates
 - add an optional note, predefined tags, and an event
-- create standalone events
+- create standalone single-day or bounded multi-day events
 - view recent history
 - request 7-day, 30-day, or all-time stats
 - receive chart images in the stats flow
@@ -57,7 +57,7 @@ Core modules:
 - `onboarding`: consent and reminder-time onboarding flow
 - `fsm`: persistent finite-state machine backed by PostgreSQL
 - `checkins`: daily entry upsert, notes, tags, recent history
-- `events`: standalone and check-in event flows
+- `events`: standalone and check-in event flows, including bounded multi-day standalone events
 - `tags`: predefined tag queries and validation
 - `stats`: period calculations and summary payload building
 - `summaries`: summary persistence and Russian formatter
@@ -333,9 +333,24 @@ Current `/history` behavior stays intentionally simple:
 
 - the first page shows the most recent 5 entries in a compact Telegram-friendly layout
 - each item still shows date, mood/energy/stress, sleep data when present, note marker, and linked event count
+- history day counts are overlap-aware for events: a multi-day event is counted on each day in its inclusive span
 - older entries are loaded through a single inline `Еще` action
 - `Еще` edits the same history message instead of appending duplicate history blocks
 - stale `Еще` callbacks degrade gracefully and ask the user to open `/history` again
+
+## Event Model Notes
+
+Current event behavior stays intentionally bounded:
+
+- check-in-created events remain single-day only
+- standalone `/event` supports:
+  - a single-day event
+  - an optional inclusive end date for a multi-day period event
+- `eventDate` is the normalized inclusive start day
+- `eventEndDate` is optional; `null` means the event is single-day
+- stats period reads are overlap-aware:
+  - an event is included when its inclusive day span overlaps the selected period
+- stats still count distinct event rows, not event-days
 
 ## Settings UX Notes
 
@@ -472,4 +487,5 @@ Natural next steps after the MVP:
 ## Optional Docker Path
 
 `docker-compose.yml` remains available as an optional infrastructure path for PostgreSQL and Redis, but Docker is not required for local Windows development.
+
 

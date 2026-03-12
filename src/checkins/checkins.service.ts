@@ -4,6 +4,7 @@ import type { DailyEntry } from '@prisma/client';
 
 import { TEXT_LIMITS } from '../common/constants/app.constants';
 import { buildNormalizedEntryDate, formatDateKey, normalizeDayKeyToUtcDate } from '../common/utils/date.utils';
+import { EventsService } from '../events/events.service';
 import { TagsService } from '../tags/tags.service';
 import { CheckinsRepository } from './checkins.repository';
 import type { UpsertDailyEntryDto } from './dto/upsert-daily-entry.dto';
@@ -43,6 +44,7 @@ export class CheckinsService {
 
   constructor(
     private readonly checkinsRepository: CheckinsRepository,
+    private readonly eventsService: EventsService,
     private readonly tagsService: TagsService,
     private readonly configService: ConfigService,
   ) {
@@ -146,19 +148,26 @@ export class CheckinsService {
     const rows = await this.checkinsRepository.findRecentByUser(userId, safeLimit + 1, cursorDate ?? undefined);
     const hasMore = rows.length > safeLimit;
     const pageRows = hasMore ? rows.slice(0, safeLimit) : rows;
+    const entries = await Promise.all(
+      pageRows.map(async (row) => {
+        const events = await this.eventsService.getEventsForDay(userId, row.entryDate);
+
+        return {
+          id: row.id,
+          entryDate: row.entryDate,
+          moodScore: row.moodScore,
+          energyScore: row.energyScore,
+          stressScore: row.stressScore,
+          sleepHours: row.sleepHours ? Number(row.sleepHours) : undefined,
+          sleepQuality: row.sleepQuality ?? undefined,
+          hasNote: !!row.noteText?.trim(),
+          eventsCount: events.length,
+        };
+      }),
+    );
 
     return {
-      entries: pageRows.map((row) => ({
-        id: row.id,
-        entryDate: row.entryDate,
-        moodScore: row.moodScore,
-        energyScore: row.energyScore,
-        stressScore: row.stressScore,
-        sleepHours: row.sleepHours ? Number(row.sleepHours) : undefined,
-        sleepQuality: row.sleepQuality ?? undefined,
-        hasNote: !!row.noteText?.trim(),
-        eventsCount: row._count.events,
-      })),
+      entries,
       nextCursor:
         hasMore && pageRows.length > 0 ? formatDateKey(pageRows[pageRows.length - 1].entryDate) : undefined,
       staleCursor: !!cursor && pageRows.length === 0,

@@ -19,6 +19,7 @@ export const FSM_STATES = {
   event_title: 'event_title',
   event_score: 'event_score',
   event_description: 'event_description',
+  event_end_date: 'event_end_date',
   settings_menu: 'settings_menu',
   stats_period_select: 'stats_period_select',
 } as const;
@@ -43,5 +44,9 @@ export interface CheckinDraftPayload extends FsmPayload {
   eventType?: EventType;
   eventTitle?: string;
   eventScore?: number;
+  eventDescription?: string;
+  entryDateKey?: string;
+  eventStartDateKey?: string;
+  eventEndDateKey?: string;
   settingsAwaiting?: 'reminder_time' | 'sleep_mode';
 }

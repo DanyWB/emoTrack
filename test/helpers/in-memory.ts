@@ -13,6 +13,8 @@ import {
 } from '@prisma/client';
 import type { ConfigService } from '@nestjs/config';
 
+import { doesEventOverlapDay, doesEventOverlapRange } from '../../src/events/events.utils';
+
 type PlainObject = Record<string, unknown>;
 
 function mergeDefined<T extends PlainObject>(target: T, patch: PlainObject): T {
@@ -316,6 +318,7 @@ export class InMemoryEventsRepository {
       userId: data.userId as string,
       dailyEntryId: (data.dailyEntryId as string | undefined) ?? null,
       eventDate: data.eventDate as Date,
+      eventEndDate: (data.eventEndDate as Date | undefined) ?? null,
       eventType: data.eventType as Event['eventType'],
       title: data.title as string,
       description: (data.description as string | undefined) ?? null,
@@ -348,7 +351,7 @@ export class InMemoryEventsRepository {
 
   async findByUserAndDay(userId: string, eventDate: Date): Promise<Event[]> {
     return [...this.events.values()]
-      .filter((event) => event.userId === userId && event.eventDate.getTime() === eventDate.getTime())
+      .filter((event) => event.userId === userId && doesEventOverlapDay(event, eventDate))
       .sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime());
   }
 
@@ -357,8 +360,7 @@ export class InMemoryEventsRepository {
       .filter(
         (event) =>
           event.userId === userId &&
-          event.eventDate.getTime() >= from.getTime() &&
-          event.eventDate.getTime() <= to.getTime(),
+          doesEventOverlapRange(event, from, to),
       )
       .sort((left, right) => {
         if (left.eventDate.getTime() !== right.eventDate.getTime()) {
@@ -452,6 +454,7 @@ export function buildEvent(overrides: Partial<Event> = {}): Event {
     userId: overrides.userId ?? 'user-1',
     dailyEntryId: overrides.dailyEntryId ?? null,
     eventDate: overrides.eventDate ?? new Date('2026-03-11T00:00:00.000Z'),
+    eventEndDate: overrides.eventEndDate ?? null,
     eventType: overrides.eventType ?? 'work',
     title: overrides.title ?? 'Work block',
     description: overrides.description ?? null,

@@ -141,6 +141,9 @@ export const telegramKeyboards = {
   eventDescriptionActions: (options: { back?: boolean } = {}) =>
     Markup.inlineKeyboard([actionRow({ back: options.back, skip: true })]),
 
+  eventEndDateActions: (options: { back?: boolean } = {}) =>
+    Markup.inlineKeyboard([actionRow({ back: options.back, skip: true })]),
+
   statsPeriodSelector: () =>
     Markup.inlineKeyboard([
       [Markup.button.callback(telegramCopy.buttons.stats7d, `${TELEGRAM_CALLBACKS.statsPeriodPrefix}d7`)],

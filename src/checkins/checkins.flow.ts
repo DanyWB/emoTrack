@@ -2,6 +2,7 @@
 import { type User } from '@prisma/client';
 
 import { AnalyticsService } from '../analytics/analytics.service';
+import { formatDateKey } from '../common/utils/date.utils';
 import { parseIntegerScore, parseSleepHours } from '../common/utils/validation.utils';
 import { FsmService } from '../fsm/fsm.service';
 import { FSM_STATES, type CheckinDraftPayload, type FsmState } from '../fsm/fsm.types';
@@ -487,6 +488,7 @@ export class CheckinsFlowService {
     await this.fsmService.setState(user.id, FSM_STATES.checkin_note_prompt, {
       ...payload,
       entryId: result.entry.id,
+      entryDateKey: formatDateKey(result.entry.entryDate),
       isUpdate: result.isUpdate,
     });
 
@@ -563,7 +565,8 @@ export class CheckinsFlowService {
       state !== FSM_STATES.event_type &&
       state !== FSM_STATES.event_title &&
       state !== FSM_STATES.event_score &&
-      state !== FSM_STATES.event_description
+      state !== FSM_STATES.event_description &&
+      state !== FSM_STATES.event_end_date
     ) {
       return false;
     }
