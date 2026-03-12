@@ -45,7 +45,8 @@ export const telegramCopy = {
     stats7d: '7 дней',
     stats30d: '30 дней',
     statsAll: 'За всё время',
-    settingsToggleReminders: 'Вкл/выкл напоминания',
+    settingsToggleRemindersOn: 'Напоминания: вкл',
+    settingsToggleRemindersOff: 'Напоминания: выкл',
     settingsEditReminderTime: 'Изменить время',
     settingsSleepMode: 'Режим сна',
     sleepModeHours: 'Только часы',
@@ -128,12 +129,22 @@ export const telegramCopy = {
     title: 'Настройки:',
     remindersEnabled: 'Напоминания: включены',
     remindersDisabled: 'Напоминания: выключены',
+    remindersRuntimeLabel: 'Автонапоминания',
+    remindersRuntimeActive: 'Автонапоминания: активны',
+    remindersRuntimeDisabled: 'Автонапоминания: выключены',
+    remindersRuntimeUnavailable: 'Автонапоминания: недоступны в этой среде',
     reminderTimeLabel: 'Время напоминания',
+    sleepModeLabel: 'Режим сна',
     reminderTimePrompt: 'Введи новое время напоминания в формате HH:mm.',
     sleepModePrompt: 'Выбери режим сна.',
     reminderTimeUpdated: 'Время напоминания обновлено.',
+    reminderTimeSavedWithoutDelivery:
+      'Время напоминания сохранено. В этой среде автонапоминания сейчас не отправляются.',
     sleepModeUpdated: 'Режим сна обновлен.',
-    remindersToggled: 'Настройка напоминаний обновлена.',
+    remindersEnabledUpdated: 'Напоминания включены.',
+    remindersEnabledWithoutDelivery:
+      'Напоминания включены в настройках. В этой среде автонапоминания сейчас не отправляются.',
+    remindersDisabledUpdated: 'Напоминания выключены.',
   },
   reminders: {
     dailyPrompt: 'Напоминание: отметь состояние за сегодня командой /checkin.',
@@ -191,6 +202,13 @@ export interface HistoryEntryData {
 
 interface HistoryEntriesFormatOptions {
   title?: string;
+}
+
+export interface SettingsViewData {
+  remindersEnabled: boolean;
+  reminderTime?: string | null;
+  sleepMode: SleepMode;
+  backgroundDeliveryAvailable: boolean;
 }
 
 export function formatCheckinConfirmation(data: CheckinConfirmationData): string {
@@ -266,6 +284,50 @@ function formatTagsCount(tagsCount: number): string {
   return `${tagsCount} тегов`;
 }
 
+export function formatSettingsText(data: SettingsViewData): string {
+  const lines = [
+    telegramCopy.settings.title,
+    data.remindersEnabled ? telegramCopy.settings.remindersEnabled : telegramCopy.settings.remindersDisabled,
+    formatReminderRuntimeLine(data),
+    `${telegramCopy.settings.reminderTimeLabel}: ${data.reminderTime ?? '—'}`,
+    `${telegramCopy.settings.sleepModeLabel}: ${SLEEP_MODE_LABELS[data.sleepMode]}`,
+  ];
+
+  return lines.join('\n');
+}
+
+export function formatReminderToggleMessage(
+  remindersEnabled: boolean,
+  backgroundDeliveryAvailable: boolean,
+): string {
+  if (!remindersEnabled) {
+    return telegramCopy.settings.remindersDisabledUpdated;
+  }
+
+  if (!backgroundDeliveryAvailable) {
+    return telegramCopy.settings.remindersEnabledWithoutDelivery;
+  }
+
+  return telegramCopy.settings.remindersEnabledUpdated;
+}
+
+export function formatReminderTimeUpdateMessage(
+  remindersEnabled: boolean,
+  backgroundDeliveryAvailable: boolean,
+): string {
+  if (remindersEnabled && !backgroundDeliveryAvailable) {
+    return telegramCopy.settings.reminderTimeSavedWithoutDelivery;
+  }
+
+  return telegramCopy.settings.reminderTimeUpdated;
+}
+
+export function getSettingsToggleButtonLabel(remindersEnabled: boolean): string {
+  return remindersEnabled
+    ? telegramCopy.buttons.settingsToggleRemindersOn
+    : telegramCopy.buttons.settingsToggleRemindersOff;
+}
+
 export function formatHistoryEntries(
   entries: HistoryEntryData[],
   options: HistoryEntriesFormatOptions = {},
@@ -312,4 +374,16 @@ function formatHistorySleep(entry: HistoryEntryData): string | null {
   }
 
   return null;
+}
+
+function formatReminderRuntimeLine(data: SettingsViewData): string {
+  if (!data.remindersEnabled) {
+    return telegramCopy.settings.remindersRuntimeDisabled;
+  }
+
+  if (!data.backgroundDeliveryAvailable) {
+    return telegramCopy.settings.remindersRuntimeUnavailable;
+  }
+
+  return telegramCopy.settings.remindersRuntimeActive;
 }

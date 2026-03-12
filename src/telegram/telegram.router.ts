@@ -18,9 +18,11 @@ import { type PeriodStatsPayload } from '../stats/stats.types';
 import { TagsService } from '../tags/tags.service';
 import { UsersService } from '../users/users.service';
 import {
-  SLEEP_MODE_LABELS,
   formatCheckinConfirmation,
   formatHistoryEntries,
+  formatReminderTimeUpdateMessage,
+  formatReminderToggleMessage,
+  formatSettingsText,
   getCheckinPrompt,
   telegramCopy,
   type CheckinConfirmationData,
@@ -327,7 +329,12 @@ export class TelegramRouter {
         user.id,
       );
 
-      await ctx.reply(telegramCopy.settings.remindersToggled);
+      await ctx.reply(
+        formatReminderToggleMessage(
+          updatedUser.remindersEnabled,
+          this.remindersService.isBackgroundDeliveryAvailable(),
+        ),
+      );
       await this.replySettingsMenu(ctx, updatedUser);
       return;
     }
@@ -584,7 +591,12 @@ export class TelegramRouter {
     await this.fsmService.setState(user.id, FSM_STATES.settings_menu, {});
     await this.analyticsService.track('settings_updated', { field: 'reminderTime', value: text }, user.id);
 
-    await ctx.reply(telegramCopy.settings.reminderTimeUpdated);
+    await ctx.reply(
+      formatReminderTimeUpdateMessage(
+        updatedUser.remindersEnabled,
+        this.remindersService.isBackgroundDeliveryAvailable(),
+      ),
+    );
     await this.replySettingsMenu(ctx, updatedUser);
   }
 
@@ -893,14 +905,15 @@ export class TelegramRouter {
   }
 
   private async replySettingsMenu(ctx: Context, user: User): Promise<void> {
-    const lines = [
-      telegramCopy.settings.title,
-      user.remindersEnabled ? telegramCopy.settings.remindersEnabled : telegramCopy.settings.remindersDisabled,
-      `${telegramCopy.settings.reminderTimeLabel}: ${user.reminderTime ?? '—'}`,
-      `Режим сна: ${SLEEP_MODE_LABELS[user.sleepMode]}`,
-    ];
-
-    await ctx.reply(lines.join('\n'), telegramKeyboards.settingsMenu(user.remindersEnabled));
+    await ctx.reply(
+      formatSettingsText({
+        remindersEnabled: user.remindersEnabled,
+        reminderTime: user.reminderTime,
+        sleepMode: user.sleepMode,
+        backgroundDeliveryAvailable: this.remindersService.isBackgroundDeliveryAvailable(),
+      }),
+      telegramKeyboards.settingsMenu(user.remindersEnabled),
+    );
   }
 
   private async replyHistoryPage(

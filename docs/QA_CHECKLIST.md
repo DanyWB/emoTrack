@@ -138,12 +138,16 @@ Use this checklist before a local handoff or release candidate review.
 ## Settings
 
 - `/settings` opens settings menu
+- current settings screen shows reminder state, reminder time, sleep mode, and current auto-reminder runtime status
 - reminders can be toggled on/off
+- enabling reminders with `JOBS_ENABLED=false` keeps settings saved but does not imply background delivery is active
 - reminder time can be updated
 - invalid reminder time is rejected
+- after a valid reminder time update, the refreshed settings screen is shown again
 - sleep mode can be changed to `hours`
 - sleep mode can be changed to `quality`
 - sleep mode can be changed to `both`
+- after each settings change, the user returns to a clear current-state settings screen
 
 ## Help
 

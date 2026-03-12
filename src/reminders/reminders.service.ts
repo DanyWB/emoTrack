@@ -35,6 +35,10 @@ export class RemindersService {
     this.telegramEnabled = !!botToken && !botToken.startsWith('replace_with_');
   }
 
+  isBackgroundDeliveryAvailable(): boolean {
+    return this.jobsEnabled && !!this.remindersQueue;
+  }
+
   async scheduleDailyReminder(userId: string): Promise<void> {
     if (!this.jobsEnabled || !this.remindersQueue) {
       this.logger.debug(`Skipped scheduling reminder for user ${userId} because jobs are disabled.`);

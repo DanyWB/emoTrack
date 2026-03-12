@@ -214,6 +214,12 @@ JOBS_ENABLED=true
 REDIS_URL=redis://localhost:6379
 ```
 
+Reminder UX note:
+
+- reminder settings still save even when jobs are disabled locally
+- the settings screen explicitly shows when background auto-reminders are unavailable in the current environment
+- enabling reminders in local no-jobs mode does not imply that background delivery is actively running
+
 ## Environment Variables
 
 Main variables used by the app:
@@ -306,6 +312,14 @@ Current `/history` behavior stays intentionally simple:
 - older entries are loaded through a single inline `Еще` action
 - `Еще` edits the same history message instead of appending duplicate history blocks
 - stale `Еще` callbacks degrade gracefully and ask the user to open `/history` again
+
+## Settings UX Notes
+
+Current `/settings` behavior stays within the original scope, but is clearer about runtime state:
+
+- after each settings update, the user is returned to the current settings screen
+- the settings screen shows reminder state, reminder time, sleep mode, and whether background auto-reminders are actually available
+- when jobs are disabled locally, reminder preferences are still saved, but the bot explicitly says that auto-reminders are unavailable in the current environment
 
 ## Stats Readability Notes
 

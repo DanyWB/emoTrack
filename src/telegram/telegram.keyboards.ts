@@ -2,7 +2,12 @@
 import { Markup } from 'telegraf';
 
 import { TELEGRAM_CALLBACKS, TELEGRAM_MAIN_MENU_BUTTONS } from '../common/constants/app.constants';
-import { EVENT_TYPE_LABELS, SLEEP_MODE_LABELS, telegramCopy } from './telegram.copy';
+import {
+  EVENT_TYPE_LABELS,
+  SLEEP_MODE_LABELS,
+  getSettingsToggleButtonLabel,
+  telegramCopy,
+} from './telegram.copy';
 
 type CallbackButton = ReturnType<typeof Markup.button.callback>;
 
@@ -147,10 +152,7 @@ export const telegramKeyboards = {
   settingsMenu: (remindersEnabled: boolean) =>
     Markup.inlineKeyboard([
       [
-        Markup.button.callback(
-          `${telegramCopy.buttons.settingsToggleReminders}: ${remindersEnabled ? 'ON' : 'OFF'}`,
-          TELEGRAM_CALLBACKS.settingsRemindersToggle,
-        ),
+        Markup.button.callback(getSettingsToggleButtonLabel(remindersEnabled), TELEGRAM_CALLBACKS.settingsRemindersToggle),
       ],
       [Markup.button.callback(telegramCopy.buttons.settingsEditReminderTime, TELEGRAM_CALLBACKS.settingsReminderTimeEdit)],
       [Markup.button.callback(telegramCopy.buttons.settingsSleepMode, TELEGRAM_CALLBACKS.settingsSleepModeSelect)],
