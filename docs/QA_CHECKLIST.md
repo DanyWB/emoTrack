@@ -67,6 +67,9 @@ Use this checklist before a local handoff or release candidate review.
 - `Отмена` clears active onboarding flow safely
 - `Отмена` clears active check-in flow safely
 - `Назад` works on multi-step check-in
+- running `/checkin` during an active check-in resumes the current step instead of resetting progress
+- `Back` is available on the optional note prompt
+- after going back from optional steps to sleep/core steps, already saved note/tag data is still reflected in the final confirmation
 - invalid score input shows Russian validation error
 - invalid sleep-hours input shows Russian validation error
 

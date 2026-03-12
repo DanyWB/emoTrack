@@ -287,6 +287,16 @@ Test design notes:
 - tests do not require Redis
 - tests use in-memory repositories and Nest testing utilities for critical flow wiring
 
+## Check-in UX Notes
+
+Current check-in behavior is intentionally conservative:
+
+- `/checkin` resumes an active check-in instead of silently resetting progress
+- `Back` is available on optional note/tag/event branches where the FSM supports it
+- if a user returns to core sleep steps after already saving optional note/tag data in the same flow, the final confirmation still reflects that saved optional data
+- if the check-in FSM loses context, the user gets a safe restart message instead of a raw or ambiguous error
+- same-day upsert behavior remains unchanged: one normalized day key, one `DailyEntry`
+
 ## Logging and Error Handling
 
 Operational logging is added around:
