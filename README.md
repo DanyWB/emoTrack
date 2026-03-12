@@ -343,6 +343,15 @@ Current behavior:
 
 Because rendering is buffer-based, there is no temp-file accumulation cleanup requirement in the current MVP.
 
+Chart presentation notes:
+
+- chart semantics are unchanged: the same metrics are charted in the same `/stats` flow
+- charts are tuned for Telegram/mobile readability rather than visual redesign
+- x-axis label density is capped for longer periods
+- date labels are shortened for better mobile legibility
+- point markers are more visible for small normal datasets such as `3-5` entries
+- legend and grid styling are tuned to remain readable on phone screens
+
 ## Manual QA Checklist
 
 See the manual QA checklist here:

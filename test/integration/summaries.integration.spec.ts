@@ -210,4 +210,74 @@ describe('Summaries integration', () => {
     const trackedEvents = ctx.analyticsRepository.events.map((event) => event.eventName);
     expect(trackedEvents).toEqual(expect.arrayContaining(['summary_sent', 'chart_generation_failed']));
   });
+
+  it('sends chart images for a normal dataset when chart buffers are available', async () => {
+    const user = await createReadyUser();
+    const today = ctx.checkinsService.buildEntryDate({
+      date: new Date(),
+      timezone: user.timezone,
+    });
+    const yesterday = new Date(today.getTime() - 24 * 60 * 60 * 1000);
+    const twoDaysAgo = new Date(today.getTime() - 2 * 24 * 60 * 60 * 1000);
+
+    await ctx.checkinsRepository.upsertByUserAndDate(user.id, twoDaysAgo, {
+      moodScore: 5,
+      energyScore: 5,
+      stressScore: 6,
+      sleepHours: 6.5,
+      sleepQuality: 5,
+    });
+    await ctx.checkinsRepository.upsertByUserAndDate(user.id, yesterday, {
+      moodScore: 6,
+      energyScore: 5,
+      stressScore: 4,
+      sleepHours: 7,
+      sleepQuality: 6,
+    });
+    await ctx.checkinsRepository.upsertByUserAndDate(user.id, today, {
+      moodScore: 8,
+      energyScore: 7,
+      stressScore: 3,
+      sleepHours: 7.5,
+      sleepQuality: 8,
+    });
+
+    const router = new TelegramRouter(
+      ctx.usersService,
+      ctx.onboardingFlow,
+      ctx.checkinsFlow,
+      ctx.checkinsService,
+      ctx.eventsFlow,
+      ctx.summariesService,
+      {
+        generatePeriodCharts: jest.fn().mockResolvedValue({
+          combinedChartBuffer: Buffer.from('combined'),
+          sleepChartBuffer: Buffer.from('sleep'),
+        }),
+      } as never,
+      ctx.remindersService,
+      ctx.tagsService,
+      ctx.fsmService,
+      ctx.analyticsService,
+    );
+
+    const telegramCtx = {
+      reply: jest.fn().mockResolvedValue(undefined),
+      replyWithPhoto: jest.fn().mockResolvedValue(undefined),
+    };
+
+    await (router as any).handleStatsPeriodSelection(telegramCtx, user, SummaryPeriodType.d7);
+
+    expect(telegramCtx.replyWithPhoto).toHaveBeenCalledTimes(2);
+    expect(telegramCtx.replyWithPhoto).toHaveBeenNthCalledWith(
+      1,
+      { source: Buffer.from('combined') },
+      { caption: telegramCopy.stats.chartCombinedCaption },
+    );
+    expect(telegramCtx.replyWithPhoto).toHaveBeenNthCalledWith(
+      2,
+      { source: Buffer.from('sleep') },
+      { caption: telegramCopy.stats.chartSleepCaption },
+    );
+  });
 });
