@@ -31,6 +31,7 @@ export interface PeriodStatsPayload {
   periodEnd: Date;
   entriesCount: number;
   eventsCount: number;
+  isLowData: boolean;
   averages: StatsAverages;
   bestDay: StatsDaySummary | null;
   worstDay: StatsDaySummary | null;

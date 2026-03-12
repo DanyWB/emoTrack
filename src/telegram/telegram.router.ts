@@ -510,6 +510,12 @@ export class TelegramRouter {
     await ctx.reply(this.summariesService.formatSummaryText(payload), telegramKeyboards.mainMenu());
     await this.analyticsService.track('summary_sent', { periodType }, user.id);
 
+    if (payload.isLowData) {
+      this.logger.log(`Skipped charts for user ${user.id} due to low-data stats payload.`);
+      await this.fsmService.setIdle(user.id);
+      return;
+    }
+
     await this.sendStatsCharts(ctx, user, payload);
     await this.fsmService.setIdle(user.id);
   }

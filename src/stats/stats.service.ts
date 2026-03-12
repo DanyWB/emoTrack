@@ -5,6 +5,7 @@ import { CheckinsService } from '../checkins/checkins.service';
 import { formatDateKey } from '../common/utils/date.utils';
 import { EventsService } from '../events/events.service';
 import { average } from './calculators/stats.calculator';
+import { isLowDataStats } from './stats.constants';
 import {
   type PeriodRange,
   type PeriodStatsPayload,
@@ -32,6 +33,7 @@ export class StatsService {
     const range = this.resolvePeriodRange(periodType, options.timezone);
     const entries = await this.checkinsService.getEntriesForPeriod(userId, range.periodStart, range.periodEnd);
     const events = await this.eventsService.getEventsForPeriod(userId, range.periodStart, range.periodEnd);
+    const isLowData = isLowDataStats(entries.length);
 
     const averages = this.calculateAverages(entries);
     const bestDay = this.findBestDay(entries);
@@ -50,7 +52,7 @@ export class StatsService {
     }
 
     this.logger.log(
-      `Built stats for user ${userId}: period=${periodType}, entries=${entries.length}, events=${events.length}`,
+      `Built stats for user ${userId}: period=${periodType}, entries=${entries.length}, events=${events.length}, lowData=${isLowData}`,
     );
 
     return {
@@ -59,6 +61,7 @@ export class StatsService {
       periodEnd: range.periodEnd,
       entriesCount: entries.length,
       eventsCount: events.length,
+      isLowData,
       averages,
       bestDay,
       worstDay,

@@ -28,14 +28,22 @@ describe('Summaries integration', () => {
     );
   }
 
-  it('builds and persists a summary payload through the real stats path', async () => {
+  it('builds and persists a normal summary payload through the real stats path', async () => {
     const user = await createReadyUser();
     const today = ctx.checkinsService.buildEntryDate({
       date: new Date(),
       timezone: user.timezone,
     });
     const yesterday = new Date(today.getTime() - 24 * 60 * 60 * 1000);
+    const twoDaysAgo = new Date(today.getTime() - 2 * 24 * 60 * 60 * 1000);
 
+    await ctx.checkinsRepository.upsertByUserAndDate(user.id, twoDaysAgo, {
+      moodScore: 5,
+      energyScore: 5,
+      stressScore: 6,
+      sleepHours: 6.5,
+      sleepQuality: 5,
+    });
     await ctx.checkinsRepository.upsertByUserAndDate(user.id, yesterday, {
       moodScore: 6,
       energyScore: 5,
@@ -61,30 +69,106 @@ describe('Summaries integration', () => {
       timezone: user.timezone,
       persist: true,
     });
+    const text = ctx.summariesService.formatSummaryText(payload);
 
-    expect(payload.entriesCount).toBe(2);
+    expect(payload.entriesCount).toBe(3);
     expect(payload.eventsCount).toBe(1);
+    expect(payload.isLowData).toBe(false);
     expect(payload.averages).toMatchObject({
-      mood: 7,
-      energy: 6,
-      stress: 3.5,
-      sleepHours: 7.25,
-      sleepQuality: 7,
+      mood: 6.33,
+      energy: 5.67,
+      stress: 4.33,
+      sleepHours: 7,
+      sleepQuality: 6.33,
     });
     expect(ctx.summariesRepository.summaries).toHaveLength(1);
-    expect(ctx.summariesService.formatSummaryText(payload)).toContain('Сводка за период: 7 дней');
+    expect(text).toContain('Сводка за период: 7 дней');
+    expect(text).toContain('Опорные дни:');
   });
 
-  it('falls back to text summary when chart generation fails', async () => {
+  it('uses the low-data summary path and skips charts for sparse periods', async () => {
     const user = await createReadyUser();
     const today = ctx.checkinsService.buildEntryDate({
       date: new Date(),
       timezone: user.timezone,
     });
+    const yesterday = new Date(today.getTime() - 24 * 60 * 60 * 1000);
 
+    await ctx.checkinsRepository.upsertByUserAndDate(user.id, yesterday, {
+      moodScore: 6,
+      energyScore: 5,
+      stressScore: 4,
+      sleepHours: 7,
+      sleepQuality: 6,
+    });
     await ctx.checkinsRepository.upsertByUserAndDate(user.id, today, {
+      moodScore: 8,
+      energyScore: 7,
+      stressScore: 3,
+      sleepHours: 7.5,
+      sleepQuality: 8,
+    });
+
+    const router = new TelegramRouter(
+      ctx.usersService,
+      ctx.onboardingFlow,
+      ctx.checkinsFlow,
+      ctx.checkinsService,
+      ctx.eventsFlow,
+      ctx.summariesService,
+      {
+        generatePeriodCharts: jest.fn().mockResolvedValue({}),
+      } as never,
+      ctx.remindersService,
+      ctx.tagsService,
+      ctx.fsmService,
+      ctx.analyticsService,
+    );
+
+    const telegramCtx = {
+      reply: jest.fn().mockResolvedValue(undefined),
+      replyWithPhoto: jest.fn().mockResolvedValue(undefined),
+    };
+
+    await (router as any).handleStatsPeriodSelection(telegramCtx, user, SummaryPeriodType.d7);
+
+    expect(
+      telegramCtx.reply.mock.calls.some(
+        ([message]: [string]) =>
+          typeof message === 'string' &&
+          message.includes('Данных пока мало, поэтому сводка предварительная.'),
+      ),
+    ).toBe(true);
+    expect(telegramCtx.replyWithPhoto).not.toHaveBeenCalled();
+    expect(await ctx.fsmService.getState(user.id)).toBe('idle');
+  });
+
+  it('falls back to text summary when chart generation fails for a normal dataset', async () => {
+    const user = await createReadyUser();
+    const today = ctx.checkinsService.buildEntryDate({
+      date: new Date(),
+      timezone: user.timezone,
+    });
+    const yesterday = new Date(today.getTime() - 24 * 60 * 60 * 1000);
+    const twoDaysAgo = new Date(today.getTime() - 2 * 24 * 60 * 60 * 1000);
+
+    await ctx.checkinsRepository.upsertByUserAndDate(user.id, twoDaysAgo, {
+      moodScore: 6,
+      energyScore: 6,
+      stressScore: 5,
+      sleepHours: 7,
+      sleepQuality: 6,
+    });
+    await ctx.checkinsRepository.upsertByUserAndDate(user.id, yesterday, {
       moodScore: 7,
       energyScore: 6,
+      stressScore: 4,
+      sleepHours: 7,
+      sleepQuality: 7,
+    });
+    await ctx.checkinsRepository.upsertByUserAndDate(user.id, today, {
+      moodScore: 8,
+      energyScore: 7,
       stressScore: 4,
       sleepHours: 7,
       sleepQuality: 7,

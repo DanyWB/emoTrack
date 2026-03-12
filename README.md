@@ -297,6 +297,18 @@ Current check-in behavior is intentionally conservative:
 - if the check-in FSM loses context, the user gets a safe restart message instead of a raw or ambiguous error
 - same-day upsert behavior remains unchanged: one normalized day key, one `DailyEntry`
 
+## Stats Readability Notes
+
+Current `/stats` behavior keeps the original calculations and period boundaries unchanged, but improves output readability.
+
+Low-data contract:
+
+- `0` entries in the selected period: empty-state message
+- `1-2` entries in the selected period: preliminary text summary, no charts
+- `3+` entries in the selected period: full summary text and chart sending
+
+This threshold is explicit by design. It is only a presentation rule and does not change the underlying stats calculations.
+
 ## Logging and Error Handling
 
 Operational logging is added around:

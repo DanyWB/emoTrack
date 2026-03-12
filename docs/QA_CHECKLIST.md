@@ -116,6 +116,8 @@ Use this checklist before a local handoff or release candidate review.
 - `30 дней` returns summary text
 - `За всё время` returns summary text
 - empty-data state is handled gracefully
+- with 1-2 entries, `/stats` returns a preliminary low-data summary without charts
+- with 3 or more entries, `/stats` returns the full summary path
 - summary includes counts and averages
 - best/worst day lines are shown when data exists
 
@@ -123,6 +125,7 @@ Use this checklist before a local handoff or release candidate review.
 
 - combined mood/energy/stress chart is sent when data exists
 - sleep chart is sent when sleep data exists
+- charts are skipped for low-data periods with fewer than 3 entries
 - chart rendering failure does not break stats flow
 - user still receives text summary when chart generation fails
 

@@ -1,32 +1,65 @@
-﻿import { Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { SummaryPeriodType } from '@prisma/client';
 
 import type { PeriodStatsPayload } from '../stats/stats.types';
-import { EVENT_TYPE_LABELS, STATS_PERIOD_LABELS } from '../telegram/telegram.copy';
+import { EVENT_TYPE_LABELS, STATS_PERIOD_LABELS, telegramCopy } from '../telegram/telegram.copy';
 
 @Injectable()
 export class SummariesFormatter {
   formatSummaryText(payload: PeriodStatsPayload): string {
     const lines: string[] = [
-      `Сводка за период: ${this.periodLabel(payload.periodType)}`,
-      `Записей: ${payload.entriesCount}`,
-      `Событий: ${payload.eventsCount}`,
-      `Среднее настроение: ${this.numberOrDash(payload.averages.mood)}`,
-      `Средняя энергия: ${this.numberOrDash(payload.averages.energy)}`,
-      `Средний стресс: ${this.numberOrDash(payload.averages.stress)}`,
+      `${telegramCopy.stats.titlePrefix}: ${this.periodLabel(payload.periodType)}`,
     ];
 
+    if (payload.entriesCount === 0) {
+      lines.push('Записей: 0');
+      lines.push('Событий: 0');
+      lines.push('Данных пока нет.');
+      return lines.join('\n');
+    }
+
+    if (payload.isLowData) {
+      lines.push(telegramCopy.stats.lowDataLead);
+    }
+
+    lines.push('');
+    lines.push(`${telegramCopy.stats.countsLabel}:`);
+    lines.push(`- Записей: ${payload.entriesCount}`);
+    lines.push(`- Событий: ${payload.eventsCount}`);
+    lines.push('');
+    lines.push(`${telegramCopy.stats.averagesLabel}:`);
+    lines.push(`- Настроение: ${this.numberOrDash(payload.averages.mood)}`);
+    lines.push(`- Энергия: ${this.numberOrDash(payload.averages.energy)}`);
+    lines.push(`- Стресс: ${this.numberOrDash(payload.averages.stress)}`);
+
     if (payload.averages.sleepHours !== null || payload.averages.sleepQuality !== null) {
-      lines.push(`Средний сон (часы): ${this.numberOrDash(payload.averages.sleepHours)}`);
-      lines.push(`Среднее качество сна: ${this.numberOrDash(payload.averages.sleepQuality)}`);
+      lines.push('');
+      lines.push(`${telegramCopy.stats.sleepLabel}:`);
+      lines.push(`- Часы: ${this.numberOrDash(payload.averages.sleepHours)}`);
+      lines.push(`- Качество: ${this.numberOrDash(payload.averages.sleepQuality)}`);
     }
 
-    if (payload.bestDay) {
-      lines.push(`Лучший день: ${payload.bestDay.date} (${payload.bestDay.moodScore})`);
+    if (payload.isLowData) {
+      lines.push('');
+      lines.push(telegramCopy.stats.lowDataNote);
+      return lines.join('\n');
     }
 
-    if (payload.worstDay) {
-      lines.push(`Сложный день: ${payload.worstDay.date} (${payload.worstDay.moodScore})`);
+    if (payload.bestDay || payload.worstDay) {
+      lines.push('');
+      lines.push(`${telegramCopy.stats.daysLabel}:`);
+
+      if (payload.bestDay) {
+        lines.push(
+          `- ${telegramCopy.stats.bestDayLabel}: ${payload.bestDay.date} (${payload.bestDay.moodScore})`,
+        );
+      }
+
+      if (payload.worstDay) {
+        lines.push(
+          `- ${telegramCopy.stats.worstDayLabel}: ${payload.worstDay.date} (${payload.worstDay.moodScore})`,
+        );
+      }
     }
 
     const topEvents = Object.entries(payload.eventBreakdown)
@@ -34,7 +67,9 @@ export class SummariesFormatter {
       .slice(0, 3);
 
     if (topEvents.length > 0) {
-      lines.push('События по типам:');
+      lines.push('');
+      lines.push(`${telegramCopy.stats.eventsBreakdownLabel}:`);
+
       for (const [eventType, count] of topEvents) {
         const label = EVENT_TYPE_LABELS[eventType as keyof typeof EVENT_TYPE_LABELS] ?? eventType;
         lines.push(`- ${label}: ${count}`);
