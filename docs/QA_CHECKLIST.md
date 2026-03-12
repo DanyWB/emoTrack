@@ -134,9 +134,12 @@ Use this checklist before a local handoff or release candidate review.
 
 - combined mood/energy/stress chart is sent when data exists
 - sleep chart is sent when sleep data exists
+- compact mood strip is sent only when the dataset stays readable and is not overly dense
 - charts are skipped for low-data periods with fewer than 3 entries
 - on a normal `3-5` entry dataset, point markers and lines remain readable
 - on longer periods, x-axis labels stay readable and do not become overly dense
+- event-day markers appear on the combined chart without turning into a separate event analytics view
+- best/worst day accents on the combined chart stay lightweight and do not clutter the plot
 - chart rendering failure does not break stats flow
 - user still receives text summary when chart generation fails
 

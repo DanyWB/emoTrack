@@ -143,6 +143,7 @@ export const telegramCopy = {
     lowDataNote: 'Подробная сводка и графики появятся, когда будет хотя бы 3 записи за период.',
     chartCombinedCaption: 'График настроения, энергии и стресса.',
     chartSleepCaption: 'График сна.',
+    chartMoodStripCaption: 'Компактная шкала настроения по дням.',
     chartUnavailable: 'Сейчас не удалось построить графики. Текстовая сводка доступна.',
     sleepHoursMoodPattern: 'При более долгом сне настроение в среднем выше на {delta}.',
     sleepHoursEnergyPattern: 'При более долгом сне энергия в среднем выше на {delta}.',

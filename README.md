@@ -404,6 +404,9 @@ Chart presentation notes:
 - date labels are shortened for better mobile legibility
 - point markers are more visible for small normal datasets such as `3-5` entries
 - legend and grid styling are tuned to remain readable on phone screens
+- the combined chart now uses lightweight event-presence markers and subtle best/worst day point accents based on the existing stats payload
+- an additional compact mood strip can be sent for normal datasets when it remains readable; it is intentionally skipped for dense periods
+- low-data suppression, chart send order, and chart failure fallback behavior remain unchanged
 
 ## Manual QA Checklist
 

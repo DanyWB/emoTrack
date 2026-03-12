@@ -3,6 +3,8 @@ import {
   resolveChartLineTension,
   resolveChartPointRadius,
   resolveMaxTicksLimit,
+  resolveMoodHeatStripColor,
+  shouldRenderMoodHeatStrip,
   shouldOffsetXAxis,
 } from '../../src/charts/charts.utils';
 
@@ -29,5 +31,21 @@ describe('charts utils', () => {
 
     expect(shouldOffsetXAxis(4)).toBe(true);
     expect(shouldOffsetXAxis(12)).toBe(false);
+  });
+
+  it('renders the compact mood strip only when it stays Telegram-readable', () => {
+    expect(shouldRenderMoodHeatStrip(2)).toBe(false);
+    expect(shouldRenderMoodHeatStrip(3)).toBe(true);
+    expect(shouldRenderMoodHeatStrip(18)).toBe(true);
+    expect(shouldRenderMoodHeatStrip(31)).toBe(false);
+  });
+
+  it('maps mood values to stable compact heat-strip colors', () => {
+    expect(resolveMoodHeatStripColor(undefined)).toBe('#e2e8f0');
+    expect(resolveMoodHeatStripColor(2)).toBe('#ef4444');
+    expect(resolveMoodHeatStripColor(4)).toBe('#f97316');
+    expect(resolveMoodHeatStripColor(6)).toBe('#f59e0b');
+    expect(resolveMoodHeatStripColor(8)).toBe('#84cc16');
+    expect(resolveMoodHeatStripColor(10)).toBe('#16a34a');
   });
 });

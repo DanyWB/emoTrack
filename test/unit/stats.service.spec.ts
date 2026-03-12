@@ -188,4 +188,72 @@ describe('StatsService', () => {
       moodDeltaOnEventDays: 3,
     });
   });
+
+  it('adds lightweight chart annotations from existing stats payload semantics', async () => {
+    const missingSleepEntry = buildDailyEntry({
+      entryDate: new Date('2026-03-09T00:00:00.000Z'),
+      moodScore: 4,
+      energyScore: 5,
+      stressScore: 7,
+    });
+    missingSleepEntry.sleepHours = null;
+    missingSleepEntry.sleepQuality = null;
+
+    const entries = [
+      missingSleepEntry,
+      buildDailyEntry({
+        entryDate: new Date('2026-03-10T00:00:00.000Z'),
+        moodScore: 8,
+        energyScore: 7,
+        stressScore: 3,
+      }),
+      buildDailyEntry({
+        entryDate: new Date('2026-03-11T00:00:00.000Z'),
+        moodScore: 6,
+        energyScore: 6,
+        stressScore: 4,
+      }),
+    ];
+    const events = [
+      buildEvent({
+        id: 'event-visual-1',
+        eventDate: new Date('2026-03-10T00:00:00.000Z'),
+        eventType: 'work',
+      }),
+    ];
+    const checkinsService = {
+      buildEntryDate: jest.fn().mockReturnValue(new Date('2026-03-11T00:00:00.000Z')),
+      getEntriesForPeriod: jest.fn().mockResolvedValue(entries),
+    };
+    const eventsService = {
+      getEventsForPeriod: jest.fn().mockResolvedValue(events),
+    };
+    const service = new StatsService(checkinsService as never, eventsService as never);
+
+    const payload = await service.buildPeriodStats('user-1', SummaryPeriodType.d7);
+
+    expect(payload.chartPoints).toEqual([
+      expect.objectContaining({
+        date: '2026-03-09',
+        hasEvent: false,
+        isBestDay: false,
+        isWorstDay: true,
+        isSleepMissing: true,
+      }),
+      expect.objectContaining({
+        date: '2026-03-10',
+        hasEvent: true,
+        isBestDay: true,
+        isWorstDay: false,
+        isSleepMissing: false,
+      }),
+      expect.objectContaining({
+        date: '2026-03-11',
+        hasEvent: false,
+        isBestDay: false,
+        isWorstDay: false,
+        isSleepMissing: false,
+      }),
+    ]);
+  });
 });

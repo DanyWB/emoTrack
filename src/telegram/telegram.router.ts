@@ -552,12 +552,20 @@ export class TelegramRouter {
         );
       }
 
-      if (charts.combinedChartBuffer || charts.sleepChartBuffer) {
+      if (charts.moodHeatStripBuffer) {
+        await ctx.replyWithPhoto(
+          { source: charts.moodHeatStripBuffer },
+          { caption: telegramCopy.stats.chartMoodStripCaption },
+        );
+      }
+
+      if (charts.combinedChartBuffer || charts.sleepChartBuffer || charts.moodHeatStripBuffer) {
         await this.analyticsService.track(
           'chart_generated',
           {
             combined: !!charts.combinedChartBuffer,
             sleep: !!charts.sleepChartBuffer,
+            moodStrip: !!charts.moodHeatStripBuffer,
           },
           user.id,
         );

@@ -57,6 +57,9 @@ export class StatsService {
     const bestDay = this.findBestDay(entries);
     const worstDay = this.findWorstDay(entries);
     const eventBreakdown = this.buildEventBreakdown(events);
+    const eventDayKeys = new Set(events.map((event) => formatDateKey(event.eventDate)));
+    const bestDayKey = bestDay?.date;
+    const worstDayKey = worstDay?.date;
 
     let deltaVsPreviousPeriod: StatsDelta | null = null;
     let patternInsights: StatsPatternInsights | null = null;
@@ -91,14 +94,22 @@ export class StatsService {
       eventBreakdown,
       deltaVsPreviousPeriod,
       patternInsights,
-      chartPoints: entries.map((entry) => ({
-        date: formatDateKey(entry.entryDate),
-        mood: entry.moodScore,
-        energy: entry.energyScore,
-        stress: entry.stressScore,
-        sleepHours: entry.sleepHours ? Number(entry.sleepHours) : undefined,
-        sleepQuality: entry.sleepQuality ?? undefined,
-      })),
+      chartPoints: entries.map((entry) => {
+        const dateKey = formatDateKey(entry.entryDate);
+
+        return {
+          date: dateKey,
+          mood: entry.moodScore,
+          energy: entry.energyScore,
+          stress: entry.stressScore,
+          sleepHours: entry.sleepHours ? Number(entry.sleepHours) : undefined,
+          sleepQuality: entry.sleepQuality ?? undefined,
+          hasEvent: eventDayKeys.has(dateKey),
+          isBestDay: dateKey === bestDayKey,
+          isWorstDay: dateKey === worstDayKey,
+          isSleepMissing: entry.sleepHours === null && entry.sleepQuality === null,
+        };
+      }),
     };
   }
 

@@ -317,6 +317,7 @@ describe('Summaries integration', () => {
         generatePeriodCharts: jest.fn().mockResolvedValue({
           combinedChartBuffer: Buffer.from('combined'),
           sleepChartBuffer: Buffer.from('sleep'),
+          moodHeatStripBuffer: Buffer.from('mood-strip'),
         }),
       } as never,
       ctx.remindersService,
@@ -332,7 +333,7 @@ describe('Summaries integration', () => {
 
     await (router as any).handleStatsPeriodSelection(telegramCtx, user, SummaryPeriodType.d7);
 
-    expect(telegramCtx.replyWithPhoto).toHaveBeenCalledTimes(2);
+    expect(telegramCtx.replyWithPhoto).toHaveBeenCalledTimes(3);
     expect(telegramCtx.replyWithPhoto).toHaveBeenNthCalledWith(
       1,
       { source: Buffer.from('combined') },
@@ -342,6 +343,11 @@ describe('Summaries integration', () => {
       2,
       { source: Buffer.from('sleep') },
       { caption: telegramCopy.stats.chartSleepCaption },
+    );
+    expect(telegramCtx.replyWithPhoto).toHaveBeenNthCalledWith(
+      3,
+      { source: Buffer.from('mood-strip') },
+      { caption: telegramCopy.stats.chartMoodStripCaption },
     );
   });
 });

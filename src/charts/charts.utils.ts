@@ -47,3 +47,31 @@ export function resolveMaxTicksLimit(pointsCount: number): number {
 export function shouldOffsetXAxis(pointsCount: number): boolean {
   return pointsCount <= 5;
 }
+
+export function shouldRenderMoodHeatStrip(pointsCount: number): boolean {
+  return pointsCount >= 3 && pointsCount <= 30;
+}
+
+export function resolveMoodHeatStripColor(mood?: number): string {
+  if (typeof mood !== 'number') {
+    return '#e2e8f0';
+  }
+
+  if (mood <= 2) {
+    return '#ef4444';
+  }
+
+  if (mood <= 4) {
+    return '#f97316';
+  }
+
+  if (mood <= 6) {
+    return '#f59e0b';
+  }
+
+  if (mood <= 8) {
+    return '#84cc16';
+  }
+
+  return '#16a34a';
+}

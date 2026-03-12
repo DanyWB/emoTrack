@@ -5,9 +5,14 @@ export interface ChartPoint {
   stress?: number;
   sleepHours?: number;
   sleepQuality?: number;
+  hasEvent?: boolean;
+  isBestDay?: boolean;
+  isWorstDay?: boolean;
+  isSleepMissing?: boolean;
 }
 
 export interface GeneratedCharts {
   combinedChartBuffer?: Buffer;
   sleepChartBuffer?: Buffer;
+  moodHeatStripBuffer?: Buffer;
 }
