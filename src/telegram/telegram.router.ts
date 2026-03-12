@@ -28,6 +28,8 @@ import {
 import { extractTelegramProfile, getCallbackData, normalizeTelegramText } from './telegram.helpers';
 import { telegramKeyboards } from './telegram.keyboards';
 
+const HISTORY_PAGE_SIZE = 5;
+
 @Injectable()
 export class TelegramRouter {
   private readonly logger = new Logger(TelegramRouter.name);
@@ -136,8 +138,7 @@ export class TelegramRouter {
     }
 
     await this.analyticsService.track('history_requested', {}, user.id);
-    const entries = await this.checkinsService.getRecentEntries(user.id, 7);
-    await ctx.reply(formatHistoryEntries(entries), telegramKeyboards.mainMenu());
+    await this.replyHistoryPage(ctx, user.id, undefined, 'initial');
   }
 
   private async handleSettingsCommand(ctx: Context): Promise<void> {
@@ -168,6 +169,12 @@ export class TelegramRouter {
 
     await ctx.answerCbQuery().catch(() => undefined);
     const state = await this.fsmService.getState(user.id);
+
+    if (callbackData.startsWith(TELEGRAM_CALLBACKS.historyMorePrefix)) {
+      const cursor = callbackData.slice(TELEGRAM_CALLBACKS.historyMorePrefix.length);
+      await this.handleHistoryMoreCallback(ctx, user.id, cursor);
+      return;
+    }
 
     if (callbackData === TELEGRAM_CALLBACKS.actionCancel) {
       await this.checkinsFlow.cancel(user.id);
@@ -896,6 +903,54 @@ export class TelegramRouter {
     await ctx.reply(lines.join('\n'), telegramKeyboards.settingsMenu(user.remindersEnabled));
   }
 
+  private async replyHistoryPage(
+    ctx: Context,
+    userId: string,
+    cursor?: string,
+    mode: 'initial' | 'more' = 'initial',
+  ): Promise<void> {
+    const page = await this.checkinsService.getRecentEntriesPage(userId, HISTORY_PAGE_SIZE, cursor);
+
+    if (page.staleCursor) {
+      if (mode === 'more') {
+        await ctx.editMessageReplyMarkup(undefined).catch(() => undefined);
+      }
+
+      await ctx.reply(telegramCopy.history.stale, telegramKeyboards.mainMenu());
+      return;
+    }
+
+    if (page.entries.length === 0) {
+      await ctx.reply(telegramCopy.history.empty, telegramKeyboards.mainMenu());
+      return;
+    }
+
+    const text = formatHistoryEntries(page.entries, {
+      title: mode === 'more' ? telegramCopy.history.moreTitle : telegramCopy.history.title,
+    });
+    const keyboard = telegramKeyboards.historyPage(page.nextCursor);
+
+    if (mode === 'more') {
+      await ctx.editMessageText(text, keyboard);
+      return;
+    }
+
+    await ctx.reply(text, keyboard ?? telegramKeyboards.mainMenu());
+  }
+
+  private async handleHistoryMoreCallback(ctx: Context, userId: string, cursor: string): Promise<void> {
+    try {
+      await this.replyHistoryPage(ctx, userId, cursor, 'more');
+    } catch (error) {
+      if (!this.isStaleHistoryEditError(error)) {
+        throw error;
+      }
+
+      await ctx.editMessageReplyMarkup(undefined).catch(() => undefined);
+      await ctx.reply(telegramCopy.history.stale, telegramKeyboards.mainMenu());
+    }
+  }
+
   private async ensureOnboardingCompleted(ctx: Context, user: User): Promise<boolean> {
     if (user.onboardingCompleted) {
       return true;
@@ -1020,5 +1075,11 @@ export class TelegramRouter {
     }
 
     return this.usersService.getOrCreateTelegramUser(profile);
+  }
+
+  private isStaleHistoryEditError(error: unknown): boolean {
+    const message = error instanceof Error ? error.message : String(error);
+
+    return message.includes('message is not modified') || message.includes('message to edit not found');
   }
 }

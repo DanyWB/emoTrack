@@ -82,9 +82,22 @@ export class CheckinsRepository {
     });
   }
 
-  findRecentByUser(userId: string, limit: number): Promise<RecentDailyEntryWithCounts[]> {
+  findRecentByUser(
+    userId: string,
+    limit: number,
+    beforeEntryDate?: Date,
+  ): Promise<RecentDailyEntryWithCounts[]> {
     return this.prisma.dailyEntry.findMany({
-      where: { userId },
+      where: {
+        userId,
+        ...(beforeEntryDate
+          ? {
+              entryDate: {
+                lt: beforeEntryDate,
+              },
+            }
+          : {}),
+      },
       orderBy: [{ entryDate: 'desc' }, { createdAt: 'desc' }],
       take: limit,
       include: {

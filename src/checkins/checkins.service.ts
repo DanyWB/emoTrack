@@ -3,7 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import type { DailyEntry } from '@prisma/client';
 
 import { TEXT_LIMITS } from '../common/constants/app.constants';
-import { buildNormalizedEntryDate } from '../common/utils/date.utils';
+import { buildNormalizedEntryDate, formatDateKey, normalizeDayKeyToUtcDate } from '../common/utils/date.utils';
 import { TagsService } from '../tags/tags.service';
 import { CheckinsRepository } from './checkins.repository';
 import type { UpsertDailyEntryDto } from './dto/upsert-daily-entry.dto';
@@ -28,6 +28,12 @@ export interface RecentEntryView {
   sleepQuality?: number;
   hasNote: boolean;
   eventsCount: number;
+}
+
+export interface RecentEntriesPage {
+  entries: RecentEntryView[];
+  nextCursor?: string;
+  staleCursor: boolean;
 }
 
 @Injectable()
@@ -118,24 +124,67 @@ export class CheckinsService {
   }
 
   async getRecentEntries(userId: string, limit: number, _cursor?: string): Promise<RecentEntryView[]> {
-    const safeLimit = Number.isInteger(limit) && limit > 0 ? Math.min(limit, 20) : 5;
-    const rows = await this.checkinsRepository.findRecentByUser(userId, safeLimit);
+    const page = await this.getRecentEntriesPage(userId, limit, _cursor);
+    return page.entries;
+  }
 
-    return rows.map((row) => ({
-      id: row.id,
-      entryDate: row.entryDate,
-      moodScore: row.moodScore,
-      energyScore: row.energyScore,
-      stressScore: row.stressScore,
-      sleepHours: row.sleepHours ? Number(row.sleepHours) : undefined,
-      sleepQuality: row.sleepQuality ?? undefined,
-      hasNote: !!row.noteText?.trim(),
-      eventsCount: row._count.events,
-    }));
+  async getRecentEntriesPage(
+    userId: string,
+    limit: number,
+    cursor?: string,
+  ): Promise<RecentEntriesPage> {
+    const safeLimit = Number.isInteger(limit) && limit > 0 ? Math.min(limit, 20) : 5;
+    const cursorDate = this.parseHistoryCursor(cursor);
+
+    if (cursor && !cursorDate) {
+      return {
+        entries: [],
+        staleCursor: true,
+      };
+    }
+
+    const rows = await this.checkinsRepository.findRecentByUser(userId, safeLimit + 1, cursorDate ?? undefined);
+    const hasMore = rows.length > safeLimit;
+    const pageRows = hasMore ? rows.slice(0, safeLimit) : rows;
+
+    return {
+      entries: pageRows.map((row) => ({
+        id: row.id,
+        entryDate: row.entryDate,
+        moodScore: row.moodScore,
+        energyScore: row.energyScore,
+        stressScore: row.stressScore,
+        sleepHours: row.sleepHours ? Number(row.sleepHours) : undefined,
+        sleepQuality: row.sleepQuality ?? undefined,
+        hasNote: !!row.noteText?.trim(),
+        eventsCount: row._count.events,
+      })),
+      nextCursor:
+        hasMore && pageRows.length > 0 ? formatDateKey(pageRows[pageRows.length - 1].entryDate) : undefined,
+      staleCursor: !!cursor && pageRows.length === 0,
+    };
   }
 
   async countTodayEntry(userId: string, options: TodayEntryOptions = {}): Promise<number> {
     const current = await this.getTodayEntry(userId, options);
     return current ? 1 : 0;
+  }
+
+  private parseHistoryCursor(cursor?: string): Date | null {
+    if (!cursor) {
+      return null;
+    }
+
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(cursor)) {
+      return null;
+    }
+
+    const entryDate = normalizeDayKeyToUtcDate(cursor);
+
+    if (Number.isNaN(entryDate.getTime()) || formatDateKey(entryDate) !== cursor) {
+      return null;
+    }
+
+    return entryDate;
   }
 }

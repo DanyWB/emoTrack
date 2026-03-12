@@ -103,10 +103,14 @@ Use this checklist before a local handoff or release candidate review.
 
 - `/history` works for a user with entries
 - entries are ordered descending by date
+- the first history page stays compact and readable in Telegram
 - each history item shows mood/energy/stress
 - sleep data appears when present
 - note marker appears when note exists
 - linked event count appears when events exist
+- when more than 5 entries exist, `Еще` loads older entries
+- `Еще` edits the same history message instead of sending duplicated history blocks
+- stale `Еще` callback is handled gracefully and asks the user to reopen `/history`
 - empty history state is handled gracefully
 
 ## Stats and Summaries

@@ -120,6 +120,13 @@ export const telegramKeyboards = {
       actionRow({ back: true, skip: true }),
     ]),
 
+  historyPage: (nextCursor?: string) =>
+    nextCursor
+      ? Markup.inlineKeyboard([
+          [Markup.button.callback(telegramCopy.buttons.historyMore, `${TELEGRAM_CALLBACKS.historyMorePrefix}${nextCursor}`)],
+        ])
+      : undefined,
+
   eventTypePicker: (options: { back?: boolean } = {}) =>
     Markup.inlineKeyboard([...eventTypeButtons(), actionRow({ back: options.back })]),
 

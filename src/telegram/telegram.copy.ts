@@ -41,6 +41,7 @@ export const telegramCopy = {
     chooseTags: 'Выбрать теги',
     tagsDone: 'Готово',
     addEvent: 'Добавить событие',
+    historyMore: 'Еще',
     stats7d: '7 дней',
     stats30d: '30 дней',
     statsAll: 'За всё время',
@@ -101,7 +102,9 @@ export const telegramCopy = {
   },
   history: {
     title: 'Последние записи:',
+    moreTitle: 'Еще записи:',
     empty: 'Пока нет записей. Начни с /checkin.',
+    stale: 'Этот список уже неактуален. Открой /history снова.',
   },
   stats: {
     periodPrompt: 'Выбери период статистики.',
@@ -186,6 +189,10 @@ export interface HistoryEntryData {
   eventsCount: number;
 }
 
+interface HistoryEntriesFormatOptions {
+  title?: string;
+}
+
 export function formatCheckinConfirmation(data: CheckinConfirmationData): string {
   const lines = [
     data.updated ? 'Готово. Запись за сегодня обновлена.' : 'Готово. Запись за сегодня сохранена.',
@@ -259,30 +266,50 @@ function formatTagsCount(tagsCount: number): string {
   return `${tagsCount} тегов`;
 }
 
-export function formatHistoryEntries(entries: HistoryEntryData[]): string {
+export function formatHistoryEntries(
+  entries: HistoryEntryData[],
+  options: HistoryEntriesFormatOptions = {},
+): string {
   if (entries.length === 0) {
     return telegramCopy.history.empty;
   }
 
   const items = entries.map((entry) => {
     const lines = [
-      `• ${formatDateKey(entry.entryDate)}`,
-      `Настроение/Энергия/Стресс: ${entry.moodScore}/${entry.energyScore}/${entry.stressScore}`,
+      `• ${formatHistoryDate(entry.entryDate)}`,
+      `Настр./Энерг./Стресс: ${entry.moodScore}/${entry.energyScore}/${entry.stressScore}`,
     ];
 
-    if (typeof entry.sleepHours === 'number') {
-      lines.push(`Сон (часы): ${entry.sleepHours}`);
+    const sleepLine = formatHistorySleep(entry);
+    if (sleepLine) {
+      lines.push(sleepLine);
     }
 
-    if (typeof entry.sleepQuality === 'number') {
-      lines.push(`Сон (качество): ${entry.sleepQuality}`);
-    }
-
-    lines.push(`Заметка: ${entry.hasNote ? 'есть' : 'нет'}`);
-    lines.push(`События: ${entry.eventsCount}`);
+    lines.push(`Заметка: ${entry.hasNote ? 'есть' : '—'} · События: ${entry.eventsCount}`);
 
     return lines.join('\n');
   });
 
-  return `${telegramCopy.history.title}\n\n${items.join('\n\n')}`;
+  return `${options.title ?? telegramCopy.history.title}\n\n${items.join('\n\n')}`;
+}
+
+function formatHistoryDate(entryDate: Date): string {
+  const [year, month, day] = formatDateKey(entryDate).split('-');
+  return `${day}.${month}.${year}`;
+}
+
+function formatHistorySleep(entry: HistoryEntryData): string | null {
+  if (typeof entry.sleepHours === 'number' && typeof entry.sleepQuality === 'number') {
+    return `Сон: ${entry.sleepHours} ч, качество ${entry.sleepQuality}`;
+  }
+
+  if (typeof entry.sleepHours === 'number') {
+    return `Сон: ${entry.sleepHours} ч`;
+  }
+
+  if (typeof entry.sleepQuality === 'number') {
+    return `Качество сна: ${entry.sleepQuality}`;
+  }
+
+  return null;
 }

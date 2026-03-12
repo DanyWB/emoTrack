@@ -238,9 +238,13 @@ export class InMemoryCheckinsRepository {
     }));
   }
 
-  async findRecentByUser(userId: string, limit: number): Promise<RecentEntry[]> {
+  async findRecentByUser(userId: string, limit: number, beforeEntryDate?: Date): Promise<RecentEntry[]> {
     return [...this.entries.values()]
-      .filter((entry) => entry.userId === userId)
+      .filter(
+        (entry) =>
+          entry.userId === userId &&
+          (!beforeEntryDate || entry.entryDate.getTime() < beforeEntryDate.getTime()),
+      )
       .sort((left, right) => right.entryDate.getTime() - left.entryDate.getTime())
       .slice(0, limit)
       .map((entry) => ({

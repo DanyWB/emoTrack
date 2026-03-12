@@ -22,6 +22,8 @@ export const TELEGRAM_CALLBACKS = {
   onboardingStartFirstCheckin: 'onboarding:first-checkin:start',
   onboardingLater: 'onboarding:first-checkin:later',
 
+  historyMorePrefix: 'history:more:',
+
   scorePrefix: 'checkin:score:',
   checkinNoteAdd: 'checkin:note:add',
   checkinTagsStart: 'checkin:tags:start',

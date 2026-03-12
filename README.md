@@ -297,6 +297,16 @@ Current check-in behavior is intentionally conservative:
 - if the check-in FSM loses context, the user gets a safe restart message instead of a raw or ambiguous error
 - same-day upsert behavior remains unchanged: one normalized day key, one `DailyEntry`
 
+## History UX Notes
+
+Current `/history` behavior stays intentionally simple:
+
+- the first page shows the most recent 5 entries in a compact Telegram-friendly layout
+- each item still shows date, mood/energy/stress, sleep data when present, note marker, and linked event count
+- older entries are loaded through a single inline `Еще` action
+- `Еще` edits the same history message instead of appending duplicate history blocks
+- stale `Еще` callbacks degrade gracefully and ask the user to open `/history` again
+
 ## Stats Readability Notes
 
 Current `/stats` behavior keeps the original calculations and period boundaries unchanged, but improves output readability.
@@ -360,7 +370,7 @@ See the manual QA checklist here:
 
 ## Known MVP Limitations
 
-- no pagination for long history
+- history navigation is intentionally simple and only supports sequential `Еще` loading
 - no data export
 - no account deletion flow yet
 - no advanced reminder UI beyond current settings
