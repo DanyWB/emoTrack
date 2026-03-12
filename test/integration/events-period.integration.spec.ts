@@ -44,7 +44,8 @@ describe('Event period integration', () => {
     await ctx.eventsFlow.submitTitle(user, 'Focus block');
     await ctx.eventsFlow.submitScore(user, 7);
     await ctx.eventsFlow.skipDescription(user);
-    const result = await ctx.eventsFlow.skipEndDate(user);
+    await ctx.eventsFlow.skipEndDate(user);
+    const result = await ctx.eventsFlow.submitRepeatMode(user, 'none');
 
     expect(result).toMatchObject({
       status: 'created',
@@ -135,8 +136,153 @@ describe('Event period integration', () => {
       eventScore: 8,
       eventDate: entryDate,
       eventEndDate: null,
+      seriesId: null,
+      seriesPosition: null,
       dailyEntryId: entry.id,
     });
+  });
+
+  it('creates a bounded daily repeated standalone series and treats the count as total occurrences', async () => {
+    const user = await createReadyUser();
+    const startDate = ctx.checkinsService.buildEntryDate({
+      date: new Date(),
+      timezone: user.timezone,
+    });
+
+    await ctx.eventsFlow.startStandalone(user);
+    await ctx.eventsFlow.submitType(user, 'work');
+    await ctx.eventsFlow.submitTitle(user, 'Gym block');
+    await ctx.eventsFlow.submitScore(user, 7);
+    await ctx.eventsFlow.skipDescription(user);
+    await ctx.eventsFlow.skipEndDate(user);
+    await ctx.eventsFlow.submitRepeatMode(user, 'daily');
+    const result = await ctx.eventsFlow.submitRepeatCount(user, 3);
+
+    expect(result).toMatchObject({
+      status: 'created',
+      source: 'standalone',
+      createdEventsCount: 3,
+    });
+
+    const events = ctx.eventsRepository.listEvents();
+    expect(events).toHaveLength(3);
+    expect(events.map((event) => event.eventDate)).toEqual([
+      startDate,
+      new Date(startDate.getTime() + 24 * 60 * 60 * 1000),
+      new Date(startDate.getTime() + 2 * 24 * 60 * 60 * 1000),
+    ]);
+    expect(events.every((event) => event.eventEndDate === null)).toBe(true);
+    expect(events[0].seriesId).toBeTruthy();
+    expect(events.map((event) => event.seriesPosition)).toEqual([1, 2, 3]);
+    expect(new Set(events.map((event) => event.seriesId)).size).toBe(1);
+  });
+
+  it('creates a bounded weekly repeated standalone series', async () => {
+    const user = await createReadyUser();
+    const startDate = ctx.checkinsService.buildEntryDate({
+      date: new Date(),
+      timezone: user.timezone,
+    });
+
+    await ctx.eventsFlow.startStandalone(user);
+    await ctx.eventsFlow.submitType(user, 'rest');
+    await ctx.eventsFlow.submitTitle(user, 'Therapy walk');
+    await ctx.eventsFlow.submitScore(user, 8);
+    await ctx.eventsFlow.skipDescription(user);
+    await ctx.eventsFlow.skipEndDate(user);
+    await ctx.eventsFlow.submitRepeatMode(user, 'weekly');
+    const result = await ctx.eventsFlow.submitRepeatCount(user, 2);
+
+    expect(result).toMatchObject({
+      status: 'created',
+      source: 'standalone',
+      createdEventsCount: 2,
+    });
+
+    const events = ctx.eventsRepository.listEvents();
+    expect(events).toHaveLength(2);
+    expect(events.map((event) => event.eventDate)).toEqual([
+      startDate,
+      new Date(startDate.getTime() + 7 * 24 * 60 * 60 * 1000),
+    ]);
+  });
+
+  it('treats a repeated series retry with the same seriesId as already committed', async () => {
+    const user = await createReadyUser();
+    const startDate = ctx.checkinsService.buildEntryDate({
+      date: new Date(),
+      timezone: user.timezone,
+    });
+    const seriesId = 'series-fixed-1';
+
+    const first = await ctx.eventsService.createRepeatedStandaloneEvents(
+      user.id,
+      {
+        eventType: 'study',
+        title: 'Language class',
+        eventScore: 8,
+        eventDate: startDate.toISOString(),
+      },
+      'weekly',
+      3,
+      seriesId,
+    );
+    const second = await ctx.eventsService.createRepeatedStandaloneEvents(
+      user.id,
+      {
+        eventType: 'study',
+        title: 'Language class',
+        eventScore: 8,
+        eventDate: startDate.toISOString(),
+      },
+      'weekly',
+      3,
+      seriesId,
+    );
+
+    expect(first).toHaveLength(3);
+    expect(second).toHaveLength(3);
+    expect(second.map((event) => event.id)).toEqual(first.map((event) => event.id));
+    expect(ctx.eventsRepository.listEvents()).toHaveLength(3);
+  });
+
+  it('treats repeated rows as ordinary events in history day counts', async () => {
+    const user = await createReadyUser();
+    const startDate = ctx.checkinsService.buildEntryDate({
+      date: new Date(),
+      timezone: user.timezone,
+    });
+    const nextDate = new Date(startDate.getTime() + 24 * 60 * 60 * 1000);
+
+    await ctx.checkinsRepository.upsertByUserAndDate(user.id, startDate, {
+      moodScore: 6,
+      energyScore: 5,
+      stressScore: 4,
+    });
+    await ctx.checkinsRepository.upsertByUserAndDate(user.id, nextDate, {
+      moodScore: 7,
+      energyScore: 6,
+      stressScore: 4,
+    });
+
+    await ctx.eventsService.createRepeatedStandaloneEvents(
+      user.id,
+      {
+        eventType: 'study',
+        title: 'Course',
+        eventScore: 7,
+        eventDate: startDate.toISOString(),
+      },
+      'daily',
+      2,
+      'series-fixed-2',
+    );
+
+    const page = await ctx.checkinsService.getRecentEntriesPage(user.id, 5);
+
+    expect(page.entries).toHaveLength(2);
+    expect(page.entries[0].eventsCount).toBe(1);
+    expect(page.entries[1].eventsCount).toBe(1);
   });
 
   it('includes overlapping multi-day events in stats period reads', async () => {

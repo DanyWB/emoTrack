@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import type { Event, Prisma } from '@prisma/client';
+import { Prisma, type Event } from '@prisma/client';
 
 import { PrismaService } from '../database/prisma.service';
 
@@ -16,6 +16,65 @@ export class EventsRepository {
       where: { id: eventId },
       data,
     });
+  }
+
+  findByUserAndSeriesId(userId: string, seriesId: string): Promise<Event[]> {
+    return this.prisma.event.findMany({
+      where: {
+        userId,
+        seriesId,
+      },
+      orderBy: [{ seriesPosition: 'asc' }, { eventDate: 'asc' }, { createdAt: 'asc' }],
+    });
+  }
+
+  async createRepeatedSeries(
+    userId: string,
+    data: Prisma.EventUncheckedCreateInput[],
+    seriesId: string,
+    totalOccurrences: number,
+  ): Promise<Event[]> {
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        const existing = await tx.event.findMany({
+          where: {
+            userId,
+            seriesId,
+          },
+          orderBy: [{ seriesPosition: 'asc' }, { eventDate: 'asc' }, { createdAt: 'asc' }],
+        });
+
+        if (existing.length > 0) {
+          if (this.isCommittedSeries(existing, totalOccurrences)) {
+            return existing;
+          }
+
+          throw new Error('EVENT_SERIES_INCOMPLETE');
+        }
+
+        await tx.event.createMany({
+          data,
+        });
+
+        return tx.event.findMany({
+          where: {
+            userId,
+            seriesId,
+          },
+          orderBy: [{ seriesPosition: 'asc' }, { eventDate: 'asc' }, { createdAt: 'asc' }],
+        });
+      });
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        const existing = await this.findByUserAndSeriesId(userId, seriesId);
+
+        if (this.isCommittedSeries(existing, totalOccurrences)) {
+          return existing;
+        }
+      }
+
+      throw error;
+    }
   }
 
   findByUserAndDay(userId: string, eventDate: Date): Promise<Event[]> {
@@ -66,5 +125,15 @@ export class EventsRepository {
       },
       orderBy: [{ eventDate: 'desc' }, { createdAt: 'desc' }],
     });
+  }
+
+  private isCommittedSeries(events: Event[], totalOccurrences: number): boolean {
+    if (events.length !== totalOccurrences) {
+      return false;
+    }
+
+    return events.every(
+      (event, index) => event.seriesPosition === index + 1 && !!event.seriesId,
+    );
   }
 }

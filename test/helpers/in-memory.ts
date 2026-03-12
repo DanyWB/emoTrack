@@ -319,6 +319,8 @@ export class InMemoryEventsRepository {
       dailyEntryId: (data.dailyEntryId as string | undefined) ?? null,
       eventDate: data.eventDate as Date,
       eventEndDate: (data.eventEndDate as Date | undefined) ?? null,
+      seriesId: (data.seriesId as string | undefined) ?? null,
+      seriesPosition: (data.seriesPosition as number | undefined) ?? null,
       eventType: data.eventType as Event['eventType'],
       title: data.title as string,
       description: (data.description as string | undefined) ?? null,
@@ -329,6 +331,59 @@ export class InMemoryEventsRepository {
 
     this.events.set(event.id, event);
     return event;
+  }
+
+  async findByUserAndSeriesId(userId: string, seriesId: string): Promise<Event[]> {
+    return [...this.events.values()]
+      .filter((event) => event.userId === userId && event.seriesId === seriesId)
+      .sort((left, right) => {
+        if ((left.seriesPosition ?? 0) !== (right.seriesPosition ?? 0)) {
+          return (left.seriesPosition ?? 0) - (right.seriesPosition ?? 0);
+        }
+
+        return left.eventDate.getTime() - right.eventDate.getTime();
+      });
+  }
+
+  async createRepeatedSeries(
+    userId: string,
+    data: Record<string, unknown>[],
+    seriesId: string,
+    totalOccurrences: number,
+  ): Promise<Event[]> {
+    const existing = await this.findByUserAndSeriesId(userId, seriesId);
+
+    if (existing.length > 0) {
+      if (this.isCommittedSeries(existing, totalOccurrences)) {
+        return existing;
+      }
+
+      throw new Error('EVENT_SERIES_INCOMPLETE');
+    }
+
+    const created: Event[] = [];
+
+    for (const item of data) {
+      const duplicate = [...this.events.values()].find(
+        (event) =>
+          event.seriesId === seriesId &&
+          event.seriesPosition === ((item.seriesPosition as number | undefined) ?? null),
+      );
+
+      if (duplicate) {
+        const current = await this.findByUserAndSeriesId(userId, seriesId);
+
+        if (this.isCommittedSeries(current, totalOccurrences)) {
+          return current;
+        }
+
+        throw new Error('EVENT_SERIES_DUPLICATE');
+      }
+
+      created.push(await this.create(item));
+    }
+
+    return created.sort((left, right) => (left.seriesPosition ?? 0) - (right.seriesPosition ?? 0));
   }
 
   async update(eventId: string, data: Record<string, unknown>): Promise<Event> {
@@ -373,6 +428,14 @@ export class InMemoryEventsRepository {
 
   listEvents(): Event[] {
     return [...this.events.values()].sort((left, right) => left.eventDate.getTime() - right.eventDate.getTime());
+  }
+
+  private isCommittedSeries(events: Event[], totalOccurrences: number): boolean {
+    if (events.length !== totalOccurrences) {
+      return false;
+    }
+
+    return events.every((event, index) => event.seriesId !== null && event.seriesPosition === index + 1);
   }
 }
 
@@ -455,6 +518,8 @@ export function buildEvent(overrides: Partial<Event> = {}): Event {
     dailyEntryId: overrides.dailyEntryId ?? null,
     eventDate: overrides.eventDate ?? new Date('2026-03-11T00:00:00.000Z'),
     eventEndDate: overrides.eventEndDate ?? null,
+    seriesId: overrides.seriesId ?? null,
+    seriesPosition: overrides.seriesPosition ?? null,
     eventType: overrides.eventType ?? 'work',
     title: overrides.title ?? 'Work block',
     description: overrides.description ?? null,

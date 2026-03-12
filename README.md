@@ -11,7 +11,7 @@ The bot helps a user:
 - log one daily check-in per day
 - update the same day entry instead of creating duplicates
 - add an optional note, predefined tags, and an event
-- create standalone single-day or bounded multi-day events
+- create standalone single-day, bounded multi-day, or bounded repeated single-day events
 - view recent history
 - request 7-day, 30-day, or all-time stats
 - receive chart images in the stats flow
@@ -57,7 +57,7 @@ Core modules:
 - `onboarding`: consent and reminder-time onboarding flow
 - `fsm`: persistent finite-state machine backed by PostgreSQL
 - `checkins`: daily entry upsert, notes, tags, recent history
-- `events`: standalone and check-in event flows, including bounded multi-day standalone events
+- `events`: standalone and check-in event flows, including bounded multi-day and bounded repeated standalone events
 - `tags`: predefined tag queries and validation
 - `stats`: period calculations and summary payload building
 - `summaries`: summary persistence and Russian formatter
@@ -346,8 +346,19 @@ Current event behavior stays intentionally bounded:
 - standalone `/event` supports:
   - a single-day event
   - an optional inclusive end date for a multi-day period event
+  - a bounded repeated single-day series with:
+    - `Без повтора`
+    - `Каждый день`
+    - `Каждую неделю`
 - `eventDate` is the normalized inclusive start day
 - `eventEndDate` is optional; `null` means the event is single-day
+- repeated standalone rows remain ordinary `Event` rows with optional grouping metadata:
+  - `seriesId`
+  - `seriesPosition`
+- repeat count means the total number of occurrences in the series, including the first event
+- repeated standalone events always expand from the current normalized standalone start day; there is no custom start-date scheduler in this step
+- repeated standalone events are single-day only in this version and do not combine with multi-day periods
+- repeated events stay ordinary rows only; there is no series-aware edit, delete, or grouped UI in this step
 - stats period reads are overlap-aware:
   - an event is included when its inclusive day span overlaps the selected period
 - stats still count distinct event rows, not event-days

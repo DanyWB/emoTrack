@@ -59,6 +59,9 @@ export const telegramCopy = {
     chooseTags: 'Выбрать теги',
     tagsDone: 'Готово',
     addEvent: 'Добавить событие',
+    repeatNone: 'Без повтора',
+    repeatDaily: 'Каждый день',
+    repeatWeekly: 'Каждую неделю',
     historyMore: 'Еще',
     stats7d: '7 дней',
     stats30d: '30 дней',
@@ -119,6 +122,9 @@ export const telegramCopy = {
     descriptionPrompt: 'Можно добавить описание одним сообщением или нажать «Пропустить».',
     endDatePrompt:
       'Если событие длилось несколько дней, отправь дату окончания в формате YYYY-MM-DD. Для однодневного события нажми «Пропустить».',
+    repeatModePrompt: 'Нужно ли повторить это событие от текущей даты?',
+    repeatCountPrompt:
+      'Укажи общее число событий в серии от 2 до 7. Это общее количество, включая первое событие.',
     savedStandalone: 'Событие сохранено.',
   },
   history: {
@@ -208,6 +214,9 @@ export const telegramCopy = {
     invalidEventDescription: 'Описание слишком длинное или пустое. Отправь более короткий текст.',
     invalidEventEndDate:
       'Некорректная дата окончания. Используй формат YYYY-MM-DD, и дата не должна быть раньше даты начала события.',
+    invalidEventRepeatMode: 'Выбери вариант повтора кнопкой ниже.',
+    invalidEventRepeatCount:
+      'Укажи общее число событий в серии от 2 до 7. Это общее количество, включая первое событие.',
   },
 } as const;
 
@@ -345,6 +354,14 @@ export function formatReminderToggleMessage(
   return telegramCopy.settings.remindersEnabledUpdated;
 }
 
+export function formatStandaloneEventSaved(totalOccurrences: number): string {
+  if (totalOccurrences <= 1) {
+    return telegramCopy.event.savedStandalone;
+  }
+
+  return `Серия сохранена: ${formatEventOccurrences(totalOccurrences)}. Это общее количество, включая первое событие.`;
+}
+
 export function formatReminderTimeUpdateMessage(
   remindersEnabled: boolean,
   backgroundDeliveryAvailable: boolean,
@@ -420,4 +437,20 @@ function formatReminderRuntimeLine(data: SettingsViewData): string {
   }
 
   return telegramCopy.settings.remindersRuntimeActive;
+}
+
+function formatEventOccurrences(totalOccurrences: number): string {
+  if (totalOccurrences % 10 === 1 && totalOccurrences % 100 !== 11) {
+    return `${totalOccurrences} событие`;
+  }
+
+  if (
+    totalOccurrences % 10 >= 2 &&
+    totalOccurrences % 10 <= 4 &&
+    (totalOccurrences % 100 < 12 || totalOccurrences % 100 > 14)
+  ) {
+    return `${totalOccurrences} события`;
+  }
+
+  return `${totalOccurrences} событий`;
 }

@@ -102,6 +102,12 @@ Use this checklist before a local handoff or release candidate review.
 - valid standalone event is saved successfully
 - standalone event can be saved without an end date and remains single-day
 - standalone event can be saved with an inclusive end date for a bounded multi-day period
+- standalone event can be repeated with `Каждый день`
+- standalone event can be repeated with `Каждую неделю`
+- repeat count means the total number of occurrences in the series, including the first event
+- repeat count is bounded to 2..7 total occurrences
+- repeated standalone events expand from the current normalized start day only
+- repeated standalone events remain ordinary rows and are not grouped in the UI
 - end date earlier than start date is rejected
 - check-in-created event remains single-day only
 
@@ -115,6 +121,7 @@ Use this checklist before a local handoff or release candidate review.
 - note marker appears when note exists
 - linked event count appears when events exist
 - a multi-day standalone event is counted on each overlapped history day
+- repeated standalone rows appear as ordinary event counts on their corresponding history days
 - when more than 5 entries exist, `Еще` loads older entries
 - `Еще` edits the same history message instead of sending duplicated history blocks
 - stale `Еще` callback is handled gracefully and asks the user to reopen `/history`
@@ -137,6 +144,7 @@ Use this checklist before a local handoff or release candidate review.
 - weak or tied signals do not produce a pattern block
 - low-data summaries do not show comparison or pattern blocks
 - stats event count includes a multi-day event when its inclusive span overlaps the selected period
+- stats event count includes repeated standalone rows as ordinary events on their own dates
 
 ## Charts
 

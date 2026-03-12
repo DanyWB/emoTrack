@@ -113,6 +113,8 @@ model Event {
   dailyEntry  DailyEntry? @relation(fields: [dailyEntryId], references: [id], onDelete: SetNull)
   eventDate   DateTime  @db.Date
   eventEndDate DateTime? @db.Date
+  seriesId    String?
+  seriesPosition Int?
   eventType   EventType
   title       String
   description String?
@@ -122,6 +124,8 @@ model Event {
 
   @@index([userId, eventDate])
   @@index([userId, eventDate, eventEndDate])
+  @@index([userId, seriesId])
+  @@unique([seriesId, seriesPosition])
   @@map("events")
 }
 

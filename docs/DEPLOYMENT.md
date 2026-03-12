@@ -148,6 +148,11 @@ Database rollback:
 - the current multi-day event schema change is additive only:
   - `events.eventEndDate` is nullable
   - legacy single-day rows remain valid with `eventEndDate = null`
+- the current repeated-event schema change is also additive only:
+  - `events.seriesId` is nullable
+  - `events.seriesPosition` is nullable
+  - duplicate protection for repeated batches relies on the unique pair `(seriesId, seriesPosition)`
+  - legacy single-day and multi-day rows remain valid with both fields set to `null`
 - recommended safety measure:
   - take a database backup before applying non-trivial migrations
 - if rollback is required after a migration:

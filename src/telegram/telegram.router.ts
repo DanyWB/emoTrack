@@ -23,6 +23,7 @@ import {
   formatReminderTimeUpdateMessage,
   formatReminderToggleMessage,
   formatSettingsText,
+  formatStandaloneEventSaved,
   getCheckinPrompt,
   telegramCopy,
   type CheckinConfirmationData,
@@ -297,6 +298,20 @@ export class TelegramRouter {
       return;
     }
 
+    if (callbackData.startsWith(TELEGRAM_CALLBACKS.eventRepeatModePrefix)) {
+      const repeatMode = callbackData.slice(TELEGRAM_CALLBACKS.eventRepeatModePrefix.length);
+      const result = await this.eventsFlow.submitRepeatMode(user, repeatMode);
+      await this.replyEventResult(ctx, user, result);
+      return;
+    }
+
+    if (callbackData.startsWith(TELEGRAM_CALLBACKS.eventRepeatCountPrefix)) {
+      const repeatCount = callbackData.slice(TELEGRAM_CALLBACKS.eventRepeatCountPrefix.length);
+      const result = await this.eventsFlow.submitRepeatCount(user, repeatCount);
+      await this.replyEventResult(ctx, user, result);
+      return;
+    }
+
     if (callbackData.startsWith(TELEGRAM_CALLBACKS.statsPeriodPrefix)) {
       if (state !== FSM_STATES.stats_period_select) {
         await ctx.reply(telegramCopy.common.actionNotAllowed);
@@ -476,6 +491,8 @@ export class TelegramRouter {
       case FSM_STATES.event_score:
       case FSM_STATES.event_description:
       case FSM_STATES.event_end_date:
+      case FSM_STATES.event_repeat_mode:
+      case FSM_STATES.event_repeat_count:
         await this.handleEventTextByState(ctx, user, state, text);
         return;
       case FSM_STATES.settings_menu:
@@ -644,6 +661,17 @@ export class TelegramRouter {
       return;
     }
 
+    if (state === FSM_STATES.event_repeat_mode) {
+      await this.replyEventPromptByState(ctx, user, state);
+      return;
+    }
+
+    if (state === FSM_STATES.event_repeat_count) {
+      const result = await this.eventsFlow.submitRepeatCount(user, text);
+      await this.replyEventResult(ctx, user, result);
+      return;
+    }
+
     const result = await this.eventsFlow.submitDescription(user, text);
     await this.replyEventResult(ctx, user, result);
   }
@@ -785,7 +813,7 @@ export class TelegramRouter {
         }
       }
 
-      await ctx.reply(telegramCopy.event.savedStandalone, telegramKeyboards.mainMenu());
+      await ctx.reply(formatStandaloneEventSaved(result.createdEventsCount ?? 1), telegramKeyboards.mainMenu());
       return;
     }
 
@@ -816,6 +844,18 @@ export class TelegramRouter {
     if (result.status === 'invalid_end_date') {
       await ctx.reply(telegramCopy.validation.invalidEventEndDate);
       await this.replyEventPromptByState(ctx, user, FSM_STATES.event_end_date, result.source);
+      return;
+    }
+
+    if (result.status === 'invalid_repeat_mode') {
+      await ctx.reply(telegramCopy.validation.invalidEventRepeatMode);
+      await this.replyEventPromptByState(ctx, user, FSM_STATES.event_repeat_mode, result.source);
+      return;
+    }
+
+    if (result.status === 'invalid_repeat_count') {
+      await ctx.reply(telegramCopy.validation.invalidEventRepeatCount);
+      await this.replyEventPromptByState(ctx, user, FSM_STATES.event_repeat_count, result.source);
       return;
     }
 
@@ -928,6 +968,12 @@ export class TelegramRouter {
           telegramCopy.event.endDatePrompt,
           telegramKeyboards.eventEndDateActions({ back: true }),
         );
+        return;
+      case FSM_STATES.event_repeat_mode:
+        await ctx.reply(telegramCopy.event.repeatModePrompt, telegramKeyboards.eventRepeatMode());
+        return;
+      case FSM_STATES.event_repeat_count:
+        await ctx.reply(telegramCopy.event.repeatCountPrompt, telegramKeyboards.eventRepeatCount());
         return;
       case FSM_STATES.checkin_add_event_confirm:
         await this.replyCheckinPromptByState(ctx, user, FSM_STATES.checkin_add_event_confirm);
@@ -1042,7 +1088,9 @@ export class TelegramRouter {
       state === FSM_STATES.event_title ||
       state === FSM_STATES.event_score ||
       state === FSM_STATES.event_description ||
-      state === FSM_STATES.event_end_date
+      state === FSM_STATES.event_end_date ||
+      state === FSM_STATES.event_repeat_mode ||
+      state === FSM_STATES.event_repeat_count
     );
   }
 

@@ -48,4 +48,14 @@ export class CreateEventDto {
   @IsOptional()
   @IsString()
   dailyEntryId?: string;
+
+  @IsOptional()
+  @IsString()
+  seriesId?: string;
+
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  seriesPosition?: number;
 }

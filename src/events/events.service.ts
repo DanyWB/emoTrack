@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { EventType, type Event } from '@prisma/client';
@@ -5,6 +6,13 @@ import { EventType, type Event } from '@prisma/client';
 import { TEXT_LIMITS } from '../common/constants/app.constants';
 import { buildNormalizedEntryDate, normalizeDayKeyToUtcDate } from '../common/utils/date.utils';
 import { parseDateKey, parseIntegerScore } from '../common/utils/validation.utils';
+import {
+  EVENT_REPEAT_MAX_OCCURRENCES,
+  EVENT_REPEAT_MIN_OCCURRENCES,
+  EVENT_REPEAT_MODES,
+  type EventRepeatMode,
+} from './events.constants';
+import { buildRepeatedEventDates } from './events.utils';
 import { EventsRepository } from './events.repository';
 import type { CreateEventDto } from './dto/create-event.dto';
 
@@ -33,11 +41,54 @@ export class EventsService {
       dailyEntryId: dto.dailyEntryId,
       eventDate,
       eventEndDate: eventEndDate ?? undefined,
+      seriesId: dto.seriesId,
+      seriesPosition: dto.seriesPosition,
       eventType: dto.eventType,
       title: dto.title,
       description: dto.description,
       eventScore: dto.eventScore,
     });
+  }
+
+  async createRepeatedStandaloneEvents(
+    userId: string,
+    dto: CreateEventDto,
+    repeatMode: EventRepeatMode,
+    totalOccurrences: number,
+    seriesId: string,
+  ): Promise<Event[]> {
+    const eventDate = new Date(dto.eventDate);
+
+    if (dto.eventEndDate) {
+      throw new Error('INVALID_EVENT_REPEAT_CONFIGURATION');
+    }
+
+    if (repeatMode !== EVENT_REPEAT_MODES.daily && repeatMode !== EVENT_REPEAT_MODES.weekly) {
+      throw new Error('INVALID_EVENT_REPEAT_MODE');
+    }
+
+    if (!seriesId.trim()) {
+      throw new Error('INVALID_EVENT_SERIES_ID');
+    }
+
+    const eventDates = buildRepeatedEventDates(eventDate, repeatMode, totalOccurrences);
+
+    return this.eventsRepository.createRepeatedSeries(
+      userId,
+      eventDates.map((occurrenceDate, index) => ({
+        userId,
+        dailyEntryId: dto.dailyEntryId,
+        eventDate: occurrenceDate,
+        eventType: dto.eventType,
+        title: dto.title,
+        description: dto.description,
+        eventScore: dto.eventScore,
+        seriesId,
+        seriesPosition: index + 1,
+      })),
+      seriesId,
+      totalOccurrences,
+    );
   }
 
   linkEventToEntry(eventId: string, dailyEntryId: string): Promise<Event> {
@@ -70,6 +121,10 @@ export class EventsService {
 
   buildEventDateFromDayKey(dayKey: string): Date {
     return normalizeDayKeyToUtcDate(dayKey);
+  }
+
+  generateSeriesId(): string {
+    return randomUUID();
   }
 
   validateEventType(value: string): EventType | null {
@@ -118,5 +173,25 @@ export class EventsService {
     }
 
     return eventEndDate;
+  }
+
+  validateEventRepeatMode(value: string): EventRepeatMode | null {
+    return Object.values(EVENT_REPEAT_MODES).includes(value as EventRepeatMode)
+      ? (value as EventRepeatMode)
+      : null;
+  }
+
+  validateEventRepeatCount(value: string | number): number | null {
+    const parsed = typeof value === 'number' ? value : Number(value);
+
+    if (
+      !Number.isInteger(parsed) ||
+      parsed < EVENT_REPEAT_MIN_OCCURRENCES ||
+      parsed > EVENT_REPEAT_MAX_OCCURRENCES
+    ) {
+      return null;
+    }
+
+    return parsed;
   }
 }

@@ -144,6 +144,29 @@ export const telegramKeyboards = {
   eventEndDateActions: (options: { back?: boolean } = {}) =>
     Markup.inlineKeyboard([actionRow({ back: options.back, skip: true })]),
 
+  eventRepeatMode: () =>
+    Markup.inlineKeyboard([
+      [Markup.button.callback(telegramCopy.buttons.repeatNone, `${TELEGRAM_CALLBACKS.eventRepeatModePrefix}none`)],
+      [Markup.button.callback(telegramCopy.buttons.repeatDaily, `${TELEGRAM_CALLBACKS.eventRepeatModePrefix}daily`)],
+      [Markup.button.callback(telegramCopy.buttons.repeatWeekly, `${TELEGRAM_CALLBACKS.eventRepeatModePrefix}weekly`)],
+      actionRow({ back: true }),
+    ]),
+
+  eventRepeatCount: () =>
+    Markup.inlineKeyboard([
+      [
+        Markup.button.callback('2', `${TELEGRAM_CALLBACKS.eventRepeatCountPrefix}2`),
+        Markup.button.callback('3', `${TELEGRAM_CALLBACKS.eventRepeatCountPrefix}3`),
+        Markup.button.callback('4', `${TELEGRAM_CALLBACKS.eventRepeatCountPrefix}4`),
+      ],
+      [
+        Markup.button.callback('5', `${TELEGRAM_CALLBACKS.eventRepeatCountPrefix}5`),
+        Markup.button.callback('6', `${TELEGRAM_CALLBACKS.eventRepeatCountPrefix}6`),
+        Markup.button.callback('7', `${TELEGRAM_CALLBACKS.eventRepeatCountPrefix}7`),
+      ],
+      actionRow({ back: true }),
+    ]),
+
   statsPeriodSelector: () =>
     Markup.inlineKeyboard([
       [Markup.button.callback(telegramCopy.buttons.stats7d, `${TELEGRAM_CALLBACKS.statsPeriodPrefix}d7`)],

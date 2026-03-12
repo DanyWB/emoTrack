@@ -1,5 +1,7 @@
 import type { EventType } from '@prisma/client';
 
+import type { EventRepeatMode } from '../events/events.constants';
+
 export const FSM_STATES = {
   idle: 'idle',
   onboarding_consent: 'onboarding_consent',
@@ -20,6 +22,8 @@ export const FSM_STATES = {
   event_score: 'event_score',
   event_description: 'event_description',
   event_end_date: 'event_end_date',
+  event_repeat_mode: 'event_repeat_mode',
+  event_repeat_count: 'event_repeat_count',
   settings_menu: 'settings_menu',
   stats_period_select: 'stats_period_select',
 } as const;
@@ -48,5 +52,8 @@ export interface CheckinDraftPayload extends FsmPayload {
   entryDateKey?: string;
   eventStartDateKey?: string;
   eventEndDateKey?: string;
+  eventRepeatMode?: EventRepeatMode;
+  eventRepeatCount?: number;
+  eventSeriesId?: string;
   settingsAwaiting?: 'reminder_time' | 'sleep_mode';
 }
