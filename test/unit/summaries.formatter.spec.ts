@@ -2,6 +2,7 @@ import { SummaryPeriodType } from '@prisma/client';
 
 import { SummariesFormatter } from '../../src/summaries/summaries.formatter';
 import type { PeriodStatsPayload } from '../../src/stats/stats.types';
+import { telegramCopy } from '../../src/telegram/telegram.copy';
 
 function buildPayload(overrides: Partial<PeriodStatsPayload> = {}): PeriodStatsPayload {
   return {
@@ -138,5 +139,15 @@ describe('SummariesFormatter', () => {
     expect(text).toContain('Сводка за период: 7 дней');
     expect(text).toContain('Записей: 0');
     expect(text).toContain('Данных пока нет.');
+  });
+
+  it('wraps the weekly digest around the same summary body without creating a second summary engine', () => {
+    const text = formatter.formatWeeklyDigestText(buildPayload());
+
+    expect(text).toContain(telegramCopy.reminders.weeklyDigestTitle);
+    expect(text).toContain(telegramCopy.reminders.weeklyDigestLead);
+    expect(text).toContain('Кратко:');
+    expect(text).toContain('Средние значения:');
+    expect(text).not.toContain('Сводка за период: 7 дней');
   });
 });

@@ -54,4 +54,8 @@ export class SummariesService {
   formatSummaryText(payload: PeriodStatsPayload): string {
     return this.summariesFormatter.formatSummaryText(payload);
   }
+
+  formatWeeklyDigestText(payload: PeriodStatsPayload): string {
+    return this.summariesFormatter.formatWeeklyDigestText(payload);
+  }
 }

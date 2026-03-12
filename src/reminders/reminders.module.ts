@@ -4,6 +4,7 @@ import { ConfigModule } from '@nestjs/config';
 import { parseBooleanEnv } from '../config/config.utils';
 import { AnalyticsModule } from '../analytics/analytics.module';
 import { CheckinsModule } from '../checkins/checkins.module';
+import { SummariesModule } from '../summaries/summaries.module';
 import { UsersModule } from '../users/users.module';
 
 import { APP_QUEUES } from '../common/constants/app.constants';
@@ -18,6 +19,7 @@ const jobsEnabled = parseBooleanEnv(process.env.JOBS_ENABLED, false);
     ConfigModule,
     UsersModule,
     CheckinsModule,
+    SummariesModule,
     AnalyticsModule,
     ...(jobsEnabled
       ? [

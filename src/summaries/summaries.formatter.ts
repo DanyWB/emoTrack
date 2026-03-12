@@ -19,20 +19,45 @@ import {
 @Injectable()
 export class SummariesFormatter {
   formatSummaryText(payload: PeriodStatsPayload): string {
-    const lines: string[] = [`${telegramCopy.stats.titlePrefix}: ${this.periodLabel(payload.periodType)}`];
+    return this.buildSummaryText(
+      payload,
+      `${telegramCopy.stats.titlePrefix}: ${this.periodLabel(payload.periodType)}`,
+    );
+  }
+
+  formatWeeklyDigestText(payload: PeriodStatsPayload): string {
+    return this.buildSummaryText(
+      payload,
+      telegramCopy.reminders.weeklyDigestTitle,
+      telegramCopy.reminders.weeklyDigestLead,
+    );
+  }
+
+  private buildSummaryText(
+    payload: PeriodStatsPayload,
+    heading: string,
+    lead?: string,
+  ): string {
+    const lines: string[] = [heading];
+
+    if (lead) {
+      lines.push(lead);
+    }
 
     if (payload.entriesCount === 0) {
+      lines.push('');
       lines.push('Записей: 0');
       lines.push('Событий: 0');
       lines.push('Данных пока нет.');
       return lines.join('\n');
     }
 
+    lines.push('');
+
     if (payload.isLowData) {
       lines.push(telegramCopy.stats.lowDataLead);
     }
 
-    lines.push('');
     lines.push(`${telegramCopy.stats.countsLabel}:`);
     lines.push(`- Записей: ${payload.entriesCount}`);
     lines.push(`- Событий: ${payload.eventsCount}`);
@@ -95,7 +120,6 @@ export class SummariesFormatter {
         lines.push(`- ${label}: ${count}`);
       }
     }
-
     return lines.join('\n');
   }
 

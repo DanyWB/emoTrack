@@ -219,6 +219,10 @@ Reminder UX note:
 - reminder settings still save even when jobs are disabled locally
 - the settings screen explicitly shows when background auto-reminders are unavailable in the current environment
 - enabling reminders in local no-jobs mode does not imply that background delivery is actively running
+- weekly digest delivery stays disabled when jobs are unavailable locally; the app still boots and settings still persist
+- weekly digest v1 reuses the accepted `d7` summary pipeline with a weekly wrapper instead of a separate stats engine
+- weekly digest is sent only when the last 7 normalized user-local days include at least 3 entries
+- when jobs are enabled, the weekly digest is scheduled for Sunday at the user's reminder time
 
 ## Environment Variables
 
@@ -341,8 +345,22 @@ Stage B comparison and pattern notes:
 - current pattern set is limited to:
   - one sleep-to-state observation if the split is strong enough
   - one weekday mood tendency if repeated weekday data is clearly strong enough
-  - a minimal event companion note with the most frequent event type and at most one simple mood comparison
+- a minimal event companion note with the most frequent event type and at most one simple mood comparison
 - low-data behavior from Stage A is unchanged: low-data summaries do not show comparison or pattern blocks
+
+## Weekly Digest Notes
+
+Current weekly digest behavior stays deliberately small and explicit:
+
+- it reuses the accepted `d7` summary pipeline and wraps it with a weekly digest header
+- it is delivered through the existing reminder path rather than a second summary system
+- it is eligible only when:
+  - onboarding is complete
+  - reminders are enabled
+  - reminder time is set
+  - the last 7 normalized user-local days include at least 3 entries
+- when the threshold is not met, the weekly digest is skipped instead of sending a weak summary
+- when jobs are disabled, weekly digest scheduling and enqueueing degrade to safe no-op behavior
 
 ## Logging and Error Handling
 
@@ -399,6 +417,7 @@ See the manual QA checklist here:
 - no data export
 - no account deletion flow yet
 - no advanced reminder UI beyond current settings
+- weekly digest uses the same d7 summary engine and does not yet have separate user-facing controls
 - no AI insights layer
 - no admin interface
 - no production-grade observability stack yet
@@ -408,7 +427,7 @@ See the manual QA checklist here:
 Natural next steps after the MVP:
 
 - broader settings coverage for optional modules
-- scheduled weekly summaries in user-facing UX
+- richer weekly digest controls and cadence options
 - export and privacy tooling
 - richer analytics dashboards
 - deployment manifests and production monitoring
@@ -416,3 +435,4 @@ Natural next steps after the MVP:
 ## Optional Docker Path
 
 `docker-compose.yml` remains available as an optional infrastructure path for PostgreSQL and Redis, but Docker is not required for local Windows development.
+

@@ -22,6 +22,16 @@ export class RemindersProcessor extends WorkerHost {
       if (userId) {
         await this.remindersService.sendDailyReminder(userId);
       }
+
+      return;
+    }
+
+    if (job.name === 'weekly-summary') {
+      const userId = (job.data as { userId?: string }).userId;
+
+      if (userId) {
+        await this.remindersService.sendWeeklyDigest(userId);
+      }
     }
   }
 }

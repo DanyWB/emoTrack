@@ -169,6 +169,15 @@ Run this section only when Redis is available and enabled.
 - reminder scheduling does not crash startup
 - disabling reminders cancels scheduling path cleanly
 
+## Weekly Digest
+
+- with `REDIS_ENABLED=true` and `JOBS_ENABLED=true`, weekly digest scheduling does not crash startup
+- weekly digest reuses the existing 7-day summary path instead of a separate stats engine
+- weekly digest is sent only when the last 7 normalized user-local days include at least 3 entries
+- with fewer than 3 entries in the last 7 days, weekly digest is skipped
+- weekly digest stays disabled safely when jobs are unavailable locally
+- daily reminder behavior remains unchanged after weekly digest support is enabled
+
 ## Final Verification
 
 - `npm run lint` passes

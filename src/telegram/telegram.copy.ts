@@ -175,6 +175,8 @@ export const telegramCopy = {
   },
   reminders: {
     dailyPrompt: 'Напоминание: отметь состояние за сегодня командой /checkin.',
+    weeklyDigestTitle: 'Еженедельная сводка',
+    weeklyDigestLead: 'Краткий итог за последние 7 дней.',
   },
   help: {
     text: [
