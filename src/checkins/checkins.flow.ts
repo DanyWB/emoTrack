@@ -2,6 +2,15 @@
 import { type User } from '@prisma/client';
 
 import { AnalyticsService } from '../analytics/analytics.service';
+import {
+  buildCoreCheckinStates,
+  getNextCoreCheckinState,
+  getPreviousCoreCheckinState,
+  hasCapturedCoreMetric,
+  isCoreCheckinState,
+  mapCoreStateToPayloadKey,
+  type CoreCheckinState,
+} from './checkins.steps';
 import { formatDateKey } from '../common/utils/date.utils';
 import { parseIntegerScore, parseSleepHours } from '../common/utils/validation.utils';
 import { FsmService } from '../fsm/fsm.service';
@@ -18,6 +27,7 @@ export type CheckinFlowStatus =
   | 'invalid_note'
   | 'invalid_tag'
   | 'cannot_back'
+  | 'cannot_skip'
   | 'not_in_checkin'
   | 'missing_context';
 
@@ -56,12 +66,19 @@ export class CheckinsFlowService {
       };
     }
 
-    await this.fsmService.setState(user.id, FSM_STATES.checkin_mood, {});
+    const firstState = this.getFirstCoreState(user);
+
+    if (!firstState) {
+      await this.fsmService.setIdle(user.id);
+      return { status: 'missing_context' };
+    }
+
+    await this.fsmService.setState(user.id, firstState, {});
     await this.analyticsService.track('checkin_started', {}, user.id);
 
     return {
       status: 'next',
-      nextState: FSM_STATES.checkin_mood,
+      nextState: firstState,
       resumed: false,
     };
   }
@@ -77,44 +94,19 @@ export class CheckinsFlowService {
     const state = (session?.state as FsmState | undefined) ?? FSM_STATES.idle;
     const payload = this.extractPayload(session?.payloadJson);
 
-    switch (state) {
-      case FSM_STATES.checkin_mood: {
-        await this.fsmService.setState(user.id, FSM_STATES.checkin_energy, {
-          ...payload,
-          moodScore: score,
-        });
-        return { status: 'next', nextState: FSM_STATES.checkin_energy };
-      }
-      case FSM_STATES.checkin_energy: {
-        await this.fsmService.setState(user.id, FSM_STATES.checkin_stress, {
-          ...payload,
-          energyScore: score,
-        });
-        return { status: 'next', nextState: FSM_STATES.checkin_stress };
-      }
-      case FSM_STATES.checkin_stress: {
-        const nextPayload: CheckinDraftPayload = {
-          ...payload,
-          stressScore: score,
-        };
-
-        if (user.sleepMode === 'hours' || user.sleepMode === 'both') {
-          await this.fsmService.setState(user.id, FSM_STATES.checkin_sleep_hours, nextPayload);
-          return { status: 'next', nextState: FSM_STATES.checkin_sleep_hours };
-        }
-
-        await this.fsmService.setState(user.id, FSM_STATES.checkin_sleep_quality, nextPayload);
-        return { status: 'next', nextState: FSM_STATES.checkin_sleep_quality };
-      }
-      case FSM_STATES.checkin_sleep_quality: {
-        return this.persistCoreEntryAndMoveToOptional(user, {
-          ...payload,
-          sleepQuality: score,
-        });
-      }
-      default:
-        return { status: 'not_in_checkin' };
+    if (
+      state !== FSM_STATES.checkin_mood &&
+      state !== FSM_STATES.checkin_energy &&
+      state !== FSM_STATES.checkin_stress &&
+      state !== FSM_STATES.checkin_sleep_quality
+    ) {
+      return { status: 'not_in_checkin' };
     }
+
+    return this.advanceFromCoreState(user, state, {
+      ...payload,
+      [mapCoreStateToPayloadKey(state)]: score,
+    });
   }
 
   async submitSleepHours(user: User, rawValue: string): Promise<CheckinFlowResult> {
@@ -132,18 +124,7 @@ export class CheckinsFlowService {
       return { status: 'not_in_checkin' };
     }
 
-    if (user.sleepMode === 'both') {
-      await this.fsmService.setState(user.id, FSM_STATES.checkin_sleep_quality, {
-        ...payload,
-        sleepHours: parsed,
-      });
-      return {
-        status: 'next',
-        nextState: FSM_STATES.checkin_sleep_quality,
-      };
-    }
-
-    return this.persistCoreEntryAndMoveToOptional(user, {
+    return this.advanceFromCoreState(user, state, {
       ...payload,
       sleepHours: parsed,
     });
@@ -321,23 +302,14 @@ export class CheckinsFlowService {
     const state = (session?.state as FsmState | undefined) ?? FSM_STATES.idle;
     const payload = this.extractPayload(session?.payloadJson);
 
-    if (state === FSM_STATES.checkin_sleep_hours) {
-      if (user.sleepMode === 'both') {
-        const nextPayload = this.withoutKeys(payload, ['sleepHours']);
-        await this.fsmService.setState(user.id, FSM_STATES.checkin_sleep_quality, nextPayload);
-        return {
-          status: 'next',
-          nextState: FSM_STATES.checkin_sleep_quality,
-        };
+    if (state === FSM_STATES.checkin_sleep_hours || state === FSM_STATES.checkin_sleep_quality) {
+      const nextPayload = this.withoutKeys(payload, [mapCoreStateToPayloadKey(state)]);
+
+      if (!this.canSkipCoreState(user, state, nextPayload)) {
+        return { status: 'cannot_skip' };
       }
 
-      const nextPayload = this.withoutKeys(payload, ['sleepHours']);
-      return this.persistCoreEntryAndMoveToOptional(user, nextPayload);
-    }
-
-    if (state === FSM_STATES.checkin_sleep_quality) {
-      const nextPayload = this.withoutKeys(payload, ['sleepQuality']);
-      return this.persistCoreEntryAndMoveToOptional(user, nextPayload);
+      return this.advanceFromCoreState(user, state, nextPayload);
     }
 
     if (state === FSM_STATES.checkin_note_prompt) {
@@ -376,58 +348,36 @@ export class CheckinsFlowService {
     const state = (session?.state as FsmState | undefined) ?? FSM_STATES.idle;
     const payload = this.extractPayload(session?.payloadJson);
 
-    switch (state) {
-      case FSM_STATES.checkin_mood:
+    if (isCoreCheckinState(state)) {
+      const previousState = getPreviousCoreCheckinState(user, state);
+
+      if (!previousState) {
         return { status: 'cannot_back' };
-      case FSM_STATES.checkin_energy: {
-        await this.fsmService.setState(
-          user.id,
-          FSM_STATES.checkin_mood,
-          this.withoutKeys(payload, ['energyScore', 'stressScore', 'sleepHours', 'sleepQuality']),
-        );
-        return { status: 'next', nextState: FSM_STATES.checkin_mood };
       }
-      case FSM_STATES.checkin_stress: {
-        await this.fsmService.setState(
-          user.id,
-          FSM_STATES.checkin_energy,
-          this.withoutKeys(payload, ['stressScore', 'sleepHours', 'sleepQuality']),
-        );
-        return { status: 'next', nextState: FSM_STATES.checkin_energy };
-      }
-      case FSM_STATES.checkin_sleep_hours: {
-        await this.fsmService.setState(
-          user.id,
-          FSM_STATES.checkin_stress,
-          this.withoutKeys(payload, ['sleepHours', 'sleepQuality']),
-        );
-        return { status: 'next', nextState: FSM_STATES.checkin_stress };
-      }
-      case FSM_STATES.checkin_sleep_quality: {
-        if (user.sleepMode === 'both') {
-          await this.fsmService.setState(
-            user.id,
-            FSM_STATES.checkin_sleep_hours,
-            this.withoutKeys(payload, ['sleepQuality']),
-          );
-          return { status: 'next', nextState: FSM_STATES.checkin_sleep_hours };
+
+      await this.fsmService.setState(
+        user.id,
+        previousState,
+        this.withoutKeys(payload, this.getCorePayloadKeysFromState(user, state)),
+      );
+
+      return { status: 'next', nextState: previousState };
+    }
+
+    switch (state) {
+      case FSM_STATES.checkin_note_prompt: {
+        const previousCoreState = this.getLastCoreState(user);
+
+        if (!previousCoreState) {
+          return { status: 'cannot_back' };
         }
 
         await this.fsmService.setState(
           user.id,
-          FSM_STATES.checkin_stress,
-          this.withoutKeys(payload, ['sleepQuality']),
-        );
-        return { status: 'next', nextState: FSM_STATES.checkin_stress };
-      }
-      case FSM_STATES.checkin_note_prompt: {
-        const previousSleepState = this.resolvePreviousSleepState(user);
-        await this.fsmService.setState(
-          user.id,
-          previousSleepState,
+          previousCoreState,
           this.withoutKeys(payload, ['entryId', 'isUpdate']),
         );
-        return { status: 'next', nextState: previousSleepState };
+        return { status: 'next', nextState: previousCoreState };
       }
       case FSM_STATES.checkin_note: {
         await this.fsmService.setState(user.id, FSM_STATES.checkin_note_prompt, payload);
@@ -458,22 +408,19 @@ export class CheckinsFlowService {
     user: User,
     payload: CheckinDraftPayload,
   ): Promise<CheckinFlowResult> {
-    if (
-      typeof payload.moodScore !== 'number' ||
-      typeof payload.energyScore !== 'number' ||
-      typeof payload.stressScore !== 'number'
-    ) {
-      await this.fsmService.setState(user.id, FSM_STATES.checkin_mood, {});
-      return { status: 'next', nextState: FSM_STATES.checkin_mood };
+    if (!hasCapturedCoreMetric(payload)) {
+      const firstState = this.getFirstCoreState(user);
+
+      if (!firstState) {
+        await this.fsmService.setIdle(user.id);
+        return { status: 'missing_context' };
+      }
+
+      await this.fsmService.setState(user.id, firstState, {});
+      return { status: 'next', nextState: firstState };
     }
 
-    const entryPayload: UpsertDailyEntryDto = {
-      moodScore: payload.moodScore,
-      energyScore: payload.energyScore,
-      stressScore: payload.stressScore,
-      sleepHours: payload.sleepHours,
-      sleepQuality: payload.sleepQuality,
-    };
+    const entryPayload = this.buildEntryPayload(payload);
 
     const result = await this.checkinsService.upsertTodayEntry(user.id, entryPayload, {
       timezone: user.timezone,
@@ -499,21 +446,20 @@ export class CheckinsFlowService {
   }
 
   private async finishOptionalFlow(user: User, payload: CheckinDraftPayload): Promise<CheckinFlowResult> {
-    if (
-      typeof payload.moodScore !== 'number' ||
-      typeof payload.energyScore !== 'number' ||
-      typeof payload.stressScore !== 'number'
-    ) {
-      await this.fsmService.setState(user.id, FSM_STATES.checkin_mood, {});
-      return { status: 'next', nextState: FSM_STATES.checkin_mood };
+    if (!hasCapturedCoreMetric(payload)) {
+      const firstState = this.getFirstCoreState(user);
+
+      if (!firstState) {
+        await this.fsmService.setIdle(user.id);
+        return { status: 'missing_context' };
+      }
+
+      await this.fsmService.setState(user.id, firstState, {});
+      return { status: 'next', nextState: firstState };
     }
 
     const entryPayload: UpsertDailyEntryDto = {
-      moodScore: payload.moodScore,
-      energyScore: payload.energyScore,
-      stressScore: payload.stressScore,
-      sleepHours: payload.sleepHours,
-      sleepQuality: payload.sleepQuality,
+      ...this.buildEntryPayload(payload),
       noteText: payload.noteText,
     };
 
@@ -529,12 +475,86 @@ export class CheckinsFlowService {
     };
   }
 
-  private resolvePreviousSleepState(user: User): FsmState {
-    if (user.sleepMode === 'hours') {
-      return FSM_STATES.checkin_sleep_hours;
+  private async advanceFromCoreState(
+    user: User,
+    state: CoreCheckinState,
+    payload: CheckinDraftPayload,
+  ): Promise<CheckinFlowResult> {
+    const nextState = getNextCoreCheckinState(user, state);
+
+    if (!nextState) {
+      return this.persistCoreEntryAndMoveToOptional(user, payload);
     }
 
-    return FSM_STATES.checkin_sleep_quality;
+    await this.fsmService.setState(user.id, nextState, payload);
+
+    return {
+      status: 'next',
+      nextState,
+    };
+  }
+
+  private canSkipCoreState(
+    user: User,
+    state: CoreCheckinState,
+    payloadAfterSkip: CheckinDraftPayload,
+  ): boolean {
+    const nextState = getNextCoreCheckinState(user, state);
+
+    if (nextState) {
+      return true;
+    }
+
+    return hasCapturedCoreMetric(payloadAfterSkip);
+  }
+
+  private getFirstCoreState(user: User): CoreCheckinState | null {
+    return buildCoreCheckinStates(user)[0] ?? null;
+  }
+
+  private getLastCoreState(user: User): CoreCheckinState | null {
+    const states = buildCoreCheckinStates(user);
+    return states[states.length - 1] ?? null;
+  }
+
+  private getCorePayloadKeysFromState(
+    user: User,
+    state: CoreCheckinState,
+  ): Array<keyof CheckinDraftPayload> {
+    const states = buildCoreCheckinStates(user);
+    const currentIndex = states.indexOf(state);
+
+    if (currentIndex === -1) {
+      return [];
+    }
+
+    return states.slice(currentIndex).map((item) => mapCoreStateToPayloadKey(item));
+  }
+
+  private buildEntryPayload(payload: CheckinDraftPayload): UpsertDailyEntryDto {
+    const entryPayload: UpsertDailyEntryDto = {};
+
+    if (typeof payload.moodScore === 'number') {
+      entryPayload.moodScore = payload.moodScore;
+    }
+
+    if (typeof payload.energyScore === 'number') {
+      entryPayload.energyScore = payload.energyScore;
+    }
+
+    if (typeof payload.stressScore === 'number') {
+      entryPayload.stressScore = payload.stressScore;
+    }
+
+    if (typeof payload.sleepHours === 'number') {
+      entryPayload.sleepHours = payload.sleepHours;
+    }
+
+    if (typeof payload.sleepQuality === 'number') {
+      entryPayload.sleepQuality = payload.sleepQuality;
+    }
+
+    return entryPayload;
   }
 
   private extractPayload(payload: unknown): CheckinDraftPayload {
@@ -566,7 +586,9 @@ export class CheckinsFlowService {
       state !== FSM_STATES.event_title &&
       state !== FSM_STATES.event_score &&
       state !== FSM_STATES.event_description &&
-      state !== FSM_STATES.event_end_date
+      state !== FSM_STATES.event_end_date &&
+      state !== FSM_STATES.event_repeat_mode &&
+      state !== FSM_STATES.event_repeat_count
     ) {
       return false;
     }

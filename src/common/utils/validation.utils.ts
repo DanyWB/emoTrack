@@ -42,3 +42,14 @@ export function parseDateKey(value: string): string | null {
 
   return trimmed;
 }
+
+export interface DailyTrackingSelection {
+  trackMood: boolean;
+  trackEnergy: boolean;
+  trackStress: boolean;
+  trackSleep: boolean;
+}
+
+export function hasAtLeastOneTrackedDailyMetric(selection: DailyTrackingSelection): boolean {
+  return selection.trackMood || selection.trackEnergy || selection.trackStress || selection.trackSleep;
+}

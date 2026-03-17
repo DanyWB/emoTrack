@@ -39,6 +39,10 @@ export const TELEGRAM_CALLBACKS = {
   settingsReminderTimeEdit: 'settings:reminder-time:edit',
   settingsSleepModeSelect: 'settings:sleep-mode:select',
   settingsSleepModePrefix: 'settings:sleep-mode:',
+  settingsTrackMoodToggle: 'settings:track:mood',
+  settingsTrackEnergyToggle: 'settings:track:energy',
+  settingsTrackStressToggle: 'settings:track:stress',
+  settingsTrackSleepToggle: 'settings:track:sleep',
 
   actionCancel: 'action:cancel',
   actionBack: 'action:back',

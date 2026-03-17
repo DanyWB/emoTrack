@@ -35,6 +35,10 @@ import {
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+function isNumber(value: number | null | undefined): value is number {
+  return typeof value === 'number';
+}
+
 @Injectable()
 export class StatsService {
   private readonly logger = new Logger(StatsService.name);
@@ -100,9 +104,9 @@ export class StatsService {
 
         return {
           date: dateKey,
-          mood: entry.moodScore,
-          energy: entry.energyScore,
-          stress: entry.stressScore,
+          mood: isNumber(entry.moodScore) ? entry.moodScore : undefined,
+          energy: isNumber(entry.energyScore) ? entry.energyScore : undefined,
+          stress: isNumber(entry.stressScore) ? entry.stressScore : undefined,
           sleepHours: entry.sleepHours ? Number(entry.sleepHours) : undefined,
           sleepQuality: entry.sleepQuality ?? undefined,
           hasEvent: eventDayKeys.has(dateKey),
@@ -115,9 +119,9 @@ export class StatsService {
   }
 
   calculateAverages(entries: DailyEntry[]): StatsAverages {
-    const moodValues = entries.map((entry) => entry.moodScore);
-    const energyValues = entries.map((entry) => entry.energyScore);
-    const stressValues = entries.map((entry) => entry.stressScore);
+    const moodValues = entries.map((entry) => entry.moodScore).filter(isNumber);
+    const energyValues = entries.map((entry) => entry.energyScore).filter(isNumber);
+    const stressValues = entries.map((entry) => entry.stressScore).filter(isNumber);
     const sleepHoursValues = entries
       .filter((entry) => entry.sleepHours !== null)
       .map((entry) => Number(entry.sleepHours));
@@ -135,21 +139,23 @@ export class StatsService {
   }
 
   findBestDay(entries: DailyEntry[]): StatsDaySummary | null {
-    if (entries.length === 0) {
+    const eligibleEntries = entries.filter((entry) => this.hasCompleteCoreScores(entry));
+
+    if (eligibleEntries.length === 0) {
       return null;
     }
 
-    const sorted = [...entries].sort((left, right) => {
+    const sorted = [...eligibleEntries].sort((left, right) => {
       if (left.moodScore !== right.moodScore) {
-        return right.moodScore - left.moodScore;
+        return (right.moodScore as number) - (left.moodScore as number);
       }
 
       if (left.energyScore !== right.energyScore) {
-        return right.energyScore - left.energyScore;
+        return (right.energyScore as number) - (left.energyScore as number);
       }
 
       if (left.stressScore !== right.stressScore) {
-        return left.stressScore - right.stressScore;
+        return (left.stressScore as number) - (right.stressScore as number);
       }
 
       return left.entryDate.getTime() - right.entryDate.getTime();
@@ -159,21 +165,23 @@ export class StatsService {
   }
 
   findWorstDay(entries: DailyEntry[]): StatsDaySummary | null {
-    if (entries.length === 0) {
+    const eligibleEntries = entries.filter((entry) => this.hasCompleteCoreScores(entry));
+
+    if (eligibleEntries.length === 0) {
       return null;
     }
 
-    const sorted = [...entries].sort((left, right) => {
+    const sorted = [...eligibleEntries].sort((left, right) => {
       if (left.moodScore !== right.moodScore) {
-        return left.moodScore - right.moodScore;
+        return (left.moodScore as number) - (right.moodScore as number);
       }
 
       if (left.energyScore !== right.energyScore) {
-        return left.energyScore - right.energyScore;
+        return (left.energyScore as number) - (right.energyScore as number);
       }
 
       if (left.stressScore !== right.stressScore) {
-        return right.stressScore - left.stressScore;
+        return (right.stressScore as number) - (left.stressScore as number);
       }
 
       return left.entryDate.getTime() - right.entryDate.getTime();
@@ -214,16 +222,18 @@ export class StatsService {
   }
 
   findWeekdayMoodPattern(entries: DailyEntry[]): StatsWeekdayMoodPattern | null {
-    if (entries.length < STATS_MIN_ENTRIES_FOR_WEEKDAY_PATTERN) {
+    const eligibleEntries = entries.filter((entry) => isNumber(entry.moodScore));
+
+    if (eligibleEntries.length < STATS_MIN_ENTRIES_FOR_WEEKDAY_PATTERN) {
       return null;
     }
 
     const grouped = new Map<number, number[]>();
 
-    for (const entry of entries) {
+    for (const entry of eligibleEntries) {
       const weekday = entry.entryDate.getUTCDay();
       const values = grouped.get(weekday) ?? [];
-      values.push(entry.moodScore);
+      values.push(entry.moodScore as number);
       grouped.set(weekday, values);
     }
 
@@ -273,7 +283,9 @@ export class StatsService {
   }
 
   buildEventCompanion(entries: DailyEntry[], events: Event[]): StatsEventCompanionPattern | null {
-    if (entries.length < STATS_MIN_ENTRIES_FOR_EVENT_PATTERN || events.length === 0) {
+    const eligibleEntries = entries.filter((entry) => isNumber(entry.moodScore));
+
+    if (eligibleEntries.length < STATS_MIN_ENTRIES_FOR_EVENT_PATTERN || events.length === 0) {
       return null;
     }
 
@@ -292,16 +304,16 @@ export class StatsService {
       eventCompanion.topEventCount = topEvent[1];
     }
 
-    const eventDayKeys = this.buildEventDayKeys(entries, events);
-    const eventDayEntries = entries.filter((entry) => eventDayKeys.has(formatDateKey(entry.entryDate)));
-    const quietDayEntries = entries.filter((entry) => !eventDayKeys.has(formatDateKey(entry.entryDate)));
+    const eventDayKeys = this.buildEventDayKeys(eligibleEntries, events);
+    const eventDayEntries = eligibleEntries.filter((entry) => eventDayKeys.has(formatDateKey(entry.entryDate)));
+    const quietDayEntries = eligibleEntries.filter((entry) => !eventDayKeys.has(formatDateKey(entry.entryDate)));
 
     if (
       eventDayEntries.length >= STATS_MIN_EVENT_COMPARISON_GROUP &&
       quietDayEntries.length >= STATS_MIN_EVENT_COMPARISON_GROUP
     ) {
-      const eventDayMood = average(eventDayEntries.map((entry) => entry.moodScore));
-      const quietDayMood = average(quietDayEntries.map((entry) => entry.moodScore));
+      const eventDayMood = average(eventDayEntries.map((entry) => entry.moodScore as number));
+      const quietDayMood = average(quietDayEntries.map((entry) => entry.moodScore as number));
 
       if (
         eventDayMood !== null &&
@@ -408,9 +420,9 @@ export class StatsService {
   private toDaySummary(entry: DailyEntry): StatsDaySummary {
     return {
       date: formatDateKey(entry.entryDate),
-      moodScore: entry.moodScore,
-      energyScore: entry.energyScore,
-      stressScore: entry.stressScore,
+      moodScore: entry.moodScore as number,
+      energyScore: entry.energyScore as number,
+      stressScore: entry.stressScore as number,
     };
   }
 
@@ -536,14 +548,14 @@ export class StatsService {
 
   private averageEntryMetric(entries: DailyEntry[], metric: 'mood' | 'energy' | 'stress'): number {
     if (metric === 'mood') {
-      return average(entries.map((entry) => entry.moodScore)) ?? 0;
+      return average(entries.map((entry) => entry.moodScore).filter(isNumber)) ?? 0;
     }
 
     if (metric === 'energy') {
-      return average(entries.map((entry) => entry.energyScore)) ?? 0;
+      return average(entries.map((entry) => entry.energyScore).filter(isNumber)) ?? 0;
     }
 
-    return average(entries.map((entry) => entry.stressScore)) ?? 0;
+    return average(entries.map((entry) => entry.stressScore).filter(isNumber)) ?? 0;
   }
 
   private buildEventDayKeys(entries: DailyEntry[], events: Event[]): Set<string> {
@@ -556,5 +568,9 @@ export class StatsService {
     }
 
     return dayKeys;
+  }
+
+  private hasCompleteCoreScores(entry: DailyEntry): boolean {
+    return isNumber(entry.moodScore) && isNumber(entry.energyScore) && isNumber(entry.stressScore);
   }
 }

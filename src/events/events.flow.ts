@@ -10,7 +10,6 @@ import {
   type EventFlowSource,
   type FsmState,
 } from '../fsm/fsm.types';
-import { EVENT_REPEAT_MODES } from './events.constants';
 import { EventsService } from './events.service';
 
 export type EventFlowStatus =
@@ -21,8 +20,6 @@ export type EventFlowStatus =
   | 'invalid_score'
   | 'invalid_description'
   | 'invalid_end_date'
-  | 'invalid_repeat_mode'
-  | 'invalid_repeat_count'
   | 'cannot_back'
   | 'not_in_event_flow'
   | 'missing_context';
@@ -264,15 +261,11 @@ export class EventsFlowService {
 
     await this.fsmService.setState(
       user.id,
-      FSM_STATES.event_repeat_mode,
+      FSM_STATES.event_end_date,
       this.withoutKeys(payload, ['eventEndDateKey', 'eventRepeatMode', 'eventRepeatCount', 'eventSeriesId']),
     );
 
-    return {
-      status: 'next',
-      nextState: FSM_STATES.event_repeat_mode,
-      source: payload.eventFlowSource,
-    };
+    return this.complete(user);
   }
 
   async submitRepeatMode(user: User, rawRepeatMode: string): Promise<EventFlowResult> {
@@ -283,32 +276,18 @@ export class EventsFlowService {
       return { status: 'not_in_event_flow' };
     }
 
+    void rawRepeatMode;
     const payload = this.extractPayload(session?.payloadJson);
-    const repeatMode = this.eventsService.validateEventRepeatMode(rawRepeatMode);
 
-    if (!repeatMode) {
-      return { status: 'invalid_repeat_mode', source: payload.eventFlowSource };
-    }
-
-    if (repeatMode === EVENT_REPEAT_MODES.none) {
-      await this.fsmService.setState(
-        user.id,
-        FSM_STATES.event_repeat_mode,
-        this.withoutKeys(payload, ['eventRepeatMode', 'eventRepeatCount', 'eventSeriesId']),
-      );
-
-      return this.complete(user, payload.eventDescription);
-    }
-
-    await this.fsmService.setState(user.id, FSM_STATES.event_repeat_count, {
-      ...this.withoutKeys(payload, ['eventRepeatCount']),
-      eventRepeatMode: repeatMode,
-      eventSeriesId: payload.eventSeriesId ?? this.eventsService.generateSeriesId(),
-    });
+    await this.fsmService.setState(
+      user.id,
+      FSM_STATES.event_end_date,
+      this.withoutKeys(payload, ['eventRepeatMode', 'eventRepeatCount', 'eventSeriesId']),
+    );
 
     return {
       status: 'next',
-      nextState: FSM_STATES.event_repeat_count,
+      nextState: FSM_STATES.event_end_date,
       source: payload.eventFlowSource,
     };
   }
@@ -321,20 +300,20 @@ export class EventsFlowService {
       return { status: 'not_in_event_flow' };
     }
 
+    void value;
     const payload = this.extractPayload(session?.payloadJson);
-    const repeatCount = this.eventsService.validateEventRepeatCount(value);
 
-    if (repeatCount === null) {
-      return { status: 'invalid_repeat_count', source: payload.eventFlowSource };
-    }
+    await this.fsmService.setState(
+      user.id,
+      FSM_STATES.event_end_date,
+      this.withoutKeys(payload, ['eventRepeatMode', 'eventRepeatCount', 'eventSeriesId']),
+    );
 
-    await this.fsmService.setState(user.id, FSM_STATES.event_repeat_count, {
-      ...payload,
-      eventRepeatCount: repeatCount,
-      eventSeriesId: payload.eventSeriesId ?? this.eventsService.generateSeriesId(),
-    });
-
-    return this.complete(user, payload.eventDescription);
+    return {
+      status: 'next',
+      nextState: FSM_STATES.event_end_date,
+      source: payload.eventFlowSource,
+    };
   }
 
   async goBack(user: User): Promise<EventFlowResult> {
@@ -434,13 +413,13 @@ export class EventsFlowService {
       case FSM_STATES.event_repeat_count: {
         await this.fsmService.setState(
           user.id,
-          FSM_STATES.event_repeat_mode,
-          this.withoutKeys(payload, ['eventRepeatCount']),
+          FSM_STATES.event_end_date,
+          this.withoutKeys(payload, ['eventRepeatMode', 'eventRepeatCount', 'eventSeriesId']),
         );
 
         return {
           status: 'next',
-          nextState: FSM_STATES.event_repeat_mode,
+          nextState: FSM_STATES.event_end_date,
           source: payload.eventFlowSource,
         };
       }
@@ -474,49 +453,17 @@ export class EventsFlowService {
       return { status: 'missing_context' };
     }
 
-    const repeatMode = payload.eventRepeatMode ?? EVENT_REPEAT_MODES.none;
     const eventDescription = description ?? payload.eventDescription;
-
-    if (payload.eventFlowSource === 'standalone' && repeatMode !== EVENT_REPEAT_MODES.none) {
-      if (
-        payload.eventEndDateKey ||
-        !payload.eventSeriesId ||
-        typeof payload.eventRepeatCount !== 'number'
-      ) {
-        return { status: 'missing_context' };
-      }
-    }
-
-    const events =
-      payload.eventFlowSource === 'standalone' && repeatMode !== EVENT_REPEAT_MODES.none
-        ? await this.eventsService.createRepeatedStandaloneEvents(
-            user.id,
-            {
-              eventType: payload.eventType,
-              title: payload.eventTitle,
-              eventScore: payload.eventScore,
-              eventDate: eventStartDate.toISOString(),
-              description: eventDescription,
-              seriesId: payload.eventSeriesId,
-            },
-            repeatMode,
-            payload.eventRepeatCount ?? 0,
-            payload.eventSeriesId ?? '',
-          )
-        : [
-            await this.eventsService.createEvent(user.id, {
-              eventType: payload.eventType,
-              title: payload.eventTitle,
-              eventScore: payload.eventScore,
-              eventDate: eventStartDate.toISOString(),
-              eventEndDate: payload.eventEndDateKey
-                ? this.eventsService.buildEventDateFromDayKey(payload.eventEndDateKey).toISOString()
-                : undefined,
-              description: eventDescription,
-            }),
-          ];
-
-    const event = events[0];
+    const event = await this.eventsService.createEvent(user.id, {
+      eventType: payload.eventType,
+      title: payload.eventTitle,
+      eventScore: payload.eventScore,
+      eventDate: eventStartDate.toISOString(),
+      eventEndDate: payload.eventEndDateKey
+        ? this.eventsService.buildEventDateFromDayKey(payload.eventEndDateKey).toISOString()
+        : undefined,
+      description: eventDescription,
+    });
 
     if (payload.eventFlowSource === 'checkin' && payload.entryId) {
       await this.eventsService.linkEventToEntry(event.id, payload.entryId);
@@ -528,8 +475,7 @@ export class EventsFlowService {
         eventId: event.id,
         source: payload.eventFlowSource,
         eventType: payload.eventType,
-        eventsCount: events.length,
-        seriesId: payload.eventSeriesId,
+        eventsCount: 1,
       },
       user.id,
     );
@@ -555,7 +501,7 @@ export class EventsFlowService {
     return {
       status: 'created',
       source: 'standalone',
-      createdEventsCount: events.length,
+      createdEventsCount: 1,
     };
   }
 

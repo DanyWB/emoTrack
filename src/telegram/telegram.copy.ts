@@ -1,5 +1,10 @@
-﻿import type { EventType, SleepMode, SummaryPeriodType } from '@prisma/client';
+import type { EventType, SleepMode, SummaryPeriodType } from '@prisma/client';
 
+import {
+  getCoreCheckinStepPosition,
+  type CheckinStepConfig,
+  type CoreCheckinState,
+} from '../checkins/checkins.steps';
 import { formatDateKey } from '../common/utils/date.utils';
 
 export const EVENT_TYPE_LABELS: Record<EventType, string> = {
@@ -37,6 +42,13 @@ export const STATS_METRIC_LABELS = {
   sleepQuality: 'Качество сна',
 } as const;
 
+export const DAILY_TRACKING_LABELS = {
+  trackMood: 'Настроение',
+  trackEnergy: 'Энергия',
+  trackStress: 'Стресс',
+  trackSleep: 'Сон',
+} as const;
+
 export const WEEKDAY_LABELS = {
   0: 'воскресенье',
   1: 'понедельник',
@@ -59,9 +71,6 @@ export const telegramCopy = {
     chooseTags: 'Выбрать теги',
     tagsDone: 'Готово',
     addEvent: 'Добавить событие',
-    repeatNone: 'Без повтора',
-    repeatDaily: 'Каждый день',
-    repeatWeekly: 'Каждую неделю',
     historyMore: 'Еще',
     stats7d: '7 дней',
     stats30d: '30 дней',
@@ -70,6 +79,14 @@ export const telegramCopy = {
     settingsToggleRemindersOff: 'Напоминания: выкл',
     settingsEditReminderTime: 'Изменить время',
     settingsSleepMode: 'Режим сна',
+    settingsTrackMoodOn: 'Настроение: вкл',
+    settingsTrackMoodOff: 'Настроение: выкл',
+    settingsTrackEnergyOn: 'Энергия: вкл',
+    settingsTrackEnergyOff: 'Энергия: выкл',
+    settingsTrackStressOn: 'Стресс: вкл',
+    settingsTrackStressOff: 'Стресс: выкл',
+    settingsTrackSleepOn: 'Сон: вкл',
+    settingsTrackSleepOff: 'Сон: выкл',
     sleepModeHours: 'Только часы',
     sleepModeQuality: 'Только качество',
     sleepModeBoth: 'Часы и качество',
@@ -122,9 +139,6 @@ export const telegramCopy = {
     descriptionPrompt: 'Можно добавить описание одним сообщением или нажать «Пропустить».',
     endDatePrompt:
       'Если событие длилось несколько дней, отправь дату окончания в формате YYYY-MM-DD. Для однодневного события нажми «Пропустить».',
-    repeatModePrompt: 'Нужно ли повторить это событие от текущей даты?',
-    repeatCountPrompt:
-      'Укажи общее число событий в серии от 2 до 7. Это общее количество, включая первое событие.',
     savedStandalone: 'Событие сохранено.',
   },
   history: {
@@ -171,6 +185,7 @@ export const telegramCopy = {
     remindersRuntimeUnavailable: 'Автонапоминания: недоступны в этой среде',
     reminderTimeLabel: 'Время напоминания',
     sleepModeLabel: 'Режим сна',
+    dailyTrackingLabel: 'Ежедневный check-in',
     reminderTimePrompt: 'Введи новое время напоминания в формате HH:mm.',
     sleepModePrompt: 'Выбери режим сна.',
     reminderTimeUpdated: 'Время напоминания обновлено.',
@@ -181,6 +196,7 @@ export const telegramCopy = {
     remindersEnabledWithoutDelivery:
       'Напоминания включены в настройках. В этой среде автонапоминания сейчас не отправляются.',
     remindersDisabledUpdated: 'Напоминания выключены.',
+    dailyTrackingUpdated: 'Набор ежедневных метрик обновлен.',
   },
   reminders: {
     dailyPrompt: 'Напоминание: отметь состояние за сегодня командой /checkin.',
@@ -214,16 +230,16 @@ export const telegramCopy = {
     invalidEventDescription: 'Описание слишком длинное или пустое. Отправь более короткий текст.',
     invalidEventEndDate:
       'Некорректная дата окончания. Используй формат YYYY-MM-DD, и дата не должна быть раньше даты начала события.',
-    invalidEventRepeatMode: 'Выбери вариант повтора кнопкой ниже.',
-    invalidEventRepeatCount:
-      'Укажи общее число событий в серии от 2 до 7. Это общее количество, включая первое событие.',
+    invalidDailyTrackingConfiguration:
+      'Нужно оставить хотя бы одну ежедневную метрику: настроение, энергию, стресс или сон.',
+    missingDailyMetricValue: 'Нужно заполнить хотя бы одну ежедневную метрику, прежде чем завершать запись.',
   },
 } as const;
 
 export interface CheckinConfirmationData {
-  moodScore: number;
-  energyScore: number;
-  stressScore: number;
+  moodScore?: number | null;
+  energyScore?: number | null;
+  stressScore?: number | null;
   sleepHours?: number;
   sleepQuality?: number;
   updated: boolean;
@@ -234,9 +250,9 @@ export interface CheckinConfirmationData {
 
 export interface HistoryEntryData {
   entryDate: Date;
-  moodScore: number;
-  energyScore: number;
-  stressScore: number;
+  moodScore: number | null;
+  energyScore: number | null;
+  stressScore: number | null;
   sleepHours?: number;
   sleepQuality?: number;
   hasNote: boolean;
@@ -252,15 +268,26 @@ export interface SettingsViewData {
   reminderTime?: string | null;
   sleepMode: SleepMode;
   backgroundDeliveryAvailable: boolean;
+  trackMood: boolean;
+  trackEnergy: boolean;
+  trackStress: boolean;
+  trackSleep: boolean;
 }
 
 export function formatCheckinConfirmation(data: CheckinConfirmationData): string {
-  const lines = [
-    data.updated ? 'Готово. Запись за сегодня обновлена.' : 'Готово. Запись за сегодня сохранена.',
-    `Настроение: ${data.moodScore}`,
-    `Энергия: ${data.energyScore}`,
-    `Стресс: ${data.stressScore}`,
-  ];
+  const lines = [data.updated ? 'Готово. Запись за сегодня обновлена.' : 'Готово. Запись за сегодня сохранена.'];
+
+  if (typeof data.moodScore === 'number') {
+    lines.push(`Настроение: ${data.moodScore}`);
+  }
+
+  if (typeof data.energyScore === 'number') {
+    lines.push(`Энергия: ${data.energyScore}`);
+  }
+
+  if (typeof data.stressScore === 'number') {
+    lines.push(`Стресс: ${data.stressScore}`);
+  }
 
   if (typeof data.sleepHours === 'number' && typeof data.sleepQuality === 'number') {
     lines.push(`Сон: ${data.sleepHours} ч, качество ${data.sleepQuality}`);
@@ -292,22 +319,24 @@ export function formatCheckinConfirmation(data: CheckinConfirmationData): string
 }
 
 export function getCheckinPrompt(
-  state: 'checkin_mood' | 'checkin_energy' | 'checkin_stress' | 'checkin_sleep_hours' | 'checkin_sleep_quality',
-  sleepMode: SleepMode,
+  state: CoreCheckinState,
+  config: CheckinStepConfig,
 ): string {
-  const totalSteps = sleepMode === 'both' ? 5 : 4;
+  const stepPosition = getCoreCheckinStepPosition(config, state);
+  const stepNumber = stepPosition?.stepNumber ?? 1;
+  const totalSteps = stepPosition?.totalSteps ?? 1;
 
   switch (state) {
     case 'checkin_mood':
-      return `Шаг 1/${totalSteps}. Оцени настроение: 0..10`;
+      return `Шаг ${stepNumber}/${totalSteps}. Оцени настроение: 0..10`;
     case 'checkin_energy':
-      return `Шаг 2/${totalSteps}. Оцени энергию: 0..10`;
+      return `Шаг ${stepNumber}/${totalSteps}. Оцени энергию: 0..10`;
     case 'checkin_stress':
-      return `Шаг 3/${totalSteps}. Оцени стресс: 0..10`;
+      return `Шаг ${stepNumber}/${totalSteps}. Оцени стресс: 0..10`;
     case 'checkin_sleep_hours':
-      return `Шаг 4/${totalSteps}. Сколько часов спал? Можно число от 0 до 24, например 7.5`;
+      return `Шаг ${stepNumber}/${totalSteps}. Сколько часов спал? Можно число от 0 до 24, например 7.5`;
     case 'checkin_sleep_quality':
-      return `Шаг ${sleepMode === 'both' ? 5 : 4}/${totalSteps}. Оцени качество сна: 0..10`;
+      return `Шаг ${stepNumber}/${totalSteps}. Оцени качество сна: 0..10`;
   }
 }
 
@@ -334,6 +363,7 @@ export function formatSettingsText(data: SettingsViewData): string {
     formatReminderRuntimeLine(data),
     `${telegramCopy.settings.reminderTimeLabel}: ${data.reminderTime ?? '—'}`,
     `${telegramCopy.settings.sleepModeLabel}: ${SLEEP_MODE_LABELS[data.sleepMode]}`,
+    `${telegramCopy.settings.dailyTrackingLabel}: ${formatTrackedMetricsSummary(data)}`,
   ];
 
   return lines.join('\n');
@@ -355,11 +385,8 @@ export function formatReminderToggleMessage(
 }
 
 export function formatStandaloneEventSaved(totalOccurrences: number): string {
-  if (totalOccurrences <= 1) {
-    return telegramCopy.event.savedStandalone;
-  }
-
-  return `Серия сохранена: ${formatEventOccurrences(totalOccurrences)}. Это общее количество, включая первое событие.`;
+  void totalOccurrences;
+  return telegramCopy.event.savedStandalone;
 }
 
 export function formatReminderTimeUpdateMessage(
@@ -379,6 +406,25 @@ export function getSettingsToggleButtonLabel(remindersEnabled: boolean): string 
     : telegramCopy.buttons.settingsToggleRemindersOff;
 }
 
+export function getTrackedMetricToggleButtonLabel(
+  metric: keyof typeof DAILY_TRACKING_LABELS,
+  enabled: boolean,
+): string {
+  if (metric === 'trackMood') {
+    return enabled ? telegramCopy.buttons.settingsTrackMoodOn : telegramCopy.buttons.settingsTrackMoodOff;
+  }
+
+  if (metric === 'trackEnergy') {
+    return enabled ? telegramCopy.buttons.settingsTrackEnergyOn : telegramCopy.buttons.settingsTrackEnergyOff;
+  }
+
+  if (metric === 'trackStress') {
+    return enabled ? telegramCopy.buttons.settingsTrackStressOn : telegramCopy.buttons.settingsTrackStressOff;
+  }
+
+  return enabled ? telegramCopy.buttons.settingsTrackSleepOn : telegramCopy.buttons.settingsTrackSleepOff;
+}
+
 export function formatHistoryEntries(
   entries: HistoryEntryData[],
   options: HistoryEntriesFormatOptions = {},
@@ -390,7 +436,7 @@ export function formatHistoryEntries(
   const items = entries.map((entry) => {
     const lines = [
       `• ${formatHistoryDate(entry.entryDate)}`,
-      `Настр./Энерг./Стресс: ${entry.moodScore}/${entry.energyScore}/${entry.stressScore}`,
+      `Настр./Энерг./Стресс: ${formatMetricOrDash(entry.moodScore)}/${formatMetricOrDash(entry.energyScore)}/${formatMetricOrDash(entry.stressScore)}`,
     ];
 
     const sleepLine = formatHistorySleep(entry);
@@ -404,6 +450,10 @@ export function formatHistoryEntries(
   });
 
   return `${options.title ?? telegramCopy.history.title}\n\n${items.join('\n\n')}`;
+}
+
+function formatMetricOrDash(value: number | null): string {
+  return typeof value === 'number' ? String(value) : '—';
 }
 
 function formatHistoryDate(entryDate: Date): string {
@@ -439,18 +489,20 @@ function formatReminderRuntimeLine(data: SettingsViewData): string {
   return telegramCopy.settings.remindersRuntimeActive;
 }
 
-function formatEventOccurrences(totalOccurrences: number): string {
-  if (totalOccurrences % 10 === 1 && totalOccurrences % 100 !== 11) {
-    return `${totalOccurrences} событие`;
+function formatTrackedMetricsSummary(
+  data: Pick<SettingsViewData, 'trackMood' | 'trackEnergy' | 'trackStress' | 'trackSleep'>,
+): string {
+  const enabledMetrics = (
+    Object.entries(DAILY_TRACKING_LABELS) as Array<
+      [keyof typeof DAILY_TRACKING_LABELS, (typeof DAILY_TRACKING_LABELS)[keyof typeof DAILY_TRACKING_LABELS]]
+    >
+  )
+    .filter(([key]) => data[key])
+    .map(([, label]) => label.toLowerCase());
+
+  if (enabledMetrics.length === 0) {
+    return '—';
   }
 
-  if (
-    totalOccurrences % 10 >= 2 &&
-    totalOccurrences % 10 <= 4 &&
-    (totalOccurrences % 100 < 12 || totalOccurrences % 100 > 14)
-  ) {
-    return `${totalOccurrences} события`;
-  }
-
-  return `${totalOccurrences} событий`;
+  return enabledMetrics.join(', ');
 }

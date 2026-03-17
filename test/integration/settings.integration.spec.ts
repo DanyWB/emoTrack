@@ -46,6 +46,10 @@ describe('Settings integration', () => {
         reminderTime: overrides.reminderTime ?? '21:30',
         remindersEnabled: overrides.remindersEnabled,
         sleepMode: overrides.sleepMode,
+        trackMood: overrides.trackMood,
+        trackEnergy: overrides.trackEnergy,
+        trackStress: overrides.trackStress,
+        trackSleep: overrides.trackSleep,
       }),
     );
   }
@@ -84,8 +88,80 @@ describe('Settings integration', () => {
     expect(message).toContain(telegramCopy.settings.remindersRuntimeUnavailable);
     expect(message).toContain(`${telegramCopy.settings.reminderTimeLabel}: 21:30`);
     expect(message).toContain(`${telegramCopy.settings.sleepModeLabel}: ${SLEEP_MODE_LABELS.both}`);
+    expect(message).toContain(`${telegramCopy.settings.dailyTrackingLabel}: настроение, энергия, стресс, сон`);
     expect(await ctx.fsmService.getState(user.id)).toBe(FSM_STATES.settings_menu);
     expect(ctx.analyticsRepository.events.map((event) => event.eventName)).toContain('settings_opened');
+  });
+
+  it('updates tracked daily metrics and refreshes the settings screen', async () => {
+    const user = await createReadyUser({
+      id: 'user-settings-2a',
+      telegramId: BigInt(7292),
+      remindersEnabled: true,
+      sleepMode: SleepMode.both,
+      trackMood: true,
+      trackEnergy: true,
+      trackStress: true,
+      trackSleep: true,
+    });
+    const router = createRouter();
+    await ctx.fsmService.setState(user.id, FSM_STATES.settings_menu, {});
+
+    const telegramCtx = {
+      ...buildBaseContext(7292),
+      callbackQuery: {
+        data: TELEGRAM_CALLBACKS.settingsTrackMoodToggle,
+      },
+      answerCbQuery: jest.fn().mockResolvedValue(undefined),
+      reply: jest.fn().mockResolvedValue(undefined),
+    };
+
+    await (router as any).handleCallbackQuery(telegramCtx);
+
+    const updatedUser = await ctx.usersService.findById(user.id);
+
+    expect(updatedUser?.trackMood).toBe(false);
+    expect(telegramCtx.reply).toHaveBeenCalledTimes(2);
+    expect((telegramCtx.reply.mock.calls[0] as [string])[0]).toBe(telegramCopy.settings.dailyTrackingUpdated);
+    expect((telegramCtx.reply.mock.calls[1] as [string])[0]).toContain(
+      `${telegramCopy.settings.dailyTrackingLabel}: энергия, стресс, сон`,
+    );
+  });
+
+  it('rejects disabling the last tracked daily metric', async () => {
+    const user = await createReadyUser({
+      id: 'user-settings-2b',
+      telegramId: BigInt(7293),
+      remindersEnabled: true,
+      trackMood: true,
+      trackEnergy: false,
+      trackStress: false,
+      trackSleep: false,
+    });
+    const router = createRouter();
+    await ctx.fsmService.setState(user.id, FSM_STATES.settings_menu, {});
+
+    const telegramCtx = {
+      ...buildBaseContext(7293),
+      callbackQuery: {
+        data: TELEGRAM_CALLBACKS.settingsTrackMoodToggle,
+      },
+      answerCbQuery: jest.fn().mockResolvedValue(undefined),
+      reply: jest.fn().mockResolvedValue(undefined),
+    };
+
+    await (router as any).handleCallbackQuery(telegramCtx);
+
+    const updatedUser = await ctx.usersService.findById(user.id);
+
+    expect(updatedUser?.trackMood).toBe(true);
+    expect(telegramCtx.reply).toHaveBeenCalledTimes(2);
+    expect((telegramCtx.reply.mock.calls[0] as [string])[0]).toBe(
+      telegramCopy.validation.invalidDailyTrackingConfiguration,
+    );
+    expect((telegramCtx.reply.mock.calls[1] as [string])[0]).toContain(
+      `${telegramCopy.settings.dailyTrackingLabel}: настроение`,
+    );
   });
 
   it('enables reminders and returns to the updated settings screen without implying background delivery is active', async () => {

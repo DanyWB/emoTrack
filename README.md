@@ -11,11 +11,11 @@ The bot helps a user:
 - log one daily check-in per day
 - update the same day entry instead of creating duplicates
 - add an optional note, predefined tags, and an event
-- create standalone single-day, bounded multi-day, or bounded repeated single-day events
+- create standalone single-day or bounded multi-day events
 - view recent history
 - request 7-day, 30-day, or all-time stats
 - receive chart images in the stats flow
-- manage reminder toggle, reminder time, and sleep mode
+- manage reminder toggle, reminder time, sleep mode, and tracked daily metrics
 
 This MVP is:
 
@@ -57,7 +57,7 @@ Core modules:
 - `onboarding`: consent and reminder-time onboarding flow
 - `fsm`: persistent finite-state machine backed by PostgreSQL
 - `checkins`: daily entry upsert, notes, tags, recent history
-- `events`: standalone and check-in event flows, including bounded multi-day and bounded repeated standalone events
+- `events`: standalone and check-in event flows, including bounded multi-day events
 - `tags`: predefined tag queries and validation
 - `stats`: period calculations and summary payload building
 - `summaries`: summary persistence and Russian formatter
@@ -163,6 +163,7 @@ The project includes:
 - Prisma schema
 - migrations
 - idempotent seed for predefined tags
+- idempotent seed for the daily metric catalog used by the configurable check-in groundwork
 
 ### 5. Run the Bot Locally
 
@@ -327,6 +328,61 @@ Current check-in behavior is intentionally conservative:
 - if the check-in FSM loses context, the user gets a safe restart message instead of a raw or ambiguous error
 - same-day upsert behavior remains unchanged: one normalized day key, one `DailyEntry`
 
+## Configurable Check-in
+
+Configurable check-in is now active for core daily metrics.
+
+- `users` now store per-metric tracking flags:
+  - `trackMood`
+  - `trackEnergy`
+  - `trackStress`
+  - `trackSleep`
+- `daily_entries.moodScore`
+- `daily_entries.energyScore`
+- `daily_entries.stressScore`
+  are nullable in the schema so disabled metrics do not require fake zero values
+- existing users keep the original effective behavior because all tracking flags default to `true`
+- `/settings` now lets a user choose which core metrics appear in the daily check-in:
+  - mood
+  - energy
+  - stress
+  - sleep
+- the check-in flow builds its core steps dynamically in the fixed order:
+  - mood
+  - energy
+  - stress
+  - sleep
+- a user must keep at least one core daily metric enabled
+- same-day update behavior stays patch-like:
+  - only prompted metrics are updated
+  - disabled metrics are not silently cleared from an existing same-day entry
+
+## Daily Metric Catalog Groundwork
+
+The project now also includes a backward-compatible groundwork layer for a broader metric catalog.
+
+- Prisma now stores:
+  - `daily_metric_definitions`
+  - `user_tracked_metrics`
+  - `daily_entry_metric_values`
+- the seeded metric catalog currently includes:
+  - core metrics:
+    - mood
+    - energy
+    - stress
+    - sleep
+  - additional score-based metrics for future configurable check-in work:
+    - joy
+    - sadness
+    - anxiety
+    - irritation
+    - motivation
+    - concentration
+    - wellbeing
+- `UsersService` lazily syncs `user_tracked_metrics` for existing and new users so the groundwork can be introduced without a destructive rollout
+- current Telegram UX still uses the accepted core-metric toggle flow from the existing settings/check-in implementation
+- the new catalog tables are groundwork only in the current release; they do not yet replace the existing user-facing daily metric flow
+
 ## History UX Notes
 
 Current `/history` behavior stays intentionally simple:
@@ -346,19 +402,8 @@ Current event behavior stays intentionally bounded:
 - standalone `/event` supports:
   - a single-day event
   - an optional inclusive end date for a multi-day period event
-  - a bounded repeated single-day series with:
-    - `Без повтора`
-    - `Каждый день`
-    - `Каждую неделю`
-- `eventDate` is the normalized inclusive start day
-- `eventEndDate` is optional; `null` means the event is single-day
-- repeated standalone rows remain ordinary `Event` rows with optional grouping metadata:
-  - `seriesId`
-  - `seriesPosition`
-- repeat count means the total number of occurrences in the series, including the first event
-- repeated standalone events always expand from the current normalized standalone start day; there is no custom start-date scheduler in this step
-- repeated standalone events are single-day only in this version and do not combine with multi-day periods
-- repeated events stay ordinary rows only; there is no series-aware edit, delete, or grouped UI in this step
+- legacy schema metadata for event series may still exist in the database, but repeated standalone event creation is currently disabled in the UI
+- series-backed legacy rows are intentionally excluded from user-facing history and stats while the event UX is being simplified
 - stats period reads are overlap-aware:
   - an event is included when its inclusive day span overlaps the selected period
 - stats still count distinct event rows, not event-days
@@ -368,8 +413,10 @@ Current event behavior stays intentionally bounded:
 Current `/settings` behavior stays within the original scope, but is clearer about runtime state:
 
 - after each settings update, the user is returned to the current settings screen
-- the settings screen shows reminder state, reminder time, sleep mode, and whether background auto-reminders are actually available
+- the settings screen shows reminder state, reminder time, sleep mode, tracked daily metrics, and whether background auto-reminders are actually available
 - when jobs are disabled locally, reminder preferences are still saved, but the bot explicitly says that auto-reminders are unavailable in the current environment
+- tracked daily metrics can be toggled directly from `/settings`
+- the settings layer rejects configurations that would disable all core daily metrics at once
 
 ## Stats Readability Notes
 

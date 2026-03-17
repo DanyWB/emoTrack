@@ -148,10 +148,25 @@ Database rollback:
 - the current multi-day event schema change is additive only:
   - `events.eventEndDate` is nullable
   - legacy single-day rows remain valid with `eventEndDate = null`
-- the current repeated-event schema change is also additive only:
+- the current configurable-check-in groundwork migration is additive/compatible:
+  - `users.trackMood` is non-null with default `true`
+  - `users.trackEnergy` is non-null with default `true`
+  - `users.trackStress` is non-null with default `true`
+  - `users.trackSleep` is non-null with default `true`
+  - `daily_entries.moodScore` is now nullable
+  - `daily_entries.energyScore` is now nullable
+  - `daily_entries.stressScore` is now nullable
+  - existing users keep the current effective behavior because the new tracking flags default to `true`
+- the current daily-metric catalog groundwork migration is also additive:
+  - `daily_metric_definitions` stores the available catalog of score-based and sleep-block metrics
+  - `user_tracked_metrics` stores per-user metric selection groundwork
+  - `daily_entry_metric_values` stores generic per-entry metric values groundwork
+  - the seeded catalog is idempotent and includes the current core metrics plus additional score-based metrics for future configurable check-in expansion
+  - the current Telegram UX still uses the accepted core-metric toggle flow; these new tables are groundwork and do not yet replace the current user-facing flow
+- the current series-metadata schema change is also additive only:
   - `events.seriesId` is nullable
   - `events.seriesPosition` is nullable
-  - duplicate protection for repeated batches relies on the unique pair `(seriesId, seriesPosition)`
+- user-facing repeated standalone event creation is currently disabled; legacy series-backed rows are ignored in history and stats
   - legacy single-day and multi-day rows remain valid with both fields set to `null`
 - recommended safety measure:
   - take a database backup before applying non-trivial migrations

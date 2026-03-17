@@ -25,7 +25,7 @@ Use this checklist before a local handoff or release candidate review.
 - new user sends `/start`
 - user sees intro and disclaimer
 - user sees explicit consent prompt
-- `Согласен` moves to reminder time input
+- `Р В Р’В Р В Р вЂ№Р В Р’В Р РЋРІР‚СћР В Р’В Р РЋРІР‚вЂњР В Р’В Р вЂ™Р’В»Р В Р’В Р вЂ™Р’В°Р В Р Р‹Р В РЎвЂњР В Р’В Р вЂ™Р’ВµР В Р’В Р В РІР‚В¦` moves to reminder time input
 - invalid reminder time shows Russian validation error
 - valid reminder time is saved
 - onboarding completes
@@ -66,14 +66,23 @@ Use this checklist before a local handoff or release candidate review.
 
 ## Check-in Navigation
 
-- `Отмена` clears active onboarding flow safely
-- `Отмена` clears active check-in flow safely
-- `Назад` works on multi-step check-in
+- `Р В Р’В Р РЋРІР‚С”Р В Р Р‹Р Р†Р вЂљРЎв„ўР В Р’В Р РЋР’ВР В Р’В Р вЂ™Р’ВµР В Р’В Р В РІР‚В¦Р В Р’В Р вЂ™Р’В°` clears active onboarding flow safely
+- `Р В Р’В Р РЋРІР‚С”Р В Р Р‹Р Р†Р вЂљРЎв„ўР В Р’В Р РЋР’ВР В Р’В Р вЂ™Р’ВµР В Р’В Р В РІР‚В¦Р В Р’В Р вЂ™Р’В°` clears active check-in flow safely
+- `Р В Р’В Р РЋРЎС™Р В Р’В Р вЂ™Р’В°Р В Р’В Р вЂ™Р’В·Р В Р’В Р вЂ™Р’В°Р В Р’В Р СћРІР‚В` works on multi-step check-in
 - running `/checkin` during an active check-in resumes the current step instead of resetting progress
 - `Back` is available on the optional note prompt
 - after going back from optional steps to sleep/core steps, already saved note/tag data is still reflected in the final confirmation
 - invalid score input shows Russian validation error
 - invalid sleep-hours input shows Russian validation error
+
+## Configurable Check-in
+
+- in `/settings`, disable `Р­РЅРµСЂРіРёСЏ` and `РЎРѕРЅ`
+- `/checkin` now asks only for the enabled core metrics in the original order
+- final confirmation shows only the metrics that were actually tracked
+- when only one core metric remains enabled, trying to disable it is rejected
+- when the last remaining tracked metric is the current sleep step, `РџСЂРѕРїСѓСЃС‚РёС‚СЊ` does not allow saving an empty entry
+- after changing tracked metrics, the refreshed settings screen shows the new daily metric summary
 
 ## Same-Day Upsert
 
@@ -81,6 +90,7 @@ Use this checklist before a local handoff or release candidate review.
 - user runs `/checkin` again on the same day
 - existing `DailyEntry` is updated
 - duplicate `DailyEntry` is not created
+- if some core metrics were later disabled in `/settings`, a same-day re-check-in updates only the prompted metrics and keeps the old unprompted values untouched
 
 ## Optional Check-in Data
 
@@ -102,12 +112,6 @@ Use this checklist before a local handoff or release candidate review.
 - valid standalone event is saved successfully
 - standalone event can be saved without an end date and remains single-day
 - standalone event can be saved with an inclusive end date for a bounded multi-day period
-- standalone event can be repeated with `Каждый день`
-- standalone event can be repeated with `Каждую неделю`
-- repeat count means the total number of occurrences in the series, including the first event
-- repeat count is bounded to 2..7 total occurrences
-- repeated standalone events expand from the current normalized start day only
-- repeated standalone events remain ordinary rows and are not grouped in the UI
 - end date earlier than start date is rejected
 - check-in-created event remains single-day only
 
@@ -121,18 +125,17 @@ Use this checklist before a local handoff or release candidate review.
 - note marker appears when note exists
 - linked event count appears when events exist
 - a multi-day standalone event is counted on each overlapped history day
-- repeated standalone rows appear as ordinary event counts on their corresponding history days
-- when more than 5 entries exist, `Еще` loads older entries
-- `Еще` edits the same history message instead of sending duplicated history blocks
-- stale `Еще` callback is handled gracefully and asks the user to reopen `/history`
+- legacy series-backed rows are ignored in user-facing history day counts
+- when more than 5 entries exist, `Р В Р’В Р Р†Р вЂљРЎС›Р В Р Р‹Р Р†Р вЂљР’В°Р В Р’В Р вЂ™Р’Вµ` loads older entries
+- `Р В Р’В Р Р†Р вЂљРЎС›Р В Р Р‹Р Р†Р вЂљР’В°Р В Р’В Р вЂ™Р’Вµ` edits the same history message instead of sending duplicated history blocks
 - empty history state is handled gracefully
 
 ## Stats and Summaries
 
 - `/stats` opens period selector
-- `7 дней` returns summary text
-- `30 дней` returns summary text
-- `За всё время` returns summary text
+- `7 Р В Р’В Р СћРІР‚ВР В Р’В Р В РІР‚В¦Р В Р’В Р вЂ™Р’ВµР В Р’В Р Р†РІР‚С›РІР‚вЂњ` returns summary text
+- `30 Р В Р’В Р СћРІР‚ВР В Р’В Р В РІР‚В¦Р В Р’В Р вЂ™Р’ВµР В Р’В Р Р†РІР‚С›РІР‚вЂњ` returns summary text
+- `Р В Р’В Р Р†Р вЂљРІР‚СњР В Р’В Р вЂ™Р’В° Р В Р’В Р В РІР‚В Р В Р Р‹Р В РЎвЂњР В Р Р‹Р Р†Р вЂљР’В Р В Р’В Р В РІР‚В Р В Р Р‹Р В РІР‚С™Р В Р’В Р вЂ™Р’ВµР В Р’В Р РЋР’ВР В Р Р‹Р В Р РЏ` returns summary text
 - empty-data state is handled gracefully
 - with 1-2 entries, `/stats` returns a preliminary low-data summary without charts
 - with 3 or more entries, `/stats` returns the full summary path
@@ -144,12 +147,13 @@ Use this checklist before a local handoff or release candidate review.
 - weak or tied signals do not produce a pattern block
 - low-data summaries do not show comparison or pattern blocks
 - stats event count includes a multi-day event when its inclusive span overlaps the selected period
-- stats event count includes repeated standalone rows as ordinary events on their own dates
+- stats event count ignores legacy series-backed rows
 
 ## Charts
 
 - combined mood/energy/stress chart is sent when data exists
 - sleep chart is sent when sleep data exists
+
 - compact mood strip is sent only when the dataset stays readable and is not overly dense
 - charts are skipped for low-data periods with fewer than 3 entries
 - on a normal `3-5` entry dataset, point markers and lines remain readable
@@ -162,7 +166,7 @@ Use this checklist before a local handoff or release candidate review.
 ## Settings
 
 - `/settings` opens settings menu
-- current settings screen shows reminder state, reminder time, sleep mode, and current auto-reminder runtime status
+- current settings screen shows reminder state, reminder time, sleep mode, tracked daily metrics, and current auto-reminder runtime status
 - reminders can be toggled on/off
 - enabling reminders with `JOBS_ENABLED=false` keeps settings saved but does not imply background delivery is active
 - reminder time can be updated
@@ -171,6 +175,7 @@ Use this checklist before a local handoff or release candidate review.
 - sleep mode can be changed to `hours`
 - sleep mode can be changed to `quality`
 - sleep mode can be changed to `both`
+- daily metric toggles can enable/disable mood, energy, stress, and sleep directly from the settings screen
 - after each settings change, the user returns to a clear current-state settings screen
 
 ## Help
@@ -204,4 +209,14 @@ Run this section only when Redis is available and enabled.
 - `npm run build` passes
 - `npm test` passes
 - release/runbook docs were reviewed before handoff
+
+## Daily Metric Catalog Groundwork
+
+- `npm run prisma:migrate` creates:
+  - `daily_metric_definitions`
+  - `user_tracked_metrics`
+  - `daily_entry_metric_values`
+- `npm run prisma:seed` populates the daily metric catalog idempotently
+- a newly created or freshly loaded user gets `user_tracked_metrics` rows lazily through the service layer
+- current Telegram UX still behaves like the accepted core-metric toggle flow and does not yet expose the full metric catalog directly
 

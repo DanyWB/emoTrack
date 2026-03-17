@@ -22,6 +22,22 @@ export class UpdateUserSettingsDto {
 
   @IsOptional()
   @IsBoolean()
+  trackMood?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  trackEnergy?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  trackStress?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  trackSleep?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
   tagsEnabled?: boolean;
 
   @IsOptional()

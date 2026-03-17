@@ -1,4 +1,4 @@
-import { formatCheckinConfirmation } from '../../src/telegram/telegram.copy';
+﻿import { formatCheckinConfirmation } from '../../src/telegram/telegram.copy';
 
 describe('formatCheckinConfirmation', () => {
   it('formats a concise confirmation with combined sleep and extras', () => {
@@ -29,5 +29,18 @@ describe('formatCheckinConfirmation', () => {
 
     expect(text).toContain('Готово. Запись за сегодня сохранена.');
     expect(text).not.toContain('Дополнительно:');
+  });
+
+  it('renders only the available core metrics in a partial confirmation', () => {
+    const text = formatCheckinConfirmation({
+      moodScore: 9,
+      stressScore: 3,
+      updated: false,
+    });
+
+    expect(text).toContain('Настроение: 9');
+    expect(text).toContain('Стресс: 3');
+    expect(text).not.toContain('Энергия:');
+    expect(text).not.toContain('Сон:');
   });
 });

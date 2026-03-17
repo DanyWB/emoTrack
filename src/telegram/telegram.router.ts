@@ -6,6 +6,7 @@ import { AnalyticsService } from '../analytics/analytics.service';
 import { ChartsService } from '../charts/charts.service';
 import { CheckinsFlowService, type CheckinFlowResult } from '../checkins/checkins.flow';
 import { CheckinsService } from '../checkins/checkins.service';
+import { getPreviousCoreCheckinState, isCoreCheckinState } from '../checkins/checkins.steps';
 import { TELEGRAM_CALLBACKS, TELEGRAM_MAIN_MENU_BUTTONS } from '../common/constants/app.constants';
 import { isValidTimeFormat } from '../common/utils/validation.utils';
 import { EventsFlowService, type EventFlowResult } from '../events/events.flow';
@@ -360,6 +361,24 @@ export class TelegramRouter {
       return;
     }
 
+    const trackingField = this.parseTrackedMetricCallback(callbackData);
+
+    if (trackingField) {
+      if (state !== FSM_STATES.settings_menu) {
+        await ctx.reply(telegramCopy.common.actionNotAllowed);
+        return;
+      }
+
+      const updatedUser = await this.updateTrackedMetricSetting(ctx, user, trackingField);
+
+      if (!updatedUser) {
+        return;
+      }
+
+      await this.replySettingsMenu(ctx, updatedUser);
+      return;
+    }
+
     if (callbackData === TELEGRAM_CALLBACKS.settingsReminderTimeEdit) {
       if (state !== FSM_STATES.settings_menu) {
         await ctx.reply(telegramCopy.common.actionNotAllowed);
@@ -662,7 +681,8 @@ export class TelegramRouter {
     }
 
     if (state === FSM_STATES.event_repeat_mode) {
-      await this.replyEventPromptByState(ctx, user, state);
+      const result = await this.eventsFlow.submitRepeatMode(user, text);
+      await this.replyEventResult(ctx, user, result);
       return;
     }
 
@@ -748,7 +768,16 @@ export class TelegramRouter {
     }
 
     if (result.status === 'invalid_sleep_hours') {
-      await ctx.reply(telegramCopy.validation.invalidSleepHours, telegramKeyboards.sleepHoursActions({ back: true }));
+      await ctx.reply(telegramCopy.validation.invalidSleepHours);
+      const state = await this.fsmService.getState(user.id);
+      await this.replyCheckinPromptByState(ctx, user, state);
+      return;
+    }
+
+    if (result.status === 'cannot_skip') {
+      await ctx.reply(telegramCopy.validation.missingDailyMetricValue);
+      const state = await this.fsmService.getState(user.id);
+      await this.replyCheckinPromptByState(ctx, user, state);
       return;
     }
 
@@ -790,27 +819,21 @@ export class TelegramRouter {
       if (result.source === 'checkin' && result.checkinPayload) {
         const checkinPayload = result.checkinPayload;
 
-        if (
-          typeof checkinPayload.moodScore === 'number' &&
-          typeof checkinPayload.energyScore === 'number' &&
-          typeof checkinPayload.stressScore === 'number'
-        ) {
-          await ctx.reply(
-            formatCheckinConfirmation({
-              moodScore: checkinPayload.moodScore,
-              energyScore: checkinPayload.energyScore,
-              stressScore: checkinPayload.stressScore,
-              sleepHours: checkinPayload.sleepHours,
-              sleepQuality: checkinPayload.sleepQuality,
-              updated: checkinPayload.isUpdate ?? false,
-              noteAdded: !!checkinPayload.noteText,
-              tagsCount: checkinPayload.selectedTagIds?.length ?? 0,
-              eventAdded: true,
-            }),
-            telegramKeyboards.mainMenu(),
-          );
-          return;
-        }
+        await ctx.reply(
+          formatCheckinConfirmation({
+            moodScore: checkinPayload.moodScore,
+            energyScore: checkinPayload.energyScore,
+            stressScore: checkinPayload.stressScore,
+            sleepHours: checkinPayload.sleepHours,
+            sleepQuality: checkinPayload.sleepQuality,
+            updated: checkinPayload.isUpdate ?? false,
+            noteAdded: !!checkinPayload.noteText,
+            tagsCount: checkinPayload.selectedTagIds?.length ?? 0,
+            eventAdded: true,
+          }),
+          telegramKeyboards.mainMenu(),
+        );
+        return;
       }
 
       await ctx.reply(formatStandaloneEventSaved(result.createdEventsCount ?? 1), telegramKeyboards.mainMenu());
@@ -847,18 +870,6 @@ export class TelegramRouter {
       return;
     }
 
-    if (result.status === 'invalid_repeat_mode') {
-      await ctx.reply(telegramCopy.validation.invalidEventRepeatMode);
-      await this.replyEventPromptByState(ctx, user, FSM_STATES.event_repeat_mode, result.source);
-      return;
-    }
-
-    if (result.status === 'invalid_repeat_count') {
-      await ctx.reply(telegramCopy.validation.invalidEventRepeatCount);
-      await this.replyEventPromptByState(ctx, user, FSM_STATES.event_repeat_count, result.source);
-      return;
-    }
-
     if (result.status === 'cannot_back') {
       await ctx.reply(telegramCopy.common.backUnavailable);
       const state = await this.fsmService.getState(user.id);
@@ -877,30 +888,34 @@ export class TelegramRouter {
   ): Promise<void> {
     switch (state) {
       case FSM_STATES.checkin_mood:
-        await ctx.reply(getCheckinPrompt(FSM_STATES.checkin_mood, user.sleepMode), telegramKeyboards.scorePicker());
+        await ctx.reply(getCheckinPrompt(FSM_STATES.checkin_mood, user), telegramKeyboards.scorePicker());
         return;
       case FSM_STATES.checkin_energy:
         await ctx.reply(
-          getCheckinPrompt(FSM_STATES.checkin_energy, user.sleepMode),
-          telegramKeyboards.scorePicker({ back: true }),
+          getCheckinPrompt(FSM_STATES.checkin_energy, user),
+          telegramKeyboards.scorePicker({ back: this.hasPreviousCoreCheckinStep(user, FSM_STATES.checkin_energy) }),
         );
         return;
       case FSM_STATES.checkin_stress:
         await ctx.reply(
-          getCheckinPrompt(FSM_STATES.checkin_stress, user.sleepMode),
-          telegramKeyboards.scorePicker({ back: true }),
+          getCheckinPrompt(FSM_STATES.checkin_stress, user),
+          telegramKeyboards.scorePicker({ back: this.hasPreviousCoreCheckinStep(user, FSM_STATES.checkin_stress) }),
         );
         return;
       case FSM_STATES.checkin_sleep_hours:
         await ctx.reply(
-          getCheckinPrompt(FSM_STATES.checkin_sleep_hours, user.sleepMode),
-          telegramKeyboards.sleepHoursActions({ back: true }),
+          getCheckinPrompt(FSM_STATES.checkin_sleep_hours, user),
+          telegramKeyboards.sleepHoursActions({
+            back: this.hasPreviousCoreCheckinStep(user, FSM_STATES.checkin_sleep_hours),
+          }),
         );
         return;
       case FSM_STATES.checkin_sleep_quality:
         await ctx.reply(
-          getCheckinPrompt(FSM_STATES.checkin_sleep_quality, user.sleepMode),
-          telegramKeyboards.sleepQualityActions({ back: true }),
+          getCheckinPrompt(FSM_STATES.checkin_sleep_quality, user),
+          telegramKeyboards.sleepQualityActions({
+            back: this.hasPreviousCoreCheckinStep(user, FSM_STATES.checkin_sleep_quality),
+          }),
         );
         return;
       case FSM_STATES.checkin_note_prompt:
@@ -970,10 +985,11 @@ export class TelegramRouter {
         );
         return;
       case FSM_STATES.event_repeat_mode:
-        await ctx.reply(telegramCopy.event.repeatModePrompt, telegramKeyboards.eventRepeatMode());
-        return;
       case FSM_STATES.event_repeat_count:
-        await ctx.reply(telegramCopy.event.repeatCountPrompt, telegramKeyboards.eventRepeatCount());
+        await ctx.reply(
+          telegramCopy.event.endDatePrompt,
+          telegramKeyboards.eventEndDateActions({ back: true }),
+        );
         return;
       case FSM_STATES.checkin_add_event_confirm:
         await this.replyCheckinPromptByState(ctx, user, FSM_STATES.checkin_add_event_confirm);
@@ -990,8 +1006,18 @@ export class TelegramRouter {
         reminderTime: user.reminderTime,
         sleepMode: user.sleepMode,
         backgroundDeliveryAvailable: this.remindersService.isBackgroundDeliveryAvailable(),
+        trackMood: user.trackMood,
+        trackEnergy: user.trackEnergy,
+        trackStress: user.trackStress,
+        trackSleep: user.trackSleep,
       }),
-      telegramKeyboards.settingsMenu(user.remindersEnabled),
+      telegramKeyboards.settingsMenu({
+        remindersEnabled: user.remindersEnabled,
+        trackMood: user.trackMood,
+        trackEnergy: user.trackEnergy,
+        trackStress: user.trackStress,
+        trackSleep: user.trackSleep,
+      }),
     );
   }
 
@@ -1092,6 +1118,60 @@ export class TelegramRouter {
       state === FSM_STATES.event_repeat_mode ||
       state === FSM_STATES.event_repeat_count
     );
+  }
+
+  private hasPreviousCoreCheckinStep(user: User, state: FsmState): boolean {
+    if (!isCoreCheckinState(state)) {
+      return false;
+    }
+
+    return getPreviousCoreCheckinState(user, state) !== null;
+  }
+
+  private parseTrackedMetricCallback(
+    callbackData: string,
+  ): 'trackMood' | 'trackEnergy' | 'trackStress' | 'trackSleep' | null {
+    if (callbackData === TELEGRAM_CALLBACKS.settingsTrackMoodToggle) {
+      return 'trackMood';
+    }
+
+    if (callbackData === TELEGRAM_CALLBACKS.settingsTrackEnergyToggle) {
+      return 'trackEnergy';
+    }
+
+    if (callbackData === TELEGRAM_CALLBACKS.settingsTrackStressToggle) {
+      return 'trackStress';
+    }
+
+    if (callbackData === TELEGRAM_CALLBACKS.settingsTrackSleepToggle) {
+      return 'trackSleep';
+    }
+
+    return null;
+  }
+
+  private async updateTrackedMetricSetting(
+    ctx: Context,
+    user: User,
+    field: 'trackMood' | 'trackEnergy' | 'trackStress' | 'trackSleep',
+  ): Promise<User | null> {
+    try {
+      const updatedUser = await this.usersService.updateSettings(user.id, {
+        [field]: !user[field],
+      });
+
+      await this.analyticsService.track('settings_updated', { field, value: updatedUser[field] }, user.id);
+      await ctx.reply(telegramCopy.settings.dailyTrackingUpdated);
+      return updatedUser;
+    } catch (error) {
+      if (!(error instanceof Error) || error.message !== 'INVALID_DAILY_TRACKING_CONFIGURATION') {
+        throw error;
+      }
+
+      await ctx.reply(telegramCopy.validation.invalidDailyTrackingConfiguration);
+      await this.replySettingsMenu(ctx, user);
+      return null;
+    }
   }
 
   private parseSummaryPeriod(value: string): SummaryPeriodType | null {

@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import {
+  type DailyEntryMetricValue,
+  type DailyMetricDefinition,
   Prisma,
   SleepMode,
   type DailyEntry,
@@ -9,10 +11,12 @@ import {
   type PredefinedTag,
   type ProductEvent,
   type Summary,
+  type UserTrackedMetric,
   type User,
 } from '@prisma/client';
 import type { ConfigService } from '@nestjs/config';
 
+import { DAILY_METRIC_CATALOG } from '../../src/daily-metrics/daily-metrics.catalog';
 import { doesEventOverlapDay, doesEventOverlapRange } from '../../src/events/events.utils';
 
 type PlainObject = Record<string, unknown>;
@@ -88,6 +92,10 @@ export class InMemoryUsersRepository {
       remindersEnabled: (data.remindersEnabled as boolean | undefined) ?? true,
       reminderTime: (data.reminderTime as string | undefined) ?? null,
       sleepMode: (data.sleepMode as SleepMode | undefined) ?? SleepMode.both,
+      trackMood: (data.trackMood as boolean | undefined) ?? true,
+      trackEnergy: (data.trackEnergy as boolean | undefined) ?? true,
+      trackStress: (data.trackStress as boolean | undefined) ?? true,
+      trackSleep: (data.trackSleep as boolean | undefined) ?? true,
       notesEnabled: (data.notesEnabled as boolean | undefined) ?? true,
       tagsEnabled: (data.tagsEnabled as boolean | undefined) ?? true,
       eventsEnabled: (data.eventsEnabled as boolean | undefined) ?? true,
@@ -138,6 +146,110 @@ export class InMemoryUsersRepository {
 
   completeOnboarding(id: string): Promise<User> {
     return this.update(id, { onboardingCompleted: true });
+  }
+}
+
+type InMemoryUserTrackedMetricWithDefinition = UserTrackedMetric & {
+  metricDefinition: DailyMetricDefinition;
+};
+
+export class InMemoryDailyMetricsRepository {
+  private readonly definitions = new Map<string, DailyMetricDefinition>();
+  private readonly trackedMetrics = new Map<string, UserTrackedMetric>();
+  private readonly metricValues = new Map<string, DailyEntryMetricValue>();
+
+  constructor() {
+    for (const definition of DAILY_METRIC_CATALOG) {
+      const metricDefinition = buildDailyMetricDefinition({
+        key: definition.key,
+        label: definition.label,
+        category: definition.category,
+        inputType: definition.inputType,
+        defaultEnabled: definition.defaultEnabled,
+        sortOrder: definition.sortOrder,
+      });
+
+      this.definitions.set(metricDefinition.id, metricDefinition);
+    }
+  }
+
+  async findActiveDefinitions(): Promise<DailyMetricDefinition[]> {
+    return [...this.definitions.values()]
+      .filter((definition) => definition.isActive)
+      .sort((left, right) => left.sortOrder - right.sortOrder || left.key.localeCompare(right.key));
+  }
+
+  async findDefinitionsByKeys(keys: string[]): Promise<DailyMetricDefinition[]> {
+    return [...this.definitions.values()]
+      .filter((definition) => keys.includes(definition.key))
+      .sort((left, right) => left.sortOrder - right.sortOrder || left.key.localeCompare(right.key));
+  }
+
+  async findUserTrackedMetrics(userId: string): Promise<InMemoryUserTrackedMetricWithDefinition[]> {
+    return [...this.trackedMetrics.values()]
+      .filter((metric) => metric.userId === userId)
+      .map((metric) => ({
+        ...metric,
+        metricDefinition: this.getDefinition(metric.metricDefinitionId),
+      }))
+      .sort((left, right) => left.sortOrder - right.sortOrder || left.createdAt.getTime() - right.createdAt.getTime());
+  }
+
+  async upsertUserTrackedMetrics(
+    userId: string,
+    metrics: Array<{ metricDefinitionId: string; isEnabled: boolean; sortOrder: number }>,
+  ): Promise<UserTrackedMetric[]> {
+    const updatedAt = new Date();
+
+    return metrics.map((metric) => {
+      const key = this.buildTrackedMetricKey(userId, metric.metricDefinitionId);
+      const existing = this.trackedMetrics.get(key);
+
+      const next: UserTrackedMetric = {
+        id: existing?.id ?? randomUUID(),
+        userId,
+        metricDefinitionId: metric.metricDefinitionId,
+        isEnabled: metric.isEnabled,
+        sortOrder: metric.sortOrder,
+        createdAt: existing?.createdAt ?? updatedAt,
+        updatedAt,
+      };
+
+      this.trackedMetrics.set(key, next);
+      return next;
+    });
+  }
+
+  listDefinitions(): DailyMetricDefinition[] {
+    return [...this.definitions.values()];
+  }
+
+  listUserTrackedMetrics(userId: string): InMemoryUserTrackedMetricWithDefinition[] {
+    return [...this.trackedMetrics.values()]
+      .filter((metric) => metric.userId === userId)
+      .map((metric) => ({
+        ...metric,
+        metricDefinition: this.getDefinition(metric.metricDefinitionId),
+      }))
+      .sort((left, right) => left.sortOrder - right.sortOrder || left.metricDefinition.key.localeCompare(right.metricDefinition.key));
+  }
+
+  getMetricValuesCount(): number {
+    return this.metricValues.size;
+  }
+
+  private getDefinition(metricDefinitionId: string): DailyMetricDefinition {
+    const definition = this.definitions.get(metricDefinitionId);
+
+    if (!definition) {
+      throw new Error(`Daily metric definition ${metricDefinitionId} not found`);
+    }
+
+    return definition;
+  }
+
+  private buildTrackedMetricKey(userId: string, metricDefinitionId: string): string {
+    return `${userId}:${metricDefinitionId}`;
   }
 }
 
@@ -198,9 +310,16 @@ export class InMemoryCheckinsRepository {
       id: existing?.id ?? randomUUID(),
       userId,
       entryDate,
-      moodScore: (data.moodScore as number | undefined) ?? existing?.moodScore ?? 0,
-      energyScore: (data.energyScore as number | undefined) ?? existing?.energyScore ?? 0,
-      stressScore: (data.stressScore as number | undefined) ?? existing?.stressScore ?? 0,
+      moodScore:
+        data.moodScore === undefined ? (existing?.moodScore ?? null) : ((data.moodScore as number | null) ?? null),
+      energyScore:
+        data.energyScore === undefined
+          ? (existing?.energyScore ?? null)
+          : ((data.energyScore as number | null) ?? null),
+      stressScore:
+        data.stressScore === undefined
+          ? (existing?.stressScore ?? null)
+          : ((data.stressScore as number | null) ?? null),
       sleepHours:
         data.sleepHours === undefined
           ? (existing?.sleepHours ?? null)
@@ -406,7 +525,12 @@ export class InMemoryEventsRepository {
 
   async findByUserAndDay(userId: string, eventDate: Date): Promise<Event[]> {
     return [...this.events.values()]
-      .filter((event) => event.userId === userId && doesEventOverlapDay(event, eventDate))
+      .filter(
+        (event) =>
+          event.userId === userId &&
+          event.seriesId === null &&
+          doesEventOverlapDay(event, eventDate),
+      )
       .sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime());
   }
 
@@ -415,6 +539,7 @@ export class InMemoryEventsRepository {
       .filter(
         (event) =>
           event.userId === userId &&
+          event.seriesId === null &&
           doesEventOverlapRange(event, from, to),
       )
       .sort((left, right) => {
@@ -497,9 +622,9 @@ export function buildDailyEntry(overrides: Partial<DailyEntry> = {}): DailyEntry
     id: overrides.id ?? randomUUID(),
     userId: overrides.userId ?? 'user-1',
     entryDate: overrides.entryDate ?? new Date('2026-03-11T00:00:00.000Z'),
-    moodScore: overrides.moodScore ?? 5,
-    energyScore: overrides.energyScore ?? 5,
-    stressScore: overrides.stressScore ?? 5,
+    moodScore: overrides.moodScore === undefined ? 5 : overrides.moodScore,
+    energyScore: overrides.energyScore === undefined ? 5 : overrides.energyScore,
+    stressScore: overrides.stressScore === undefined ? 5 : overrides.stressScore,
     sleepHours:
       overrides.sleepHours === undefined
         ? new Prisma.Decimal(7.5)
@@ -541,6 +666,28 @@ export function buildTag(overrides: Partial<PredefinedTag> = {}): PredefinedTag 
   };
 }
 
+export function buildDailyMetricDefinition(
+  overrides: Partial<DailyMetricDefinition> & {
+    key?: string;
+    label?: string;
+    category?: string | null;
+    inputType?: DailyMetricDefinition['inputType'];
+    defaultEnabled?: boolean;
+  } = {},
+): DailyMetricDefinition {
+  return {
+    id: overrides.id ?? randomUUID(),
+    key: overrides.key ?? 'mood',
+    label: overrides.label ?? 'Настроение',
+    category: overrides.category ?? 'core',
+    inputType: overrides.inputType ?? 'score',
+    defaultEnabled: overrides.defaultEnabled ?? true,
+    isActive: overrides.isActive ?? true,
+    sortOrder: overrides.sortOrder ?? 10,
+    createdAt: overrides.createdAt ?? new Date('2026-03-11T08:00:00.000Z'),
+  };
+}
+
 export function buildUser(overrides: Partial<User> = {}): User {
   return {
     id: overrides.id ?? randomUUID(),
@@ -554,6 +701,10 @@ export function buildUser(overrides: Partial<User> = {}): User {
     remindersEnabled: overrides.remindersEnabled ?? true,
     reminderTime: overrides.reminderTime ?? '21:30',
     sleepMode: overrides.sleepMode ?? SleepMode.both,
+    trackMood: overrides.trackMood ?? true,
+    trackEnergy: overrides.trackEnergy ?? true,
+    trackStress: overrides.trackStress ?? true,
+    trackSleep: overrides.trackSleep ?? true,
     notesEnabled: overrides.notesEnabled ?? true,
     tagsEnabled: overrides.tagsEnabled ?? true,
     eventsEnabled: overrides.eventsEnabled ?? true,

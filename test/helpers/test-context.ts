@@ -6,6 +6,8 @@ import { AnalyticsService } from '../../src/analytics/analytics.service';
 import { CheckinsFlowService } from '../../src/checkins/checkins.flow';
 import { CheckinsRepository } from '../../src/checkins/checkins.repository';
 import { CheckinsService } from '../../src/checkins/checkins.service';
+import { DailyMetricsRepository } from '../../src/daily-metrics/daily-metrics.repository';
+import { DailyMetricsService } from '../../src/daily-metrics/daily-metrics.service';
 import { EventsFlowService } from '../../src/events/events.flow';
 import { EventsRepository } from '../../src/events/events.repository';
 import { EventsService } from '../../src/events/events.service';
@@ -25,6 +27,7 @@ import { UsersService } from '../../src/users/users.service';
 import {
   InMemoryAnalyticsRepository,
   InMemoryCheckinsRepository,
+  InMemoryDailyMetricsRepository,
   InMemoryEventsRepository,
   InMemoryFsmRepository,
   InMemorySummariesRepository,
@@ -43,7 +46,9 @@ export interface IntegrationTestContext {
   tagsRepository: InMemoryTagsRepository;
   analyticsRepository: InMemoryAnalyticsRepository;
   summariesRepository: InMemorySummariesRepository;
+  dailyMetricsRepository: InMemoryDailyMetricsRepository;
   usersService: UsersService;
+  dailyMetricsService: DailyMetricsService;
   fsmService: FsmService;
   tagsService: TagsService;
   checkinsService: CheckinsService;
@@ -70,11 +75,13 @@ export async function createIntegrationTestContext(
   const tagsRepository = new InMemoryTagsRepository();
   const analyticsRepository = new InMemoryAnalyticsRepository();
   const summariesRepository = new InMemorySummariesRepository();
+  const dailyMetricsRepository = new InMemoryDailyMetricsRepository();
 
   const moduleRef = await Test.createTestingModule({
     providers: [
       { provide: ConfigService, useValue: configService },
       { provide: UsersRepository, useValue: usersRepository },
+      { provide: DailyMetricsRepository, useValue: dailyMetricsRepository },
       { provide: FsmRepository, useValue: fsmRepository },
       { provide: CheckinsRepository, useValue: checkinsRepository },
       { provide: EventsRepository, useValue: eventsRepository },
@@ -82,6 +89,7 @@ export async function createIntegrationTestContext(
       { provide: AnalyticsRepository, useValue: analyticsRepository },
       { provide: SummariesRepository, useValue: summariesRepository },
       UsersService,
+      DailyMetricsService,
       FsmService,
       TagsService,
       CheckinsService,
@@ -108,7 +116,9 @@ export async function createIntegrationTestContext(
     tagsRepository,
     analyticsRepository,
     summariesRepository,
+    dailyMetricsRepository,
     usersService: moduleRef.get(UsersService),
+    dailyMetricsService: moduleRef.get(DailyMetricsService),
     fsmService: moduleRef.get(FsmService),
     tagsService: moduleRef.get(TagsService),
     checkinsService: moduleRef.get(CheckinsService),

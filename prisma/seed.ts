@@ -1,4 +1,6 @@
-﻿import { PrismaClient } from '@prisma/client';
+import { PrismaClient } from '@prisma/client';
+
+import { DAILY_METRIC_CATALOG } from '../src/daily-metrics/daily-metrics.catalog';
 
 const prisma = new PrismaClient();
 
@@ -29,6 +31,29 @@ async function main(): Promise<void> {
         label: tag.label,
         isActive: true,
         sortOrder: tag.sortOrder,
+      },
+    });
+  }
+
+  for (const metric of DAILY_METRIC_CATALOG) {
+    await prisma.dailyMetricDefinition.upsert({
+      where: { key: metric.key },
+      create: {
+        key: metric.key,
+        label: metric.label,
+        category: metric.category,
+        inputType: metric.inputType,
+        defaultEnabled: metric.defaultEnabled,
+        isActive: true,
+        sortOrder: metric.sortOrder,
+      },
+      update: {
+        label: metric.label,
+        category: metric.category,
+        inputType: metric.inputType,
+        defaultEnabled: metric.defaultEnabled,
+        isActive: true,
+        sortOrder: metric.sortOrder,
       },
     });
   }

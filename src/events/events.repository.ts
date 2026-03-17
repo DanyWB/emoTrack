@@ -81,6 +81,7 @@ export class EventsRepository {
     return this.prisma.event.findMany({
       where: {
         userId,
+        seriesId: null,
         eventDate: {
           lte: eventDate,
         },
@@ -106,6 +107,7 @@ export class EventsRepository {
     return this.prisma.event.findMany({
       where: {
         userId,
+        seriesId: null,
         eventDate: {
           lte: to,
         },

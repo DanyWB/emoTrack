@@ -25,6 +25,10 @@ describe('Check-in flow integration', () => {
         consentGiven: true,
         reminderTime: '21:30',
         sleepMode: overrides.sleepMode ?? SleepMode.both,
+        trackMood: overrides.trackMood,
+        trackEnergy: overrides.trackEnergy,
+        trackStress: overrides.trackStress,
+        trackSleep: overrides.trackSleep,
       }),
     );
   }
@@ -83,6 +87,54 @@ describe('Check-in flow integration', () => {
     });
   });
 
+  it('builds a partial entry when only selected daily metrics are enabled', async () => {
+    const user = await createReadyUser({
+      id: 'user-checkin-1b',
+      telegramId: BigInt(6011),
+      trackMood: true,
+      trackEnergy: false,
+      trackStress: true,
+      trackSleep: false,
+    });
+
+    const started = await ctx.checkinsFlow.start(user);
+    expect(started).toMatchObject({
+      status: 'next',
+      nextState: FSM_STATES.checkin_mood,
+    });
+
+    const moodStep = await ctx.checkinsFlow.submitScore(user, '8');
+    expect(moodStep).toMatchObject({
+      status: 'next',
+      nextState: FSM_STATES.checkin_stress,
+    });
+
+    await ctx.checkinsFlow.submitScore(user, '2');
+    await ctx.checkinsFlow.skipCurrentStep(user);
+    await ctx.checkinsFlow.skipCurrentStep(user);
+    const finalResult = await ctx.checkinsFlow.skipCurrentStep(user);
+
+    expect(finalResult).toMatchObject({
+      status: 'saved',
+      entryPayload: {
+        moodScore: 8,
+        stressScore: 2,
+      },
+    });
+    expect(finalResult.entryPayload?.energyScore).toBeUndefined();
+    expect(finalResult.entryPayload?.sleepHours).toBeUndefined();
+
+    const [entry] = ctx.checkinsRepository.listEntries();
+    expect(entry).toMatchObject({
+      userId: user.id,
+      moodScore: 8,
+      energyScore: null,
+      stressScore: 2,
+      sleepHours: null,
+      sleepQuality: null,
+    });
+  });
+
   it('updates the same DailyEntry on a repeated same-day check-in', async () => {
     const user = await createReadyUser({
       id: 'user-checkin-2',
@@ -106,6 +158,78 @@ describe('Check-in flow integration', () => {
       stressScore: 3,
       sleepQuality: 8,
     });
+  });
+
+  it('keeps untracked same-day values untouched on a later partial check-in', async () => {
+    const user = await createReadyUser({
+      id: 'user-checkin-2b',
+      telegramId: BigInt(6012),
+      trackMood: true,
+      trackEnergy: true,
+      trackStress: true,
+      trackSleep: true,
+    });
+
+    await completeCoreCheckin(user.id, '5', '6', '4', '7', '6');
+    await ctx.usersService.updateSettings(user.id, {
+      trackMood: true,
+      trackEnergy: false,
+      trackStress: false,
+      trackSleep: false,
+    });
+
+    const updatedUser = await ctx.usersService.findById(user.id);
+    if (!updatedUser) {
+      throw new Error('User not found');
+    }
+
+    await ctx.checkinsFlow.start(updatedUser);
+    await ctx.checkinsFlow.submitScore(updatedUser, '9');
+    await ctx.checkinsFlow.skipCurrentStep(updatedUser);
+    await ctx.checkinsFlow.skipCurrentStep(updatedUser);
+    const result = await ctx.checkinsFlow.skipCurrentStep(updatedUser);
+
+    const [entry] = ctx.checkinsRepository.listEntries();
+
+    expect(result).toMatchObject({
+      status: 'saved',
+      isUpdate: true,
+      entryPayload: {
+        moodScore: 9,
+      },
+    });
+    expect(entry).toMatchObject({
+      moodScore: 9,
+      energyScore: 6,
+      stressScore: 4,
+      sleepQuality: 6,
+    });
+    expect(entry.sleepHours?.toString()).toBe('7');
+  });
+
+  it('does not allow skipping the last remaining tracked metric', async () => {
+    const user = await createReadyUser({
+      id: 'user-checkin-2c',
+      telegramId: BigInt(6013),
+      sleepMode: SleepMode.hours,
+      trackMood: false,
+      trackEnergy: false,
+      trackStress: false,
+      trackSleep: true,
+    });
+
+    const started = await ctx.checkinsFlow.start(user);
+    const skipped = await ctx.checkinsFlow.skipCurrentStep(user);
+
+    expect(started).toMatchObject({
+      status: 'next',
+      nextState: FSM_STATES.checkin_sleep_hours,
+    });
+    expect(skipped).toMatchObject({
+      status: 'cannot_skip',
+    });
+    expect(await ctx.fsmService.getState(user.id)).toBe(FSM_STATES.checkin_sleep_hours);
+    expect(ctx.checkinsRepository.listEntries()).toHaveLength(0);
   });
 
   it('resumes an active check-in and preserves saved optional markers after going back', async () => {

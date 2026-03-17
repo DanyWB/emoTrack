@@ -34,6 +34,11 @@ enum EventType {
   other
 }
 
+enum DailyMetricInputType {
+  score
+  sleep_block
+}
+
 model User {
   id                  String         @id @default(uuid())
   telegramId          BigInt         @unique @db.BigInt
@@ -46,12 +51,17 @@ model User {
   remindersEnabled    Boolean        @default(true)
   reminderTime        String?        @db.VarChar(5)
   sleepMode           SleepMode      @default(both)
+  trackMood           Boolean        @default(true)
+  trackEnergy         Boolean        @default(true)
+  trackStress         Boolean        @default(true)
+  trackSleep          Boolean        @default(true)
   notesEnabled        Boolean        @default(true)
   tagsEnabled         Boolean        @default(true)
   eventsEnabled       Boolean        @default(true)
   createdAt           DateTime       @default(now())
   updatedAt           DateTime       @updatedAt
   dailyEntries        DailyEntry[]
+  trackedMetrics      UserTrackedMetric[]
   events              Event[]
   summaries           Summary[]
   fsmSession          FsmSession?
@@ -65,20 +75,69 @@ model DailyEntry {
   userId      String
   user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   entryDate   DateTime      @db.Date
-  moodScore   Int
-  energyScore Int
-  stressScore Int
+  moodScore   Int?
+  energyScore Int?
+  stressScore Int?
   sleepHours  Decimal?      @db.Decimal(4, 2)
   sleepQuality Int?
   noteText    String?
   createdAt   DateTime      @default(now())
   updatedAt   DateTime      @updatedAt
+  metricValues DailyEntryMetricValue[]
   tags        DailyEntryTag[]
   events      Event[]
 
   @@unique([userId, entryDate])
   @@index([userId, entryDate])
   @@map("daily_entries")
+}
+
+model DailyMetricDefinition {
+  id             String                @id @default(uuid())
+  key            String                @unique
+  label          String
+  category       String?
+  inputType      DailyMetricInputType  @default(score)
+  defaultEnabled Boolean               @default(false)
+  isActive       Boolean               @default(true)
+  sortOrder      Int                   @default(0)
+  createdAt      DateTime              @default(now())
+  trackedByUsers UserTrackedMetric[]
+  entryValues    DailyEntryMetricValue[]
+
+  @@index([isActive, sortOrder])
+  @@map("daily_metric_definitions")
+}
+
+model UserTrackedMetric {
+  id                 String                @id @default(uuid())
+  userId             String
+  user               User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  metricDefinitionId String
+  metricDefinition   DailyMetricDefinition @relation(fields: [metricDefinitionId], references: [id], onDelete: Cascade)
+  isEnabled          Boolean               @default(false)
+  sortOrder          Int                   @default(0)
+  createdAt          DateTime              @default(now())
+  updatedAt          DateTime              @updatedAt
+
+  @@unique([userId, metricDefinitionId])
+  @@index([userId, isEnabled, sortOrder])
+  @@map("user_tracked_metrics")
+}
+
+model DailyEntryMetricValue {
+  id                 String                @id @default(uuid())
+  dailyEntryId       String
+  dailyEntry         DailyEntry            @relation(fields: [dailyEntryId], references: [id], onDelete: Cascade)
+  metricDefinitionId String
+  metricDefinition   DailyMetricDefinition @relation(fields: [metricDefinitionId], references: [id], onDelete: Cascade)
+  value              Int
+  createdAt          DateTime              @default(now())
+  updatedAt          DateTime              @updatedAt
+
+  @@unique([dailyEntryId, metricDefinitionId])
+  @@index([metricDefinitionId, dailyEntryId])
+  @@map("daily_entry_metric_values")
 }
 
 model PredefinedTag {

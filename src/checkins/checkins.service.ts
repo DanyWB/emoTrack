@@ -22,9 +22,9 @@ export interface CheckinUpsertResult {
 export interface RecentEntryView {
   id: string;
   entryDate: Date;
-  moodScore: number;
-  energyScore: number;
-  stressScore: number;
+  moodScore: number | null;
+  energyScore: number | null;
+  stressScore: number | null;
   sleepHours?: number;
   sleepQuality?: number;
   hasNote: boolean;

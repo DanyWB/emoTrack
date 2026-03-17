@@ -3,22 +3,25 @@ import { IsInt, IsNumber, IsOptional, IsString, Max, Min } from 'class-validator
 
 export class UpsertDailyEntryDto {
   @Type(() => Number)
+  @IsOptional()
   @IsInt()
   @Min(0)
   @Max(10)
-  moodScore!: number;
+  moodScore?: number;
 
   @Type(() => Number)
+  @IsOptional()
   @IsInt()
   @Min(0)
   @Max(10)
-  energyScore!: number;
+  energyScore?: number;
 
   @Type(() => Number)
+  @IsOptional()
   @IsInt()
   @Min(0)
   @Max(10)
-  stressScore!: number;
+  stressScore?: number;
 
   @Type(() => Number)
   @IsOptional()

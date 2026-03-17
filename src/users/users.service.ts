@@ -1,6 +1,11 @@
 import { Injectable } from '@nestjs/common';
 import { SleepMode, type User } from '@prisma/client';
 
+import {
+  hasAtLeastOneTrackedDailyMetric,
+  type DailyTrackingSelection,
+} from '../common/utils/validation.utils';
+import { DailyMetricsService } from '../daily-metrics/daily-metrics.service';
 import { UpdateUserSettingsDto } from './dto/update-user-settings.dto';
 import { UsersRepository } from './users.repository';
 
@@ -13,7 +18,10 @@ export interface TelegramProfile {
 
 @Injectable()
 export class UsersService {
-  constructor(private readonly usersRepository: UsersRepository) {}
+  constructor(
+    private readonly usersRepository: UsersRepository,
+    private readonly dailyMetricsService: DailyMetricsService,
+  ) {}
 
   findByTelegramId(telegramId: bigint): Promise<User | null> {
     return this.usersRepository.findByTelegramId(telegramId);
@@ -23,31 +31,55 @@ export class UsersService {
     return this.usersRepository.findById(userId);
   }
 
-  createFromTelegramProfile(profile: TelegramProfile): Promise<User> {
-    return this.usersRepository.create({
+  async createFromTelegramProfile(profile: TelegramProfile): Promise<User> {
+    const user = await this.usersRepository.create({
       telegramId: profile.telegramId,
       username: profile.username,
       firstName: profile.firstName,
       languageCode: profile.languageCode ?? 'ru',
     });
+
+    await this.dailyMetricsService.ensureUserTrackedMetrics(user);
+    return user;
   }
 
   async getOrCreateTelegramUser(profile: TelegramProfile): Promise<User> {
     const existing = await this.findByTelegramId(profile.telegramId);
 
     if (existing) {
-      return this.usersRepository.updateTelegramProfile(existing.id, {
+      const updated = await this.usersRepository.updateTelegramProfile(existing.id, {
         username: profile.username,
         firstName: profile.firstName,
         languageCode: profile.languageCode,
       });
+      await this.dailyMetricsService.ensureUserTrackedMetrics(updated);
+      return updated;
     }
 
     return this.createFromTelegramProfile(profile);
   }
 
-  updateSettings(userId: string, dto: UpdateUserSettingsDto): Promise<User> {
-    return this.usersRepository.updateSettings(userId, dto);
+  async updateSettings(userId: string, dto: UpdateUserSettingsDto): Promise<User> {
+    const user = await this.findById(userId);
+
+    if (!user) {
+      throw new Error(`User ${userId} not found`);
+    }
+
+    const trackingSelection: DailyTrackingSelection = {
+      trackMood: dto.trackMood ?? user.trackMood,
+      trackEnergy: dto.trackEnergy ?? user.trackEnergy,
+      trackStress: dto.trackStress ?? user.trackStress,
+      trackSleep: dto.trackSleep ?? user.trackSleep,
+    };
+
+    if (!hasAtLeastOneTrackedDailyMetric(trackingSelection)) {
+      throw new Error('INVALID_DAILY_TRACKING_CONFIGURATION');
+    }
+
+    const updatedUser = await this.usersRepository.updateSettings(userId, dto);
+    await this.dailyMetricsService.ensureUserTrackedMetrics(updatedUser);
+    return updatedUser;
   }
 
   setReminderTime(userId: string, time: string): Promise<User> {
