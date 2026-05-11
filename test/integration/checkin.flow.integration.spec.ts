@@ -359,6 +359,37 @@ describe('Check-in flow integration', () => {
     expect(ctx.checkinsRepository.listEntries()).toHaveLength(0);
   });
 
+  it('does not report draft tag selections as saved when the tag step is skipped', async () => {
+    const user = await createReadyUser({
+      id: 'user-checkin-2e',
+      telegramId: BigInt(6016),
+    });
+
+    await ctx.checkinsFlow.start(user);
+    await ctx.checkinsFlow.submitScore(user, '7');
+    await ctx.checkinsFlow.submitScore(user, '6');
+    await ctx.checkinsFlow.submitScore(user, '4');
+    await ctx.checkinsFlow.submitSleepHours(user, '7.5');
+    await ctx.checkinsFlow.submitScore(user, '8');
+    await ctx.checkinsFlow.skipCurrentStep(user);
+    await ctx.checkinsFlow.startTagsSelection(user);
+    await ctx.checkinsFlow.toggleTagSelection(user, 'tag-1');
+
+    const skippedTags = await ctx.checkinsFlow.skipCurrentStep(user);
+    const finalResult = await ctx.checkinsFlow.skipCurrentStep(user);
+    const savedEntry = ctx.checkinsRepository.listEntries()[0];
+
+    expect(skippedTags).toMatchObject({
+      status: 'next',
+      nextState: FSM_STATES.checkin_add_event_confirm,
+    });
+    expect(finalResult).toMatchObject({
+      status: 'saved',
+      tagsCount: 0,
+    });
+    expect(ctx.checkinsRepository.getTagIdsForEntry(savedEntry.id)).toEqual([]);
+  });
+
   it('resumes an active check-in and preserves saved optional markers after going back', async () => {
     const user = await createReadyUser({
       id: 'user-checkin-3',

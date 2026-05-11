@@ -2,7 +2,7 @@ import { Logger } from '@nestjs/common';
 
 import { TELEGRAM_CALLBACKS, TELEGRAM_MAIN_MENU_BUTTONS } from '../../src/common/constants/app.constants';
 import { FSM_STATES } from '../../src/fsm/fsm.types';
-import { telegramCopy } from '../../src/telegram/telegram.copy';
+import { TELEGRAM_COMMANDS, telegramCopy } from '../../src/telegram/telegram.copy';
 import { TelegramRouter } from '../../src/telegram/telegram.router';
 import { buildUser } from '../helpers/in-memory';
 import { createIntegrationTestContext, type IntegrationTestContext } from '../helpers/test-context';
@@ -114,9 +114,22 @@ describe('Telegram router contract integration', () => {
         'event',
         'help',
         'history',
+        'menu',
         'settings',
         'stats',
         'terms',
+      ]);
+      expect(TELEGRAM_COMMANDS[1]?.command).toBe('menu');
+      expect(TELEGRAM_COMMANDS.map((command) => command.description)).toEqual([
+        '👋 Старт и вход в бота',
+        '🧭 Меню навигации',
+        '❔ Краткая помощь',
+        '📄 Пользовательское соглашение',
+        '🌤 Отметить состояние',
+        '🗂 Добавить событие',
+        '📚 Последние записи',
+        '📊 Сводка и графики',
+        '⚙️ Настройки',
       ]);
       expect(Object.keys(handlers.hears)).toEqual([...TELEGRAM_MAIN_MENU_BUTTONS]);
       expect(Object.keys(handlers.events).sort()).toEqual(['callback_query', 'text']);
@@ -136,6 +149,311 @@ describe('Telegram router contract integration', () => {
       errorSpy.mockRestore();
       warnSpy.mockRestore();
     }
+  });
+
+  it('shows the navigation menu with inline section buttons', async () => {
+    const router = createRouter();
+    const telegramCtx = {
+      ...buildBaseContext(8910),
+      reply: jest.fn().mockResolvedValue(undefined),
+    };
+
+    await (router as any).handleMenuCommand(telegramCtx);
+
+    expect(telegramCtx.reply).toHaveBeenCalledTimes(1);
+
+    const [message, extra] = telegramCtx.reply.mock.calls[0] as [
+      string,
+      { parse_mode?: string; reply_markup?: { inline_keyboard?: Array<Array<{ callback_data: string; text: string }>> } },
+    ];
+    const buttons = extra.reply_markup?.inline_keyboard?.flat() ?? [];
+
+    expect(message).toBe(telegramCopy.menu.text);
+    expect(extra.parse_mode).toBe('HTML');
+    expect(buttons.map((button) => button.callback_data)).toEqual([
+      TELEGRAM_CALLBACKS.menuStats,
+      TELEGRAM_CALLBACKS.menuHistory,
+      TELEGRAM_CALLBACKS.menuSettings,
+      TELEGRAM_CALLBACKS.menuHelp,
+      TELEGRAM_CALLBACKS.menuTerms,
+    ]);
+  });
+
+  it('opens menu callback sections by editing the current inline message', async () => {
+    await createReadyUser('user-router-contract-menu', 8911);
+    const router = createRouter();
+
+    async function runMenuCallback(callbackData: string) {
+      const telegramCtx = {
+        ...buildBaseContext(8911),
+        callbackQuery: { data: callbackData },
+        answerCbQuery: jest.fn().mockResolvedValue(undefined),
+        editMessageText: jest.fn().mockResolvedValue(undefined),
+        reply: jest.fn().mockResolvedValue(undefined),
+      };
+
+      await (router as any).handleCallbackQuery(telegramCtx);
+      return telegramCtx;
+    }
+
+    const statsCtx = await runMenuCallback(TELEGRAM_CALLBACKS.menuStats);
+    expect(statsCtx.editMessageText).toHaveBeenCalledWith(
+      telegramCopy.stats.periodPrompt,
+      expect.objectContaining({ parse_mode: 'HTML' }),
+    );
+    expect(await ctx.fsmService.getState('user-router-contract-menu')).toBe(FSM_STATES.stats_period_select);
+
+    const historyCtx = await runMenuCallback(TELEGRAM_CALLBACKS.menuHistory);
+    expect(historyCtx.editMessageText).toHaveBeenCalledWith(
+      telegramCopy.history.empty,
+      expect.objectContaining({ parse_mode: 'HTML' }),
+    );
+
+    const settingsCtx = await runMenuCallback(TELEGRAM_CALLBACKS.menuSettings);
+    expect((settingsCtx.editMessageText.mock.calls[0] as [string])[0]).toContain(telegramCopy.settings.title);
+    expect(await ctx.fsmService.getState('user-router-contract-menu')).toBe(FSM_STATES.settings_menu);
+
+    const helpCtx = await runMenuCallback(TELEGRAM_CALLBACKS.menuHelp);
+    expect(helpCtx.editMessageText).toHaveBeenCalledWith(
+      telegramCopy.help.text,
+      expect.objectContaining({ parse_mode: 'HTML' }),
+    );
+
+    const termsCtx = await runMenuCallback(TELEGRAM_CALLBACKS.menuTerms);
+    expect((termsCtx.editMessageText.mock.calls[0] as [string])[0]).toContain(telegramCopy.terms.title);
+  });
+
+  it('updates the tag selection callback screen instead of sending a new message', async () => {
+    const user = await createReadyUser('user-router-contract-tags', 8912);
+    await ctx.fsmService.setState(user.id, FSM_STATES.checkin_tags, { selectedTagIds: [] });
+    const router = createRouter();
+    const telegramCtx = {
+      ...buildBaseContext(8912),
+      callbackQuery: {
+        data: `${TELEGRAM_CALLBACKS.checkinTagsTogglePrefix}tag-1`,
+      },
+      answerCbQuery: jest.fn().mockResolvedValue(undefined),
+      editMessageText: jest.fn().mockResolvedValue(undefined),
+      reply: jest.fn().mockResolvedValue(undefined),
+    };
+
+    await (router as any).handleCallbackQuery(telegramCtx);
+
+    expect(telegramCtx.editMessageText).toHaveBeenCalledTimes(1);
+    expect(telegramCtx.reply).not.toHaveBeenCalled();
+
+    const [message, extra] = telegramCtx.editMessageText.mock.calls[0] as [
+      string,
+      { parse_mode?: string; reply_markup?: { inline_keyboard?: Array<Array<{ text: string }>> } },
+    ];
+    const buttonTexts = extra.reply_markup?.inline_keyboard?.flat().map((button) => button.text) ?? [];
+
+    expect(message).toContain('Выбрано: <b>1 тег</b>');
+    expect(extra.parse_mode).toBe('HTML');
+    expect(buttonTexts.some((text) => text.startsWith('✅ '))).toBe(true);
+  });
+
+  it('falls back to a normal reply when an inline screen cannot be edited', async () => {
+    const user = await createReadyUser('user-router-contract-tags-fallback', 8913);
+    await ctx.fsmService.setState(user.id, FSM_STATES.checkin_tags, { selectedTagIds: [] });
+    const router = createRouter();
+    const telegramCtx = {
+      ...buildBaseContext(8913),
+      callbackQuery: {
+        data: `${TELEGRAM_CALLBACKS.checkinTagsTogglePrefix}tag-1`,
+      },
+      answerCbQuery: jest.fn().mockResolvedValue(undefined),
+      editMessageText: jest.fn().mockRejectedValue(new Error('message to edit not found')),
+      reply: jest.fn().mockResolvedValue(undefined),
+    };
+
+    await (router as any).handleCallbackQuery(telegramCtx);
+
+    expect(telegramCtx.editMessageText).toHaveBeenCalledTimes(1);
+    expect(telegramCtx.reply).toHaveBeenCalledWith(
+      expect.stringContaining('Выбрано: <b>1 тег</b>'),
+      expect.objectContaining({ parse_mode: 'HTML' }),
+    );
+  });
+
+  it('returns from stats cancel to the navigation menu by editing the current screen', async () => {
+    const user = await createReadyUser('user-router-contract-stats-cancel', 8914);
+    await ctx.fsmService.setState(user.id, FSM_STATES.stats_period_select, {});
+    const router = createRouter();
+    const telegramCtx = {
+      ...buildBaseContext(8914),
+      callbackQuery: {
+        data: TELEGRAM_CALLBACKS.actionCancel,
+      },
+      answerCbQuery: jest.fn().mockResolvedValue(undefined),
+      editMessageText: jest.fn().mockResolvedValue(undefined),
+      reply: jest.fn().mockResolvedValue(undefined),
+    };
+
+    await (router as any).handleCallbackQuery(telegramCtx);
+
+    expect(await ctx.fsmService.getState(user.id)).toBe(FSM_STATES.idle);
+    expect(telegramCtx.editMessageText).toHaveBeenCalledWith(
+      telegramCopy.menu.text,
+      expect.objectContaining({ parse_mode: 'HTML' }),
+    );
+    expect(telegramCtx.reply).not.toHaveBeenCalled();
+  });
+
+  it('deletes the current check-in callback screen before the final confirmation', async () => {
+    const user = await createReadyUser('user-router-contract-checkin-delete', 8915);
+    await ctx.fsmService.setState(user.id, FSM_STATES.checkin_add_event_confirm, {
+      moodScore: 7,
+      isUpdate: false,
+    });
+    const router = createRouter();
+    const telegramCtx = {
+      ...buildBaseContext(8915),
+      callbackQuery: {
+        data: TELEGRAM_CALLBACKS.actionSkip,
+      },
+      answerCbQuery: jest.fn().mockResolvedValue(undefined),
+      deleteMessage: jest.fn().mockResolvedValue(undefined),
+      editMessageReplyMarkup: jest.fn().mockResolvedValue(undefined),
+      reply: jest.fn().mockResolvedValue(undefined),
+    };
+
+    await (router as any).handleCallbackQuery(telegramCtx);
+
+    expect(telegramCtx.deleteMessage).toHaveBeenCalledTimes(1);
+    expect(telegramCtx.editMessageReplyMarkup).not.toHaveBeenCalled();
+    expect((telegramCtx.reply.mock.calls[0] as [string])[0]).toContain('Запись за сегодня сохранена');
+    expect(await ctx.fsmService.getState(user.id)).toBe(FSM_STATES.idle);
+  });
+
+  it('shows navigation menu after the first onboarding check-in is saved', async () => {
+    const user = await createReadyUser('user-router-contract-first-checkin-menu', 8918);
+    await ctx.fsmService.setState(user.id, FSM_STATES.checkin_add_event_confirm, {
+      moodScore: 8,
+      showMenuAfterSave: true,
+    });
+    const router = createRouter();
+    const telegramCtx = {
+      ...buildBaseContext(8918),
+      callbackQuery: {
+        data: TELEGRAM_CALLBACKS.actionSkip,
+      },
+      answerCbQuery: jest.fn().mockResolvedValue(undefined),
+      deleteMessage: jest.fn().mockResolvedValue(undefined),
+      editMessageReplyMarkup: jest.fn().mockResolvedValue(undefined),
+      reply: jest.fn().mockResolvedValue(undefined),
+    };
+
+    await (router as any).handleCallbackQuery(telegramCtx);
+
+    expect(telegramCtx.reply).toHaveBeenCalledTimes(2);
+    expect((telegramCtx.reply.mock.calls[0] as [string])[0]).toContain('Запись за сегодня сохранена');
+    expect(telegramCtx.reply).toHaveBeenNthCalledWith(
+      2,
+      telegramCopy.menu.text,
+      expect.objectContaining({ parse_mode: 'HTML' }),
+    );
+
+    const [, extra] = telegramCtx.reply.mock.calls[1] as [
+      string,
+      { reply_markup?: { inline_keyboard?: Array<Array<{ callback_data: string }>> } },
+    ];
+    const callbacks = extra.reply_markup?.inline_keyboard?.flat().map((button) => button.callback_data) ?? [];
+
+    expect(callbacks).toEqual([
+      TELEGRAM_CALLBACKS.menuStats,
+      TELEGRAM_CALLBACKS.menuHistory,
+      TELEGRAM_CALLBACKS.menuSettings,
+      TELEGRAM_CALLBACKS.menuHelp,
+      TELEGRAM_CALLBACKS.menuTerms,
+    ]);
+  });
+
+  it('cleans up event text input prompts and keeps back-only navigation on the next step', async () => {
+    const user = await createReadyUser('user-router-contract-event-cleanup', 8916);
+    await ctx.fsmService.setState(user.id, FSM_STATES.event_title, {
+      eventFlowSource: 'standalone',
+      eventType: 'work',
+      eventStartDateKey: '2026-03-12',
+      telegramPromptMessageId: 501,
+    });
+    const router = createRouter();
+    const telegramCtx = {
+      ...buildBaseContext(8916),
+      chat: { id: 8916 },
+      message: {
+        message_id: 901,
+        text: 'успешная работа',
+        chat: { id: 8916 },
+      },
+      telegram: {
+        deleteMessage: jest.fn().mockResolvedValue(undefined),
+      },
+      deleteMessage: jest.fn().mockResolvedValue(undefined),
+      reply: jest.fn().mockResolvedValue({ message_id: 502 }),
+    };
+
+    await (router as any).handleTextMessage(telegramCtx);
+
+    expect(telegramCtx.telegram.deleteMessage).toHaveBeenCalledWith(8916, 501);
+    expect(telegramCtx.deleteMessage).toHaveBeenCalledWith();
+    expect(telegramCtx.reply).toHaveBeenCalledWith(
+      telegramCopy.event.scorePrompt,
+      expect.objectContaining({ parse_mode: 'HTML' }),
+    );
+
+    const [, extra] = telegramCtx.reply.mock.calls[0] as [
+      string,
+      { reply_markup?: { inline_keyboard?: Array<Array<{ text: string }>> } },
+    ];
+    const buttonTexts = extra.reply_markup?.inline_keyboard?.flat().map((button) => button.text) ?? [];
+    const session = await ctx.fsmService.getSession(user.id);
+
+    expect(buttonTexts).toContain(telegramCopy.buttons.back);
+    expect(buttonTexts).not.toContain(telegramCopy.buttons.cancel);
+    expect(session?.payloadJson).toMatchObject({
+      telegramPromptMessageId: 502,
+      eventTitle: 'успешная работа',
+    });
+  });
+
+  it('uses "Далее" instead of "Пропустить" on optional event details', async () => {
+    const user = await createReadyUser('user-router-contract-event-next', 8917);
+    await ctx.fsmService.setState(user.id, FSM_STATES.event_score, {
+      eventFlowSource: 'standalone',
+      eventType: 'work',
+      eventTitle: 'успешная работа',
+      eventStartDateKey: '2026-03-12',
+      telegramPromptMessageId: 601,
+    });
+    const router = createRouter();
+    const telegramCtx = {
+      ...buildBaseContext(8917),
+      callbackQuery: {
+        data: `${TELEGRAM_CALLBACKS.scorePrefix}7`,
+        message: {
+          message_id: 601,
+          chat: { id: 8917 },
+        },
+      },
+      answerCbQuery: jest.fn().mockResolvedValue(undefined),
+      editMessageText: jest.fn().mockResolvedValue(undefined),
+      reply: jest.fn().mockResolvedValue(undefined),
+    };
+
+    await (router as any).handleCallbackQuery(telegramCtx);
+
+    const [message, extra] = telegramCtx.editMessageText.mock.calls[0] as [
+      string,
+      { reply_markup?: { inline_keyboard?: Array<Array<{ text: string }>> } },
+    ];
+    const buttonTexts = extra.reply_markup?.inline_keyboard?.flat().map((button) => button.text) ?? [];
+
+    expect(message).toBe(telegramCopy.event.descriptionPrompt);
+    expect(buttonTexts).toContain(telegramCopy.buttons.back);
+    expect(buttonTexts).toContain(telegramCopy.buttons.next);
+    expect(buttonTexts).not.toContain(telegramCopy.buttons.skip);
+    expect(buttonTexts).not.toContain(telegramCopy.buttons.cancel);
   });
 
   it('blocks non-consent callbacks before terms are accepted', async () => {

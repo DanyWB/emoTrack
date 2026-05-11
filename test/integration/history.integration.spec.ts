@@ -148,10 +148,10 @@ describe('History integration', () => {
     ];
 
     expect(message).toContain(telegramCopy.history.title);
-    expect(message).toContain('• 12.03.2026');
-    expect(message).toContain('• 08.03.2026');
-    expect(message).not.toContain('• 07.03.2026');
-    expect(message).toContain('Есть заметка · 2 события');
+    expect(message).toContain('📅 <b>12.03.2026</b>');
+    expect(message).toContain('📅 <b>08.03.2026</b>');
+    expect(message).not.toContain('📅 <b>07.03.2026</b>');
+    expect(message).toContain('📝 заметка · 🗂 2 события');
     expect(markup.reply_markup?.inline_keyboard?.[0]?.[0]?.callback_data).toBe(
       `${TELEGRAM_CALLBACKS.historyOpenPrefix}${newestEntry?.id}:root`,
     );
@@ -183,8 +183,8 @@ describe('History integration', () => {
 
     const [message] = telegramCtx.reply.mock.calls[0] as [string];
 
-    expect(message).toContain('Доп. метрики: Радость 8, Самочувствие 6');
-    expect(message).toContain('Настроение / энергия / стресс: 8 / 7 / 3');
+    expect(message).toContain('🧩 <b>Доп. метрики</b>: Радость <b>8</b>, Самочувствие <b>6</b>');
+    expect(message).toContain('настроение <b>8</b> · энергия <b>7</b> · стресс <b>3</b>');
   });
 
   it('keeps historical extra metrics visible when their definition becomes inactive', async () => {
@@ -208,7 +208,7 @@ describe('History integration', () => {
     const [message] = telegramCtx.reply.mock.calls[0] as [string];
     const joyLabel = ctx.dailyMetricsRepository.listDefinitions().find((definition) => definition.key === 'joy')?.label;
 
-    expect(message).toContain(`${telegramCopy.stats.extraMetricsLabel}: ${joyLabel} 8`);
+    expect(message).toContain(`🧩 <b>${telegramCopy.stats.extraMetricsLabel}</b>: ${joyLabel} <b>8</b>`);
   });
 
   it('renders an extra-only history entry without the empty legacy core line', async () => {
@@ -237,11 +237,11 @@ describe('History integration', () => {
     const lines = message.split('\n');
     const joyLabel = ctx.dailyMetricsRepository.listDefinitions().find((definition) => definition.key === 'joy')?.label;
     const wellbeingLabel = ctx.dailyMetricsRepository.listDefinitions().find((definition) => definition.key === 'wellbeing')?.label;
-    const extraMetricsLine = `${telegramCopy.stats.extraMetricsLabel}: ${joyLabel} 8, ${wellbeingLabel} 6`;
+    const extraMetricsLine = `🧩 <b>${telegramCopy.stats.extraMetricsLabel}</b>: ${joyLabel} <b>8</b>, ${wellbeingLabel} <b>6</b>`;
 
     expect(message).toContain(extraMetricsLine);
-    expect(lines[3]).toBe(extraMetricsLine);
-    expect(message).toContain('Есть заметка · 0 событий');
+    expect(lines[4]).toBe(extraMetricsLine);
+    expect(message).toContain('📝 заметка · 🗂 0 событий');
   });
 
   it('opens a history detail view with note, tags, extra metrics, and events', async () => {
@@ -277,10 +277,10 @@ describe('History integration', () => {
 
     expect(message).toContain('Запись за 12.03.2026');
     expect(message).toContain('Состояние');
-    expect(message).toContain('Настроение / энергия / стресс: 8 / 7 / 3');
-    expect(message).toContain('Сон\n7.5 ч, качество 8');
-    expect(message).toContain('Доп. метрики: Радость 8');
-    expect(message).toContain('Заметка\nBusy day');
+    expect(message).toContain('настроение <b>8</b> · энергия <b>7</b> · стресс <b>3</b>');
+    expect(message).toContain('<b>😴 Сон</b>\n7.5 ч, качество 8');
+    expect(message).toContain('🧩 <b>Доп. метрики</b>: Радость <b>8</b>');
+    expect(message).toContain('<b>📝 Заметка</b>\nBusy day');
     expect(message).toContain('Теги');
     expect(message).toContain('Тревога');
     expect(message).toContain('Спокойствие');
@@ -322,8 +322,8 @@ describe('History integration', () => {
 
     const [message] = telegramCtx.editMessageText.mock.calls[0] as [string];
 
-    expect(message).toContain('Доп. метрики: Радость 8, Самочувствие 6');
-    expect(message).toContain('Заметка\nOnly extra metrics today');
+    expect(message).toContain('🧩 <b>Доп. метрики</b>: Радость <b>8</b>, Самочувствие <b>6</b>');
+    expect(message).toContain('<b>📝 Заметка</b>\nOnly extra metrics today');
     expect(message).not.toContain('Настроение / энергия / стресс: — / — / —');
     expect(message).not.toContain('Теги\n—');
     expect(message).not.toContain('События\n—');
@@ -354,8 +354,8 @@ describe('History integration', () => {
     ];
 
     expect(message).toContain(telegramCopy.history.moreTitle);
-    expect(message).toContain('• 07.03.2026');
-    expect(message).not.toContain('• 08.03.2026');
+    expect(message).toContain('📅 <b>07.03.2026</b>');
+    expect(message).not.toContain('📅 <b>08.03.2026</b>');
     expect(markup.reply_markup?.inline_keyboard?.[0]?.[0]?.callback_data).toBe(
       `${TELEGRAM_CALLBACKS.historyOpenPrefix}${oldestEntry.id}:2026-03-08`,
     );
@@ -416,7 +416,7 @@ describe('History integration', () => {
     const [message] = telegramCtx.editMessageText.mock.calls[0] as [string];
 
     expect(message).toContain('События');
-    expect(message).toContain('Путешествия: Trip · оценка 7 · 11.03.2026–12.03.2026');
+    expect(message).toContain('Путешествия: <b>Trip</b> · оценка 7 · 11.03.2026–12.03.2026');
   });
 
   it('degrades gracefully for a stale more callback', async () => {

@@ -18,7 +18,7 @@ import { type DailyMetricCatalogKey } from '../daily-metrics/daily-metrics.catal
 import { EventsFlowService, type EventFlowResult } from '../events/events.flow';
 import { FsmService } from '../fsm/fsm.service';
 import { FSM_STATES, type CheckinDraftPayload, type FsmState } from '../fsm/fsm.types';
-import { OnboardingFlow } from '../onboarding/onboarding.flow';
+import { OnboardingFlow, type OnboardingStepType } from '../onboarding/onboarding.flow';
 import { RemindersService } from '../reminders/reminders.service';
 import { SummariesService } from '../summaries/summaries.service';
 import { type PeriodStatsPayload, type SelectedMetricStatsPayload, type StatsSelectedMetricKey } from '../stats/stats.types';
@@ -26,11 +26,11 @@ import { TagsService } from '../tags/tags.service';
 import { UsersService } from '../users/users.service';
 import {
   formatCheckinConfirmation,
+  formatCheckinTagsSelectionPrompt,
   formatDailyMetricsSettingsText,
   formatHistoryEntryDetail,
   formatHistoryEntries,
   formatReminderTimeUpdateMessage,
-  formatReminderToggleMessage,
   formatSettingsText,
   formatStatsMetricPrompt,
   formatStatsSleepChartCaption,
@@ -45,9 +45,28 @@ import {
 } from './telegram.copy';
 import { extractTelegramProfile, getCallbackData, normalizeTelegramText } from './telegram.helpers';
 import { telegramKeyboards } from './telegram.keyboards';
+import {
+  buildStatsMetricOptions,
+  isAvailableStatsMetricKey,
+  type StatsMetricOption,
+} from './telegram.stats-options';
+import {
+  deleteCurrentMessage,
+  deleteMessageById,
+  editOrReplyHtml,
+  getCurrentMessageRef,
+  replyHtml,
+  type TelegramMessageRef,
+} from './telegram.ui';
 
 const HISTORY_PAGE_SIZE = 5;
 const HISTORY_ROOT_CURSOR_TOKEN = 'root';
+
+interface MessageRenderOptions {
+  preferEdit?: boolean;
+  cleanupFlowMessages?: boolean;
+  trackFlowPromptForUserId?: string;
+}
 
 @Injectable()
 export class TelegramRouter {
@@ -69,6 +88,7 @@ export class TelegramRouter {
 
   register(bot: Telegraf<Context>): void {
     bot.start((ctx) => this.runSafely(ctx, () => this.handleStartCommand(ctx), 'start'));
+    bot.command('menu', (ctx) => this.runSafely(ctx, () => this.handleMenuCommand(ctx), 'menu'));
     bot.command('terms', (ctx) => this.runSafely(ctx, () => this.handleTermsCommand(ctx), 'terms'));
     bot.command('checkin', (ctx) => this.runSafely(ctx, () => this.handleCheckinCommand(ctx), 'checkin'));
     bot.command('event', (ctx) => this.runSafely(ctx, () => this.handleEventCommand(ctx), 'event'));
@@ -79,10 +99,6 @@ export class TelegramRouter {
 
     bot.hears(TELEGRAM_MAIN_MENU_BUTTONS[0], (ctx) => this.runSafely(ctx, () => this.handleCheckinCommand(ctx), 'menu:checkin'));
     bot.hears(TELEGRAM_MAIN_MENU_BUTTONS[1], (ctx) => this.runSafely(ctx, () => this.handleEventCommand(ctx), 'menu:event'));
-    bot.hears(TELEGRAM_MAIN_MENU_BUTTONS[2], (ctx) => this.runSafely(ctx, () => this.handleStatsCommand(ctx), 'menu:stats'));
-    bot.hears(TELEGRAM_MAIN_MENU_BUTTONS[3], (ctx) => this.runSafely(ctx, () => this.handleHistoryCommand(ctx), 'menu:history'));
-    bot.hears(TELEGRAM_MAIN_MENU_BUTTONS[4], (ctx) => this.runSafely(ctx, () => this.handleSettingsCommand(ctx), 'menu:settings'));
-    bot.hears(TELEGRAM_MAIN_MENU_BUTTONS[5], (ctx) => this.runSafely(ctx, () => this.handleHelpCommand(ctx), 'menu:help'));
 
     bot.on('callback_query', (ctx) => this.runSafely(ctx, () => this.handleCallbackQuery(ctx), 'callback_query'));
     bot.on('text', (ctx) => this.runSafely(ctx, () => this.handleTextMessage(ctx), 'text'));
@@ -98,6 +114,16 @@ export class TelegramRouter {
     await this.replyOnboardingProgress(ctx, user, true);
   }
 
+  private async handleMenuCommand(ctx: Context): Promise<void> {
+    const user = await this.getOrCreateUserFromContext(ctx);
+
+    if (user) {
+      await this.analyticsService.track('menu_opened', {}, user.id);
+    }
+
+    await replyHtml(ctx, telegramCopy.menu.text, telegramKeyboards.navigationMenu());
+  }
+
   private async handleCheckinCommand(ctx: Context): Promise<void> {
     const user = await this.getOrCreateUserFromContext(ctx);
     if (!user || !(await this.ensureProductAccess(ctx, user))) {
@@ -105,7 +131,7 @@ export class TelegramRouter {
     }
 
     const result = await this.checkinsFlow.start(user);
-    await ctx.reply(result.resumed ? telegramCopy.checkin.resumed : telegramCopy.checkin.started);
+    await replyHtml(ctx, result.resumed ? telegramCopy.checkin.resumed : telegramCopy.checkin.started);
 
     if (result.nextState && this.isEventState(result.nextState)) {
       await this.replyEventPromptByState(ctx, user, result.nextState, 'checkin');
@@ -122,7 +148,7 @@ export class TelegramRouter {
     }
 
     const result = await this.eventsFlow.startStandalone(user);
-    await ctx.reply(telegramCopy.event.startedStandalone);
+    await replyHtml(ctx, telegramCopy.event.startedStandalone);
     await this.replyEventResult(ctx, user, result);
   }
 
@@ -132,10 +158,7 @@ export class TelegramRouter {
       return;
     }
 
-    await this.fsmService.setState(user.id, FSM_STATES.stats_period_select, {});
-    await this.analyticsService.track('stats_requested', {}, user.id);
-    this.logger.log(`Opened stats period selector for user ${user.id}`);
-    await ctx.reply(telegramCopy.stats.periodPrompt, telegramKeyboards.statsPeriodSelector());
+    await this.openStatsMenu(ctx, user);
   }
 
   private async handleHistoryCommand(ctx: Context): Promise<void> {
@@ -144,8 +167,7 @@ export class TelegramRouter {
       return;
     }
 
-    await this.analyticsService.track('history_requested', {}, user.id);
-    await this.replyHistoryPage(ctx, user.id, undefined, 'initial');
+    await this.openHistoryMenu(ctx, user);
   }
 
   private async handleSettingsCommand(ctx: Context): Promise<void> {
@@ -154,13 +176,11 @@ export class TelegramRouter {
       return;
     }
 
-    await this.fsmService.setState(user.id, FSM_STATES.settings_menu, { settingsView: 'main' });
-    await this.analyticsService.track('settings_opened', {}, user.id);
-    await this.replySettingsMenu(ctx, user);
+    await this.openSettingsMenu(ctx, user);
   }
 
   private async handleHelpCommand(ctx: Context): Promise<void> {
-    await ctx.reply(telegramCopy.help.text, telegramKeyboards.mainMenu());
+    await this.replyHelp(ctx);
   }
 
   private async handleTermsCommand(ctx: Context): Promise<void> {
@@ -169,18 +189,129 @@ export class TelegramRouter {
       return;
     }
 
-    await ctx.reply(`${telegramCopy.terms.title}\n\n${telegramCopy.terms.text}`);
+    await this.openTerms(ctx, user);
+  }
+
+  private async openTerms(ctx: Context, user: User, options: MessageRenderOptions = {}): Promise<void> {
+    const lines = [`<b>${telegramCopy.terms.title}</b>`, '', telegramCopy.terms.text];
 
     if (!user.consentGiven) {
       await this.fsmService.setState(user.id, FSM_STATES.onboarding_consent, {});
-      await ctx.reply(telegramCopy.terms.acceptPrompt, telegramKeyboards.consent());
+      lines.push('', `<i>${telegramCopy.terms.acceptPrompt}</i>`);
+      await this.sendHtml(ctx, lines.join('\n'), telegramKeyboards.consent(), options);
       return;
     }
 
-    await ctx.reply(
-      telegramCopy.terms.alreadyAccepted,
-      user.onboardingCompleted ? telegramKeyboards.mainMenu() : telegramKeyboards.cancelOnly(),
+    lines.push('', telegramCopy.terms.alreadyAccepted);
+    await this.sendHtml(
+      ctx,
+      lines.join('\n'),
+      options.preferEdit ? telegramKeyboards.navigationMenu() : telegramKeyboards.mainMenu(),
+      options,
     );
+  }
+
+  private async sendHtml(
+    ctx: Context,
+    text: string,
+    extra?: Parameters<typeof replyHtml>[2],
+    options: MessageRenderOptions = {},
+  ): Promise<void> {
+    if (options.cleanupFlowMessages && options.trackFlowPromptForUserId) {
+      await this.cleanupTrackedFlowMessages(ctx, options.trackFlowPromptForUserId);
+    }
+
+    let sentMessage: TelegramMessageRef | undefined;
+
+    if (options.preferEdit) {
+      sentMessage = await editOrReplyHtml(ctx, text, extra);
+    } else {
+      sentMessage = await replyHtml(ctx, text, extra);
+    }
+
+    if (options.trackFlowPromptForUserId) {
+      await this.rememberFlowPromptMessage(ctx, options.trackFlowPromptForUserId, sentMessage);
+    }
+  }
+
+  private withFlowPromptTracking(userId: string, options: MessageRenderOptions = {}): MessageRenderOptions {
+    return {
+      ...options,
+      trackFlowPromptForUserId: userId,
+    };
+  }
+
+  private withFlowMessageCleanup(userId: string, options: MessageRenderOptions = {}): MessageRenderOptions {
+    return {
+      ...options,
+      cleanupFlowMessages: true,
+      trackFlowPromptForUserId: userId,
+    };
+  }
+
+  private async cleanupTrackedFlowMessages(ctx: Context, userId: string): Promise<void> {
+    const payload = await this.getSessionPayload(userId);
+
+    if (typeof payload.telegramPromptMessageId === 'number') {
+      await deleteMessageById(ctx, payload.telegramPromptMessageId);
+    }
+
+    await deleteCurrentMessage(ctx);
+    await this.fsmService.updatePayload(userId, { telegramPromptMessageId: null });
+  }
+
+  private async rememberFlowPromptMessage(
+    ctx: Context,
+    userId: string,
+    sentMessage?: TelegramMessageRef,
+  ): Promise<void> {
+    const messageId = sentMessage?.message_id ?? getCurrentMessageRef(ctx)?.message_id;
+
+    if (typeof messageId !== 'number') {
+      return;
+    }
+
+    await this.fsmService.updatePayload(userId, { telegramPromptMessageId: messageId });
+  }
+
+  private async returnToNavigationMenu(ctx: Context, options: MessageRenderOptions = {}): Promise<void> {
+    await this.sendHtml(
+      ctx,
+      telegramCopy.menu.text,
+      options.preferEdit ? telegramKeyboards.navigationMenu() : telegramKeyboards.mainMenu(),
+      options,
+    );
+  }
+
+  private async replyNavigationMenu(ctx: Context, text = telegramCopy.menu.text): Promise<void> {
+    await replyHtml(ctx, text, telegramKeyboards.navigationMenu());
+  }
+
+  private async openStatsMenu(ctx: Context, user: User, options: MessageRenderOptions = {}): Promise<void> {
+    await this.fsmService.setState(user.id, FSM_STATES.stats_period_select, {});
+    await this.analyticsService.track('stats_requested', {}, user.id);
+    this.logger.log(`Opened stats period selector for user ${user.id}`);
+    await this.replyStatsPeriodSelector(ctx, options);
+  }
+
+  private async openHistoryMenu(ctx: Context, user: User, options: MessageRenderOptions = {}): Promise<void> {
+    await this.analyticsService.track('history_requested', {}, user.id);
+    await this.replyHistoryPage(ctx, user.id, undefined, 'initial', options);
+  }
+
+  private async openSettingsMenu(ctx: Context, user: User, options: MessageRenderOptions = {}): Promise<void> {
+    await this.fsmService.setState(user.id, FSM_STATES.settings_menu, { settingsView: 'main' });
+    await this.analyticsService.track('settings_opened', {}, user.id);
+    await this.replySettingsMenu(ctx, user, options);
+  }
+
+  private async replyHelp(ctx: Context, options: MessageRenderOptions = {}): Promise<void> {
+    if (options.preferEdit) {
+      await editOrReplyHtml(ctx, telegramCopy.help.text, telegramKeyboards.navigationMenu());
+      return;
+    }
+
+    await replyHtml(ctx, telegramCopy.help.text, telegramKeyboards.mainMenu());
   }
 
   private async handleCallbackQuery(ctx: Context): Promise<void> {
@@ -199,6 +330,43 @@ export class TelegramRouter {
 
     if (!user.consentGiven && !this.isAllowedPreConsentCallback(callbackData)) {
       await this.replyPreConsentRedirect(ctx, user);
+      return;
+    }
+
+    if (callbackData === TELEGRAM_CALLBACKS.menuStats) {
+      if (!(await this.ensureProductAccess(ctx, user))) {
+        return;
+      }
+
+      await this.openStatsMenu(ctx, user, { preferEdit: true });
+      return;
+    }
+
+    if (callbackData === TELEGRAM_CALLBACKS.menuHistory) {
+      if (!(await this.ensureProductAccess(ctx, user))) {
+        return;
+      }
+
+      await this.openHistoryMenu(ctx, user, { preferEdit: true });
+      return;
+    }
+
+    if (callbackData === TELEGRAM_CALLBACKS.menuSettings) {
+      if (!(await this.ensureProductAccess(ctx, user))) {
+        return;
+      }
+
+      await this.openSettingsMenu(ctx, user, { preferEdit: true });
+      return;
+    }
+
+    if (callbackData === TELEGRAM_CALLBACKS.menuHelp) {
+      await this.replyHelp(ctx, { preferEdit: true });
+      return;
+    }
+
+    if (callbackData === TELEGRAM_CALLBACKS.menuTerms) {
+      await this.openTerms(ctx, user, { preferEdit: true });
       return;
     }
 
@@ -228,22 +396,40 @@ export class TelegramRouter {
     }
 
     if (callbackData === TELEGRAM_CALLBACKS.actionCancel) {
-      await this.checkinsFlow.cancel(user.id);
-      await this.onboardingFlow.cancel(user.id);
-
       if (state === FSM_STATES.onboarding_consent) {
-        await ctx.reply(telegramCopy.onboarding.consentDeclined, telegramKeyboards.mainMenu());
+        await this.onboardingFlow.cancel(user.id);
+        await deleteCurrentMessage(ctx);
+        await replyHtml(ctx, telegramCopy.onboarding.consentDeclined, telegramKeyboards.mainMenu());
         return;
       }
 
-      await ctx.reply(telegramCopy.common.cancelled, telegramKeyboards.mainMenu());
+      if (this.isOnboardingState(state)) {
+        await this.onboardingFlow.cancel(user.id);
+        await deleteCurrentMessage(ctx);
+        await replyHtml(ctx, telegramCopy.common.cancelledToMenu, telegramKeyboards.mainMenu());
+        return;
+      }
+
+      if (this.isCheckinState(state) || this.isEventState(state)) {
+        await this.checkinsFlow.cancel(user.id);
+        await this.returnToNavigationMenu(ctx, { preferEdit: true });
+        return;
+      }
+
+      if (state === FSM_STATES.settings_menu || this.isStatsState(state)) {
+        await this.fsmService.setIdle(user.id);
+        await this.returnToNavigationMenu(ctx, { preferEdit: true });
+        return;
+      }
+
+      await this.returnToNavigationMenu(ctx, { preferEdit: true });
       return;
     }
 
     if (callbackData === TELEGRAM_CALLBACKS.actionBack) {
       if (state === FSM_STATES.stats_metric_select) {
         await this.fsmService.setState(user.id, FSM_STATES.stats_period_select, {});
-        await ctx.reply(telegramCopy.stats.periodPrompt, telegramKeyboards.statsPeriodSelector());
+        await this.replyStatsPeriodSelector(ctx, { preferEdit: true });
         return;
       }
 
@@ -251,49 +437,57 @@ export class TelegramRouter {
         const payload = await this.getSessionPayload(user.id);
         if (payload.settingsAwaiting === 'sleep_mode') {
           await this.fsmService.setState(user.id, FSM_STATES.settings_menu, { settingsView: 'main' });
-          await this.replySettingsMenu(ctx, user);
+          await this.replySettingsMenu(ctx, user, { preferEdit: true });
+          return;
+        }
+
+        if (payload.settingsAwaiting === 'reminder_time') {
+          await this.fsmService.setState(user.id, FSM_STATES.settings_menu, { settingsView: 'main' });
+          await this.replySettingsMenu(ctx, user, { preferEdit: true });
           return;
         }
 
         if (payload.settingsView === 'daily_metrics') {
           await this.fsmService.setState(user.id, FSM_STATES.settings_menu, { settingsView: 'main' });
-          await this.replySettingsMenu(ctx, user);
+          await this.replySettingsMenu(ctx, user, { preferEdit: true });
           return;
         }
       }
 
       if (this.isEventState(state)) {
         const result = await this.eventsFlow.goBack(user);
-        await this.replyEventResult(ctx, user, result);
+        await this.replyEventResult(ctx, user, result, { preferEdit: true });
         return;
       }
 
       const result = await this.checkinsFlow.goBack(user);
-      await this.replyCheckinResult(ctx, user, result);
+      await this.replyCheckinResult(ctx, user, result, {
+        preferEdit: this.shouldEditCheckinCallbackScreen(state),
+      });
       return;
     }
 
     if (callbackData === TELEGRAM_CALLBACKS.actionSkip) {
       if (state === FSM_STATES.event_description) {
         const result = await this.eventsFlow.skipDescription(user);
-        await this.replyEventResult(ctx, user, result);
+        await this.replyEventResult(ctx, user, result, { preferEdit: true });
         return;
       }
 
       if (state === FSM_STATES.event_end_date) {
         const result = await this.eventsFlow.skipEndDate(user);
-        await this.replyEventResult(ctx, user, result);
+        await this.replyEventResult(ctx, user, result, { preferEdit: true });
         return;
       }
 
       if (state === FSM_STATES.checkin_add_event_confirm) {
         const result = await this.checkinsFlow.finalizeAfterEventSkip(user);
-        await this.replyCheckinResult(ctx, user, result);
+        await this.replyCheckinResult(ctx, user, result, { preferEdit: true });
         return;
       }
 
       const result = await this.checkinsFlow.skipCurrentStep(user);
-      await this.replyCheckinResult(ctx, user, result);
+      await this.replyCheckinResult(ctx, user, result, { preferEdit: true });
       return;
     }
     if (callbackData === TELEGRAM_CALLBACKS.consentAccept) {
@@ -303,72 +497,86 @@ export class TelegramRouter {
       }
 
       await this.onboardingFlow.acceptConsent(user);
-      await ctx.reply(telegramCopy.onboarding.consentAccepted);
-      await ctx.reply(telegramCopy.onboarding.reminderPrompt, telegramKeyboards.cancelOnly());
+      await this.replyOnboardingStep(ctx, 'ask_reminder_time', false, { preferEdit: true });
+      return;
+    }
+
+    if (callbackData === TELEGRAM_CALLBACKS.onboardingReminderLater) {
+      if (state !== FSM_STATES.onboarding_reminder_time) {
+        await ctx.reply(telegramCopy.common.actionNotAllowed);
+        return;
+      }
+
+      const result = await this.onboardingFlow.skipReminderTime(user);
+      await this.replyOnboardingStep(ctx, result.step, false, { preferEdit: true });
       return;
     }
 
     if (callbackData === TELEGRAM_CALLBACKS.onboardingStartFirstCheckin) {
       await this.onboardingFlow.finishFirstCheckinOffer(user.id);
-      await this.handleCheckinCommand(ctx);
+      const result = await this.checkinsFlow.start(user);
+      await this.fsmService.updatePayload(user.id, { showMenuAfterSave: true });
+      await this.replyCheckinResult(ctx, user, result, { preferEdit: true });
       return;
     }
 
     if (callbackData === TELEGRAM_CALLBACKS.onboardingLater) {
       await this.onboardingFlow.finishFirstCheckinOffer(user.id);
-      await ctx.reply(telegramCopy.onboarding.firstCheckinDeferred, telegramKeyboards.mainMenu());
+      await deleteCurrentMessage(ctx);
+      await replyHtml(ctx, telegramCopy.onboarding.firstCheckinDeferred, telegramKeyboards.mainMenu());
+      await this.replyNavigationMenu(ctx);
       return;
     }
 
     if (callbackData === TELEGRAM_CALLBACKS.checkinNoteAdd) {
       const result = await this.checkinsFlow.beginNoteStep(user);
-      await this.replyCheckinResult(ctx, user, result);
+      await this.replyCheckinResult(ctx, user, result, { preferEdit: true });
       return;
     }
 
     if (callbackData === TELEGRAM_CALLBACKS.checkinTagsStart) {
       const result = await this.checkinsFlow.startTagsSelection(user);
-      await this.replyCheckinResult(ctx, user, result);
+      await this.replyCheckinResult(ctx, user, result, { preferEdit: true });
       return;
     }
 
     if (callbackData === TELEGRAM_CALLBACKS.checkinTagsDone) {
       const result = await this.checkinsFlow.confirmTags(user);
-      await this.replyCheckinResult(ctx, user, result);
+      await this.replyCheckinResult(ctx, user, result, { preferEdit: true });
       return;
     }
 
     if (callbackData.startsWith(TELEGRAM_CALLBACKS.checkinTagsTogglePrefix)) {
       const tagId = callbackData.slice(TELEGRAM_CALLBACKS.checkinTagsTogglePrefix.length);
       const result = await this.checkinsFlow.toggleTagSelection(user, tagId);
-      await this.replyCheckinResult(ctx, user, result);
+      await this.replyCheckinResult(ctx, user, result, { preferEdit: true });
       return;
     }
 
     if (callbackData === TELEGRAM_CALLBACKS.checkinEventAdd) {
       const result = await this.eventsFlow.startFromCheckin(user);
-      await this.replyEventResult(ctx, user, result);
+      await this.replyEventResult(ctx, user, result, { preferEdit: true });
       return;
     }
 
     if (callbackData.startsWith(TELEGRAM_CALLBACKS.eventTypePrefix)) {
       const eventType = callbackData.slice(TELEGRAM_CALLBACKS.eventTypePrefix.length);
       const result = await this.eventsFlow.submitType(user, eventType);
-      await this.replyEventResult(ctx, user, result);
+      await this.replyEventResult(ctx, user, result, { preferEdit: true });
       return;
     }
 
     if (callbackData.startsWith(TELEGRAM_CALLBACKS.eventRepeatModePrefix)) {
       const repeatMode = callbackData.slice(TELEGRAM_CALLBACKS.eventRepeatModePrefix.length);
       const result = await this.eventsFlow.submitRepeatMode(user, repeatMode);
-      await this.replyEventResult(ctx, user, result);
+      await this.replyEventResult(ctx, user, result, { preferEdit: true });
       return;
     }
 
     if (callbackData.startsWith(TELEGRAM_CALLBACKS.eventRepeatCountPrefix)) {
       const repeatCount = callbackData.slice(TELEGRAM_CALLBACKS.eventRepeatCountPrefix.length);
       const result = await this.eventsFlow.submitRepeatCount(user, repeatCount);
-      await this.replyEventResult(ctx, user, result);
+      await this.replyEventResult(ctx, user, result, { preferEdit: true });
       return;
     }
 
@@ -386,7 +594,7 @@ export class TelegramRouter {
         return;
       }
 
-      await this.handleStatsPeriodSelection(ctx, user, periodType);
+      await this.handleStatsPeriodSelection(ctx, user, periodType, { preferEdit: true });
       return;
     }
 
@@ -403,7 +611,18 @@ export class TelegramRouter {
 
       if (!periodType) {
         await this.fsmService.setState(user.id, FSM_STATES.stats_period_select, {});
-        await ctx.reply(telegramCopy.stats.periodPrompt, telegramKeyboards.statsPeriodSelector());
+        await this.replyStatsPeriodSelector(ctx, { preferEdit: true });
+        return;
+      }
+
+      const metricOptions = await this.getStatsMetricOptions(user.id);
+
+      if (!isAvailableStatsMetricKey(statsMetricKey, metricOptions)) {
+        await this.fsmService.setState(user.id, FSM_STATES.stats_metric_select, {
+          statsPeriodType: periodType,
+        });
+        await ctx.reply(telegramCopy.stats.metricUnavailable);
+        await this.replyStatsMetricSelector(ctx, user, periodType, { preferEdit: true });
         return;
       }
 
@@ -431,13 +650,7 @@ export class TelegramRouter {
         user.id,
       );
 
-      await ctx.reply(
-        formatReminderToggleMessage(
-          updatedUser.remindersEnabled,
-          this.remindersService.isBackgroundDeliveryAvailable(),
-        ),
-      );
-      await this.replySettingsMenu(ctx, updatedUser);
+      await this.replySettingsMenu(ctx, updatedUser, { preferEdit: true });
       return;
     }
 
@@ -448,7 +661,7 @@ export class TelegramRouter {
       }
 
       await this.fsmService.setState(user.id, FSM_STATES.settings_menu, { settingsView: 'daily_metrics' });
-      await this.replyDailyMetricsMenu(ctx, user.id);
+      await this.replyDailyMetricsMenu(ctx, user.id, { preferEdit: true });
       return;
     }
 
@@ -465,18 +678,18 @@ export class TelegramRouter {
       if (payload.settingsView !== 'daily_metrics') {
         await this.fsmService.setState(user.id, FSM_STATES.settings_menu, { settingsView: 'daily_metrics' });
         await ctx.reply(telegramCopy.settings.dailyMetricsStale);
-        await this.replyDailyMetricsMenu(ctx, user.id);
+        await this.replyDailyMetricsMenu(ctx, user.id, { preferEdit: true });
         return;
       }
 
       const updatedUser = await this.updateTrackedMetricSetting(ctx, user, dailyMetricKey);
 
       if (!updatedUser) {
-        await this.replyDailyMetricsMenu(ctx, user.id);
+        await this.replyDailyMetricsMenu(ctx, user.id, { preferEdit: true });
         return;
       }
 
-      await this.replyDailyMetricsMenu(ctx, updatedUser.id);
+      await this.replyDailyMetricsMenu(ctx, updatedUser.id, { preferEdit: true });
       return;
     }
 
@@ -490,7 +703,9 @@ export class TelegramRouter {
         settingsAwaiting: 'reminder_time',
         settingsView: 'main',
       });
-      await ctx.reply(telegramCopy.settings.reminderTimePrompt, telegramKeyboards.cancelOnly());
+      await this.sendHtml(ctx, telegramCopy.settings.reminderTimePrompt, telegramKeyboards.backOnly(), {
+        preferEdit: true,
+      });
       return;
     }
 
@@ -504,7 +719,9 @@ export class TelegramRouter {
         settingsAwaiting: 'sleep_mode',
         settingsView: 'main',
       });
-      await ctx.reply(telegramCopy.settings.sleepModePrompt, telegramKeyboards.settingsSleepMode());
+      await this.sendHtml(ctx, telegramCopy.settings.sleepModePrompt, telegramKeyboards.settingsSleepMode(), {
+        preferEdit: true,
+      });
       return;
     }
 
@@ -526,8 +743,7 @@ export class TelegramRouter {
       await this.fsmService.setState(user.id, FSM_STATES.settings_menu, { settingsView: 'main' });
       await this.analyticsService.track('settings_updated', { field: 'sleepMode', value: sleepMode }, user.id);
 
-      await ctx.reply(telegramCopy.settings.sleepModeUpdated);
-      await this.replySettingsMenu(ctx, updatedUser);
+      await this.replySettingsMenu(ctx, updatedUser, { preferEdit: true });
       return;
     }
 
@@ -536,12 +752,12 @@ export class TelegramRouter {
 
       if (state === FSM_STATES.event_score) {
         const eventResult = await this.eventsFlow.submitScore(user, scoreRaw);
-        await this.replyEventResult(ctx, user, eventResult);
+        await this.replyEventResult(ctx, user, eventResult, { preferEdit: true });
         return;
       }
 
       const checkinResult = await this.checkinsFlow.submitScore(user, scoreRaw);
-      await this.replyCheckinResult(ctx, user, checkinResult);
+      await this.replyCheckinResult(ctx, user, checkinResult, { preferEdit: true });
       return;
     }
 
@@ -578,10 +794,10 @@ export class TelegramRouter {
         await this.handleReminderTimeInput(ctx, user, text);
         return;
       case FSM_STATES.onboarding_consent:
-        await ctx.reply(telegramCopy.onboarding.consentPrompt, telegramKeyboards.consent());
+        await replyHtml(ctx, telegramCopy.onboarding.consentPrompt, telegramKeyboards.consent());
         return;
       case FSM_STATES.onboarding_first_checkin:
-        await ctx.reply(telegramCopy.onboarding.firstCheckinOffer, telegramKeyboards.onboardingFirstCheckin());
+        await replyHtml(ctx, telegramCopy.onboarding.firstCheckinOffer, telegramKeyboards.onboardingFirstCheckin());
         return;
       case FSM_STATES.checkin_mood:
       case FSM_STATES.checkin_energy:
@@ -589,17 +805,17 @@ export class TelegramRouter {
       case FSM_STATES.checkin_metric_score:
       case FSM_STATES.checkin_sleep_quality: {
         const result = await this.checkinsFlow.submitScore(user, text);
-        await this.replyCheckinResult(ctx, user, result);
+        await this.replyCheckinResult(ctx, user, result, this.withFlowMessageCleanup(user.id));
         return;
       }
       case FSM_STATES.checkin_sleep_hours: {
         const result = await this.checkinsFlow.submitSleepHours(user, text);
-        await this.replyCheckinResult(ctx, user, result);
+        await this.replyCheckinResult(ctx, user, result, this.withFlowMessageCleanup(user.id));
         return;
       }
       case FSM_STATES.checkin_note: {
         const result = await this.checkinsFlow.submitNote(user, text);
-        await this.replyCheckinResult(ctx, user, result);
+        await this.replyCheckinResult(ctx, user, result, this.withFlowMessageCleanup(user.id));
         return;
       }
       case FSM_STATES.checkin_note_prompt:
@@ -622,7 +838,7 @@ export class TelegramRouter {
         await this.handleSettingsTextInput(ctx, user, text);
         return;
       case FSM_STATES.stats_period_select:
-        await ctx.reply(telegramCopy.stats.periodPrompt, telegramKeyboards.statsPeriodSelector());
+        await this.replyStatsPeriodSelector(ctx);
         return;
       case FSM_STATES.stats_metric_select:
         await this.replyStatsMetricSelector(ctx, user, await this.getStatsPeriodFromSession(user.id));
@@ -649,11 +865,12 @@ export class TelegramRouter {
     ctx: Context,
     user: User,
     periodType: SummaryPeriodType,
+    options: MessageRenderOptions = {},
   ): Promise<void> {
     await this.fsmService.setState(user.id, FSM_STATES.stats_metric_select, {
       statsPeriodType: periodType,
     });
-    await this.replyStatsMetricSelector(ctx, user, periodType);
+    await this.replyStatsMetricSelector(ctx, user, periodType, options);
   }
 
   private async sendStatsCharts(ctx: Context, user: User, payload: PeriodStatsPayload): Promise<void> {
@@ -805,7 +1022,7 @@ export class TelegramRouter {
     }
 
     if (!isValidTimeFormat(text)) {
-      await ctx.reply(telegramCopy.validation.invalidTime, telegramKeyboards.cancelOnly());
+      await ctx.reply(telegramCopy.validation.invalidTime, telegramKeyboards.backOnly());
       return;
     }
 
@@ -834,92 +1051,117 @@ export class TelegramRouter {
     text: string,
   ): Promise<void> {
     if (state === FSM_STATES.event_type) {
-      await this.replyEventPromptByState(ctx, user, state);
+      await this.replyEventPromptByState(ctx, user, state, undefined, this.withFlowMessageCleanup(user.id));
       return;
     }
 
     if (state === FSM_STATES.event_title) {
       const result = await this.eventsFlow.submitTitle(user, text);
-      await this.replyEventResult(ctx, user, result);
+      await this.replyEventResult(ctx, user, result, this.withFlowMessageCleanup(user.id));
       return;
     }
 
     if (state === FSM_STATES.event_score) {
       const result = await this.eventsFlow.submitScore(user, text);
-      await this.replyEventResult(ctx, user, result);
+      await this.replyEventResult(ctx, user, result, this.withFlowMessageCleanup(user.id));
       return;
     }
 
     if (state === FSM_STATES.event_end_date) {
       const result = await this.eventsFlow.submitEndDate(user, text);
-      await this.replyEventResult(ctx, user, result);
+      await this.replyEventResult(ctx, user, result, this.withFlowMessageCleanup(user.id));
       return;
     }
 
     if (state === FSM_STATES.event_repeat_mode) {
       const result = await this.eventsFlow.submitRepeatMode(user, text);
-      await this.replyEventResult(ctx, user, result);
+      await this.replyEventResult(ctx, user, result, this.withFlowMessageCleanup(user.id));
       return;
     }
 
     if (state === FSM_STATES.event_repeat_count) {
       const result = await this.eventsFlow.submitRepeatCount(user, text);
-      await this.replyEventResult(ctx, user, result);
+      await this.replyEventResult(ctx, user, result, this.withFlowMessageCleanup(user.id));
       return;
     }
 
     const result = await this.eventsFlow.submitDescription(user, text);
-    await this.replyEventResult(ctx, user, result);
+    await this.replyEventResult(ctx, user, result, this.withFlowMessageCleanup(user.id));
   }
 
   private async handleReminderTimeInput(ctx: Context, user: User, reminderTime: string): Promise<void> {
     const result = await this.onboardingFlow.submitReminderTime(user, reminderTime);
 
     if (result.step === 'invalid_reminder_time') {
-      await ctx.reply(telegramCopy.validation.invalidTime, telegramKeyboards.cancelOnly());
+      await ctx.reply(telegramCopy.validation.invalidTime, telegramKeyboards.onboardingReminderTime());
       return;
     }
 
-    await ctx.reply(telegramCopy.onboarding.reminderSaved);
+    await replyHtml(ctx, telegramCopy.onboarding.reminderSaved);
     await this.replyOnboardingStep(ctx, result.step, false);
   }
 
   private async replyOnboardingStep(
     ctx: Context,
-    step: 'ask_consent' | 'ask_reminder_time' | 'first_checkin_offer' | 'already_ready',
+    step: OnboardingStepType,
     includeIntro: boolean,
+    options: MessageRenderOptions = {},
   ): Promise<void> {
     if (step === 'already_ready') {
-      await ctx.reply(telegramCopy.startup.alreadyReady, telegramKeyboards.mainMenu());
+      await this.sendHtml(ctx, telegramCopy.startup.alreadyReady, telegramKeyboards.navigationMenu(), options);
       return;
     }
 
     if (step === 'ask_consent') {
-      if (includeIntro) {
-        await ctx.reply(telegramCopy.onboarding.intro);
-        await ctx.reply(telegramCopy.onboarding.disclaimer);
-      }
+      const text = includeIntro
+        ? [
+            telegramCopy.onboarding.intro,
+            '',
+            telegramCopy.onboarding.disclaimer,
+            '',
+            telegramCopy.onboarding.consentPrompt,
+          ].join('\n')
+        : telegramCopy.onboarding.consentPrompt;
 
-      await ctx.reply(telegramCopy.onboarding.consentPrompt, telegramKeyboards.consent());
+      await this.sendHtml(ctx, text, telegramKeyboards.consent(), options);
       return;
     }
 
     if (step === 'ask_reminder_time') {
-      await ctx.reply(telegramCopy.onboarding.reminderPrompt, telegramKeyboards.cancelOnly());
+      await this.sendHtml(ctx, telegramCopy.onboarding.reminderPrompt, telegramKeyboards.onboardingReminderTime(), options);
       return;
     }
 
-    await ctx.reply(telegramCopy.onboarding.completed);
-    await ctx.reply(telegramCopy.onboarding.firstCheckinOffer, telegramKeyboards.onboardingFirstCheckin());
+    if (step === 'invalid_reminder_time') {
+      await ctx.reply(telegramCopy.validation.invalidTime, telegramKeyboards.onboardingReminderTime());
+      return;
+    }
+
+    await this.sendHtml(ctx, telegramCopy.onboarding.firstCheckinOffer, telegramKeyboards.onboardingFirstCheckin(), options);
   }
 
-  private async replyCheckinResult(ctx: Context, user: User, result: CheckinFlowResult): Promise<void> {
+  private async replyCheckinResult(
+    ctx: Context,
+    user: User,
+    result: CheckinFlowResult,
+    options: MessageRenderOptions = {},
+  ): Promise<void> {
     if (result.status === 'next' && result.nextState) {
-      await this.replyCheckinPromptByState(ctx, user, result.nextState, result.selectedTagIds);
+      await this.replyCheckinPromptByState(ctx, user, result.nextState, result.selectedTagIds, options);
       return;
     }
 
     if (result.status === 'saved' && result.entryPayload) {
+      if (options.cleanupFlowMessages) {
+        await this.cleanupTrackedFlowMessages(ctx, user.id);
+      } else if (options.preferEdit) {
+        const deleted = await deleteCurrentMessage(ctx);
+
+        if (!deleted) {
+          await ctx.editMessageReplyMarkup(undefined).catch(() => undefined);
+        }
+      }
+
       const confirmation: CheckinConfirmationData = {
         moodScore: result.entryPayload.moodScore,
         energyScore: result.entryPayload.energyScore,
@@ -933,7 +1175,10 @@ export class TelegramRouter {
         eventAdded: result.eventAdded,
       };
 
-      await ctx.reply(formatCheckinConfirmation(confirmation), telegramKeyboards.mainMenu());
+      await replyHtml(ctx, formatCheckinConfirmation(confirmation), telegramKeyboards.mainMenu());
+      if (result.showMenuAfterSave) {
+        await this.replyNavigationMenu(ctx);
+      }
       return;
     }
 
@@ -986,17 +1231,33 @@ export class TelegramRouter {
     await ctx.reply(telegramCopy.common.actionNotAllowed);
   }
 
-  private async replyEventResult(ctx: Context, user: User, result: EventFlowResult): Promise<void> {
+  private async replyEventResult(
+    ctx: Context,
+    user: User,
+    result: EventFlowResult,
+    options: MessageRenderOptions = {},
+  ): Promise<void> {
     if (result.status === 'next' && result.nextState) {
-      await this.replyEventPromptByState(ctx, user, result.nextState, result.source);
+      await this.replyEventPromptByState(ctx, user, result.nextState, result.source, options);
       return;
     }
 
     if (result.status === 'created') {
+      if (options.cleanupFlowMessages) {
+        await this.cleanupTrackedFlowMessages(ctx, user.id);
+      } else if (options.preferEdit) {
+        const deleted = await deleteCurrentMessage(ctx);
+
+        if (!deleted) {
+          await ctx.editMessageReplyMarkup(undefined).catch(() => undefined);
+        }
+      }
+
       if (result.source === 'checkin' && result.checkinPayload) {
         const checkinPayload = result.checkinPayload;
 
-        await ctx.reply(
+        await replyHtml(
+          ctx,
           formatCheckinConfirmation({
             moodScore: checkinPayload.moodScore,
             energyScore: checkinPayload.energyScore,
@@ -1006,15 +1267,18 @@ export class TelegramRouter {
             extraMetricScores: this.buildPayloadExtraMetricScores(checkinPayload),
             updated: checkinPayload.isUpdate ?? false,
             noteAdded: !!checkinPayload.noteText,
-            tagsCount: checkinPayload.selectedTagIds?.length ?? 0,
+            tagsCount: this.getFinalizedTagIds(checkinPayload).length,
             eventAdded: true,
           }),
           telegramKeyboards.mainMenu(),
         );
+        if (checkinPayload.showMenuAfterSave) {
+          await this.replyNavigationMenu(ctx);
+        }
         return;
       }
 
-      await ctx.reply(formatStandaloneEventSaved(result.createdEventsCount ?? 1), telegramKeyboards.mainMenu());
+      await replyHtml(ctx, formatStandaloneEventSaved(result.createdEventsCount ?? 1), telegramKeyboards.mainMenu());
       return;
     }
 
@@ -1063,37 +1327,48 @@ export class TelegramRouter {
     user: User,
     state: FsmState,
     selectedTagIds: string[] = [],
+    options: MessageRenderOptions = {},
   ): Promise<void> {
+    const promptOptions = this.withFlowPromptTracking(user.id, options);
+
     switch (state) {
       case FSM_STATES.checkin_mood:
-        await ctx.reply(getCheckinPrompt(FSM_STATES.checkin_mood, user), telegramKeyboards.scorePicker());
+        await this.sendHtml(ctx, getCheckinPrompt(FSM_STATES.checkin_mood, user), telegramKeyboards.scorePicker(), promptOptions);
         return;
       case FSM_STATES.checkin_energy:
-        await ctx.reply(
+        await this.sendHtml(
+          ctx,
           getCheckinPrompt(FSM_STATES.checkin_energy, user),
           telegramKeyboards.scorePicker({ back: this.hasPreviousCoreCheckinStep(user, FSM_STATES.checkin_energy) }),
+          promptOptions,
         );
         return;
       case FSM_STATES.checkin_stress:
-        await ctx.reply(
+        await this.sendHtml(
+          ctx,
           getCheckinPrompt(FSM_STATES.checkin_stress, user),
           telegramKeyboards.scorePicker({ back: this.hasPreviousCoreCheckinStep(user, FSM_STATES.checkin_stress) }),
+          promptOptions,
         );
         return;
       case FSM_STATES.checkin_sleep_hours:
-        await ctx.reply(
+        await this.sendHtml(
+          ctx,
           getCheckinPrompt(FSM_STATES.checkin_sleep_hours, user),
           telegramKeyboards.sleepHoursActions({
             back: this.hasPreviousCoreCheckinStep(user, FSM_STATES.checkin_sleep_hours),
           }),
+          promptOptions,
         );
         return;
       case FSM_STATES.checkin_sleep_quality:
-        await ctx.reply(
+        await this.sendHtml(
+          ctx,
           getCheckinPrompt(FSM_STATES.checkin_sleep_quality, user),
           telegramKeyboards.sleepQualityActions({
             back: this.hasPreviousCoreCheckinStep(user, FSM_STATES.checkin_sleep_quality),
           }),
+          promptOptions,
         );
         return;
       case FSM_STATES.checkin_metric_score: {
@@ -1111,20 +1386,22 @@ export class TelegramRouter {
         const totalSteps = coreStepsCount + extraMetricKeys.length;
         const hasBack = coreStepsCount > 0 || metricIndex > 0;
 
-        await ctx.reply(
+        await this.sendHtml(
+          ctx,
           getExtraMetricCheckinPrompt(getDailyMetricLabel(activeMetricKey), coreStepsCount + metricIndex + 1, totalSteps),
           telegramKeyboards.scorePicker({ back: hasBack }),
+          promptOptions,
         );
         return;
       }
       case FSM_STATES.checkin_note_prompt:
-        await ctx.reply(telegramCopy.checkin.notePrompt, telegramKeyboards.checkinNotePrompt());
+        await this.sendHtml(ctx, telegramCopy.checkin.notePrompt, telegramKeyboards.checkinNotePrompt(), promptOptions);
         return;
       case FSM_STATES.checkin_note:
-        await ctx.reply(telegramCopy.checkin.noteInputPrompt, telegramKeyboards.eventTitleActions({ back: true }));
+        await this.sendHtml(ctx, telegramCopy.checkin.noteInputPrompt, telegramKeyboards.eventTitleActions({ back: true }), promptOptions);
         return;
       case FSM_STATES.checkin_tags_prompt:
-        await ctx.reply(telegramCopy.checkin.tagsPrompt, telegramKeyboards.checkinTagsPrompt());
+        await this.sendHtml(ctx, telegramCopy.checkin.tagsPrompt, telegramKeyboards.checkinTagsPrompt(), promptOptions);
         return;
       case FSM_STATES.checkin_tags: {
         const tags = await this.tagsService.getActiveTags();
@@ -1139,14 +1416,16 @@ export class TelegramRouter {
         const effectiveSelected =
           selectedTagIds.length > 0 ? selectedTagIds : await this.getSelectedTagIdsFromSession(user.id);
 
-        await ctx.reply(
-          telegramCopy.checkin.tagsSelectionPrompt,
+        await this.sendHtml(
+          ctx,
+          formatCheckinTagsSelectionPrompt(effectiveSelected.length),
           telegramKeyboards.checkinTagsSelection(tags, effectiveSelected),
+          promptOptions,
         );
         return;
       }
       case FSM_STATES.checkin_add_event_confirm:
-        await ctx.reply(telegramCopy.checkin.addEventPrompt, telegramKeyboards.checkinAddEventPrompt());
+        await this.sendHtml(ctx, telegramCopy.checkin.addEventPrompt, telegramKeyboards.checkinAddEventPrompt(), promptOptions);
         return;
       default:
         await ctx.reply(telegramCopy.checkin.repeatedStepPrompt, telegramKeyboards.mainMenu());
@@ -1158,50 +1437,63 @@ export class TelegramRouter {
     user: User,
     state: FsmState,
     source?: 'standalone' | 'checkin',
+    options: MessageRenderOptions = {},
   ): Promise<void> {
     const isFromCheckin = source === 'checkin';
+    const promptOptions = this.withFlowPromptTracking(user.id, options);
 
     switch (state) {
       case FSM_STATES.event_type:
-        await ctx.reply(telegramCopy.event.typePrompt, telegramKeyboards.eventTypePicker({ back: isFromCheckin }));
+        await this.sendHtml(ctx, telegramCopy.event.typePrompt, telegramKeyboards.eventTypePicker({ back: isFromCheckin }), promptOptions);
         return;
       case FSM_STATES.event_title:
-        await ctx.reply(telegramCopy.event.titlePrompt, telegramKeyboards.eventTitleActions({ back: true }));
+        await this.sendHtml(ctx, telegramCopy.event.titlePrompt, telegramKeyboards.eventTitleActions({ back: true }), promptOptions);
         return;
       case FSM_STATES.event_score:
-        await ctx.reply(telegramCopy.event.scorePrompt, telegramKeyboards.scorePicker({ back: true }));
+        await this.sendHtml(ctx, telegramCopy.event.scorePrompt, telegramKeyboards.scorePicker({ back: true }), promptOptions);
         return;
       case FSM_STATES.event_description:
-        await ctx.reply(
+        await this.sendHtml(
+          ctx,
           telegramCopy.event.descriptionPrompt,
           telegramKeyboards.eventDescriptionActions({ back: true }),
+          promptOptions,
         );
         return;
       case FSM_STATES.event_end_date:
-        await ctx.reply(
+        await this.sendHtml(
+          ctx,
           telegramCopy.event.endDatePrompt,
           telegramKeyboards.eventEndDateActions({ back: true }),
+          promptOptions,
         );
         return;
       case FSM_STATES.event_repeat_mode:
       case FSM_STATES.event_repeat_count:
-        await ctx.reply(
+        await this.sendHtml(
+          ctx,
           telegramCopy.event.endDatePrompt,
           telegramKeyboards.eventEndDateActions({ back: true }),
+          promptOptions,
         );
         return;
       case FSM_STATES.checkin_add_event_confirm:
-        await this.replyCheckinPromptByState(ctx, user, FSM_STATES.checkin_add_event_confirm);
+        await this.replyCheckinPromptByState(ctx, user, FSM_STATES.checkin_add_event_confirm, [], promptOptions);
         return;
       default:
         await ctx.reply(telegramCopy.common.actionNotAllowed, telegramKeyboards.mainMenu());
     }
   }
 
-  private async replySettingsMenu(ctx: Context, user: User): Promise<void> {
+  private async replySettingsMenu(
+    ctx: Context,
+    user: User,
+    options: MessageRenderOptions = {},
+  ): Promise<void> {
     const trackedMetricsSummary = this.buildTrackedMetricsSummary(await this.usersService.getTrackedMetrics(user.id));
 
-    await ctx.reply(
+    await this.sendHtml(
+      ctx,
       formatSettingsText({
         remindersEnabled: user.remindersEnabled,
         reminderTime: user.reminderTime,
@@ -1216,36 +1508,46 @@ export class TelegramRouter {
       telegramKeyboards.settingsMenu({
         remindersEnabled: user.remindersEnabled,
       }),
+      options,
     );
+  }
+
+  private async replyStatsPeriodSelector(ctx: Context, options: MessageRenderOptions = {}): Promise<void> {
+    await this.sendHtml(ctx, telegramCopy.stats.periodPrompt, telegramKeyboards.statsPeriodSelector(), options);
   }
 
   private async replyStatsMetricSelector(
     ctx: Context,
     user: User,
     periodType: SummaryPeriodType | null,
+    options: MessageRenderOptions = {},
   ): Promise<void> {
     if (!periodType) {
       await this.fsmService.setState(user.id, FSM_STATES.stats_period_select, {});
-      await ctx.reply(telegramCopy.stats.periodPrompt, telegramKeyboards.statsPeriodSelector());
+      await this.replyStatsPeriodSelector(ctx, options);
       return;
     }
 
-    const enabledMetrics = await this.usersService.getEnabledCheckinMetrics(user.id);
-    const metricOptions = enabledMetrics
-      .filter((metric) => metric.inputType === 'score' || metric.key === 'sleep')
-      .sort((left, right) => left.sortOrder - right.sortOrder || left.label.localeCompare(right.label))
-      .map((metric) => ({
-        key: metric.key,
-        label: metric.label,
-      }));
+    const metricOptions = await this.getStatsMetricOptions(user.id);
 
-    await ctx.reply(
+    await this.sendHtml(
+      ctx,
       formatStatsMetricPrompt(periodType),
       telegramKeyboards.statsMetricSelector(metricOptions),
+      options,
     );
   }
 
-  private async replyDailyMetricsMenu(ctx: Context, userId: string): Promise<void> {
+  private async getStatsMetricOptions(userId: string): Promise<StatsMetricOption[]> {
+    const enabledMetrics = await this.usersService.getEnabledCheckinMetrics(userId);
+    return buildStatsMetricOptions(enabledMetrics);
+  }
+
+  private async replyDailyMetricsMenu(
+    ctx: Context,
+    userId: string,
+    options: MessageRenderOptions = {},
+  ): Promise<void> {
     const metrics = await this.usersService.getTrackedMetrics(userId);
     const metricOptions: SettingsMetricOptionData[] = metrics.map((metric) => ({
       key: metric.key,
@@ -1253,9 +1555,11 @@ export class TelegramRouter {
       enabled: metric.enabled,
     }));
 
-    await ctx.reply(
+    await this.sendHtml(
+      ctx,
       formatDailyMetricsSettingsText(metricOptions),
       telegramKeyboards.settingsDailyMetrics(metricOptions),
+      options,
     );
   }
 
@@ -1264,6 +1568,7 @@ export class TelegramRouter {
     userId: string,
     cursor?: string,
     mode: 'initial' | 'more' = 'initial',
+    options: MessageRenderOptions = {},
   ): Promise<void> {
     const page = await this.checkinsService.getRecentEntriesPage(userId, HISTORY_PAGE_SIZE, cursor);
 
@@ -1272,12 +1577,17 @@ export class TelegramRouter {
         await ctx.editMessageReplyMarkup(undefined).catch(() => undefined);
       }
 
-      await ctx.reply(telegramCopy.history.stale, telegramKeyboards.mainMenu());
+      await replyHtml(ctx, telegramCopy.history.stale, telegramKeyboards.mainMenu());
       return;
     }
 
     if (page.entries.length === 0) {
-      await ctx.reply(telegramCopy.history.empty, telegramKeyboards.mainMenu());
+      await this.sendHtml(
+        ctx,
+        telegramCopy.history.empty,
+        options.preferEdit ? undefined : telegramKeyboards.mainMenu(),
+        options,
+      );
       return;
     }
 
@@ -1294,11 +1604,11 @@ export class TelegramRouter {
     );
 
     if (mode === 'more') {
-      await ctx.editMessageText(text, keyboard);
+      await editOrReplyHtml(ctx, text, keyboard);
       return;
     }
 
-    await ctx.reply(text, keyboard ?? telegramKeyboards.mainMenu());
+    await this.sendHtml(ctx, text, keyboard ?? telegramKeyboards.mainMenu(), options);
   }
 
   private async handleHistoryMoreCallback(ctx: Context, userId: string, cursor: string): Promise<void> {
@@ -1315,7 +1625,7 @@ export class TelegramRouter {
         cursor,
       }));
       await ctx.editMessageReplyMarkup(undefined).catch(() => undefined);
-      await ctx.reply(telegramCopy.history.stale, telegramKeyboards.mainMenu());
+      await replyHtml(ctx, telegramCopy.history.stale, telegramKeyboards.mainMenu());
     }
   }
 
@@ -1329,11 +1639,12 @@ export class TelegramRouter {
 
     if (!detail) {
       await ctx.editMessageReplyMarkup(undefined).catch(() => undefined);
-      await ctx.reply(telegramCopy.history.stale, telegramKeyboards.mainMenu());
+      await replyHtml(ctx, telegramCopy.history.stale, telegramKeyboards.mainMenu());
       return;
     }
 
-    await ctx.editMessageText(
+    await editOrReplyHtml(
+      ctx,
       formatHistoryEntryDetail(detail),
       telegramKeyboards.historyDetail(pageCursorToken),
     );
@@ -1359,7 +1670,7 @@ export class TelegramRouter {
         pageCursorToken,
       }));
       await ctx.editMessageReplyMarkup(undefined).catch(() => undefined);
-      await ctx.reply(telegramCopy.history.stale, telegramKeyboards.mainMenu());
+      await replyHtml(ctx, telegramCopy.history.stale, telegramKeyboards.mainMenu());
     }
   }
 
@@ -1370,7 +1681,7 @@ export class TelegramRouter {
   ): Promise<void> {
     try {
       const cursor = this.decodeHistoryPageCursor(pageCursorToken);
-      await this.replyHistoryPage(ctx, userId, cursor, cursor ? 'more' : 'initial');
+      await this.replyHistoryPage(ctx, userId, cursor, cursor ? 'more' : 'initial', { preferEdit: true });
     } catch (error) {
       if (!this.isStaleHistoryEditError(error)) {
         throw error;
@@ -1409,12 +1720,12 @@ export class TelegramRouter {
     const onboarding = await this.onboardingFlow.startOrResume(user, includeIntro);
 
     if (onboarding.step === 'already_ready') {
-      await ctx.reply(telegramCopy.startup.alreadyReady, telegramKeyboards.mainMenu());
+      await this.replyNavigationMenu(ctx, telegramCopy.startup.alreadyReady);
       return;
     }
 
     if (onboarding.step === 'invalid_reminder_time') {
-      await ctx.reply(telegramCopy.validation.invalidTime, telegramKeyboards.cancelOnly());
+      await ctx.reply(telegramCopy.validation.invalidTime, telegramKeyboards.onboardingReminderTime());
       return;
     }
 
@@ -1434,13 +1745,23 @@ export class TelegramRouter {
     }
 
     const payload = session.payloadJson as CheckinDraftPayload;
-    const selectedTagIds = payload.selectedTagIds;
+    const selectedTagIds = Array.isArray(payload.selectedTagIds) ? payload.selectedTagIds : payload.confirmedTagIds;
 
     if (!Array.isArray(selectedTagIds)) {
       return [];
     }
 
     return selectedTagIds.filter((item): item is string => typeof item === 'string');
+  }
+
+  private getFinalizedTagIds(payload: CheckinDraftPayload): string[] {
+    const tagIds = Array.isArray(payload.confirmedTagIds) ? payload.confirmedTagIds : payload.selectedTagIds;
+
+    if (!Array.isArray(tagIds)) {
+      return [];
+    }
+
+    return [...new Set(tagIds.filter((item): item is string => typeof item === 'string'))];
   }
 
   private isEventState(state: FsmState): boolean {
@@ -1453,6 +1774,38 @@ export class TelegramRouter {
       state === FSM_STATES.event_repeat_mode ||
       state === FSM_STATES.event_repeat_count
     );
+  }
+
+  private isCheckinState(state: FsmState): boolean {
+    return (
+      state === FSM_STATES.checkin_mood ||
+      state === FSM_STATES.checkin_energy ||
+      state === FSM_STATES.checkin_stress ||
+      state === FSM_STATES.checkin_metric_score ||
+      state === FSM_STATES.checkin_sleep_hours ||
+      state === FSM_STATES.checkin_sleep_quality ||
+      state === FSM_STATES.checkin_note_prompt ||
+      state === FSM_STATES.checkin_note ||
+      state === FSM_STATES.checkin_tags_prompt ||
+      state === FSM_STATES.checkin_tags ||
+      state === FSM_STATES.checkin_add_event_confirm
+    );
+  }
+
+  private isOnboardingState(state: FsmState): boolean {
+    return (
+      state === FSM_STATES.onboarding_consent ||
+      state === FSM_STATES.onboarding_reminder_time ||
+      state === FSM_STATES.onboarding_first_checkin
+    );
+  }
+
+  private isStatsState(state: FsmState): boolean {
+    return state === FSM_STATES.stats_period_select || state === FSM_STATES.stats_metric_select;
+  }
+
+  private shouldEditCheckinCallbackScreen(state: FsmState): boolean {
+    return this.isCheckinState(state);
   }
 
   private hasPreviousCoreCheckinStep(user: User, state: FsmState): boolean {
@@ -1519,7 +1872,6 @@ export class TelegramRouter {
       const updatedUser = await this.usersService.setTrackedMetric(user.id, metricKey, !currentMetric.enabled);
 
       await this.analyticsService.track('settings_updated', { field: metricKey, value: !currentMetric.enabled }, user.id);
-      await ctx.reply(telegramCopy.settings.dailyTrackingUpdated);
       return updatedUser;
     } catch (error) {
       if (!(error instanceof Error) || error.message !== 'INVALID_DAILY_TRACKING_CONFIGURATION') {
@@ -1698,7 +2050,12 @@ export class TelegramRouter {
   }
 
   private isAllowedPreConsentCallback(callbackData: string): boolean {
-    return callbackData === TELEGRAM_CALLBACKS.consentAccept || callbackData === TELEGRAM_CALLBACKS.actionCancel;
+    return (
+      callbackData === TELEGRAM_CALLBACKS.consentAccept ||
+      callbackData === TELEGRAM_CALLBACKS.actionCancel ||
+      callbackData === TELEGRAM_CALLBACKS.menuTerms ||
+      callbackData === TELEGRAM_CALLBACKS.menuHelp
+    );
   }
 
   private resolveCallbackLogKey(callbackData: string | null): string | undefined {

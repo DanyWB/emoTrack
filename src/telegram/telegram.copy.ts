@@ -44,14 +44,15 @@ export const STATS_METRIC_LABELS = {
 } as const;
 
 export const TELEGRAM_COMMANDS = [
-  { command: 'start', description: 'Старт и вход в бота' },
-  { command: 'help', description: 'Краткая помощь' },
-  { command: 'terms', description: 'Пользовательское соглашение' },
-  { command: 'checkin', description: 'Отметить состояние' },
-  { command: 'event', description: 'Добавить событие' },
-  { command: 'history', description: 'Последние записи' },
-  { command: 'stats', description: 'Сводка и графики' },
-  { command: 'settings', description: 'Настройки' },
+  { command: 'start', description: '👋 Старт и вход в бота' },
+  { command: 'menu', description: '🧭 Меню навигации' },
+  { command: 'help', description: '❔ Краткая помощь' },
+  { command: 'terms', description: '📄 Пользовательское соглашение' },
+  { command: 'checkin', description: '🌤 Отметить состояние' },
+  { command: 'event', description: '🗂 Добавить событие' },
+  { command: 'history', description: '📚 Последние записи' },
+  { command: 'stats', description: '📊 Сводка и графики' },
+  { command: 'settings', description: '⚙️ Настройки' },
 ] as const;
 
 export const DAILY_TRACKING_LABELS = {
@@ -82,12 +83,15 @@ export const telegramCopy = {
   buttons: {
     consentAccept: '✅ Согласен',
     cancel: 'Отмена',
+    toMenu: 'В меню',
     back: 'Назад',
+    next: 'Далее',
     historyOpen: 'Открыть',
     historyBackToList: 'К списку',
     skip: 'Пропустить',
     firstCheckinStart: 'Начать check-in',
     later: 'Позже',
+    reminderLater: 'Настрою позже',
     addNote: 'Добавить заметку',
     chooseTags: 'Выбрать теги',
     tagsDone: 'Готово',
@@ -112,9 +116,14 @@ export const telegramCopy = {
     sleepModeHours: 'Только часы',
     sleepModeQuality: 'Только качество',
     sleepModeBoth: 'Часы и качество',
+    menuStats: '📊 Статистика',
+    menuHistory: '📚 История',
+    menuSettings: '⚙️ Настройки',
+    menuHelp: '❔ Помощь',
+    menuTerms: '📄 Соглашение',
   },
   startup: {
-    alreadyReady: '👋 Профиль уже настроен. Можно отметить состояние или открыть нужный раздел.',
+    alreadyReady: '<b>👋 Ты уже в emoTrack</b>\n━━━━━━━━━━━━\nОткрываю меню. Выбери нужный раздел ниже.',
     unknownInput: 'Не понял сообщение. Выбери действие из меню или используй команду.',
   },
   placeholders: {
@@ -122,23 +131,64 @@ export const telegramCopy = {
   },
   common: {
     cancelled: 'Действие отменено.',
+    cancelledToMenu: '<b>🧭 Действие остановлено</b>\n━━━━━━━━━━━━\nВернул тебя в меню. Можно выбрать следующий раздел ниже.',
     backUnavailable: 'Назад на этом шаге недоступно.',
     actionNotAllowed: 'Это действие сейчас недоступно. Продолжим текущий шаг.',
     updated: 'Сохранено.',
     unexpectedError: 'Что-то пошло не так. Попробуй еще раз.',
   },
   onboarding: {
-    intro: '👋 Привет! emoTrack помогает замечать, как меняется состояние по дням.',
-    disclaimer: '📝 Это инструмент самонаблюдения. Он не заменяет специалиста и не ставит диагнозы.',
+    intro: [
+      '<b>👋 Привет! Это emoTrack</b>',
+      '━━━━━━━━━━━━',
+      'Я помогу быстро отмечать состояние, сон и события дня, а потом показывать историю, статистику и графики.',
+      '',
+      '<b>Как здесь устроены записи:</b>',
+      '• <b>check-in</b> — короткая отметка состояния за день',
+      '• <b>заметка</b> — свободный контекст к check-in, например: <i>«плохо спал, много созвонов, вечером стало легче»</i>',
+      '• <b>событие</b> — отдельный факт дня с категорией и оценкой, например работа, спорт, сон или встреча',
+      '',
+      '<b>Первый маршрут займет около минуты:</b>',
+      '• примем соглашение',
+      '• предложу ежедневное напоминание',
+      '• сразу сможешь отметить состояние за сегодня',
+    ].join('\n'),
+    disclaimer: '<i>Это инструмент самонаблюдения. Он не заменяет специалиста и не ставит диагнозы.</i>',
     consentPrompt:
-      'Чтобы пользоваться ботом, нужно принять пользовательское соглашение. Перед согласием можно открыть /terms.\n\nГотов продолжить?',
-    consentAccepted: '✅ Соглашение принято. Теперь укажи время напоминания в формате HH:mm.',
+      '<b>📄 Перед стартом</b>\nЧтобы сохранять записи, нужно принять пользовательское соглашение. Перед согласием можно открыть /terms.',
+    consentAccepted: '✅ Соглашение принято.',
     consentDeclined: 'Без принятия соглашения бот не может сохранять записи.',
-    reminderPrompt: '⏰ Введи время напоминания в формате HH:mm, например 21:30.',
-    reminderSaved: '✅ Время напоминания сохранено.',
+    reminderPrompt: [
+      '<b>⏰ Ежедневное напоминание</b>',
+      '━━━━━━━━━━━━',
+      'Могу каждый день мягко напоминать про check-in.',
+      '',
+      'Отправь время в формате <b>HH:mm</b>, например <b>21:30</b>.',
+      '<i>Если не хочешь настраивать сейчас, нажми «Настрою позже».</i>',
+    ].join('\n'),
+    reminderSaved: '✅ Напоминание сохранено.',
+    reminderSkipped: 'Напоминание можно включить позже в /settings.',
     completed: '✅ Базовая настройка завершена.',
-    firstCheckinOffer: 'Хочешь сделать первый check-in прямо сейчас?',
-    firstCheckinDeferred: 'Хорошо. Когда будешь готов, запусти /checkin.',
+    firstCheckinOffer: [
+      '<b>🌤 Готово. Давай попробуем главное</b>',
+      '━━━━━━━━━━━━',
+      'Лучше всего начать с первой отметки состояния за сегодня. Это займет меньше минуты.',
+      '',
+      '<i>После оценок можно добавить заметку: что могло повлиять на состояние и что важно вспомнить позже.</i>',
+    ].join('\n'),
+    firstCheckinDeferred: [
+      '<b>🧭 Главное меню готово</b>',
+      '━━━━━━━━━━━━',
+      'Когда будешь готов, нажми <b>Отметить состояние</b> или запусти /checkin.',
+      '',
+      '<b>Что будет полезно дальше:</b>',
+      '• история покажет, как меняется состояние по дням',
+      '• статистика поможет увидеть тенденции',
+      '• заметки сохранят живой контекст дня рядом с check-in',
+      '• события помогут отдельно отметить важные факты и увидеть, как они связаны с состоянием',
+      '• напоминания можно включить или изменить в /settings',
+    ].join('\n'),
+    firstCheckinIntro: '<b>Отлично, начнем с первой отметки.</b>\nПосле нее покажу главное меню.',
     incompleteRedirect: 'Сначала завершим настройку. Продолжим с текущего шага.',
   },
   terms: {
@@ -156,27 +206,55 @@ export const telegramCopy = {
       'Чтобы пользоваться ботом, сначала нужно принять пользовательское соглашение. Открой /terms и нажми «Согласен».',
     alreadyAccepted: '✅ Соглашение уже принято.',
   },
+  menu: {
+    text: [
+      '<b>🧭 Меню emoTrack</b>',
+      '━━━━━━━━━━━━',
+      'Нижняя клавиатура оставлена для быстрых действий:',
+      '• <b>Отметить состояние</b>',
+      '• <b>Добавить событие</b>',
+      '',
+      '<i>Остальные разделы открываются кнопками ниже или slash-командами.</i>',
+    ].join('\n'),
+  },
   checkin: {
-    started: '🌤 Отметь состояние за сегодня.',
-    resumed: '↩️ Продолжим текущий check-in.',
+    started: '<b>🌤 Check-in за сегодня</b>\n━━━━━━━━━━━━\nОтметим состояние короткими шагами.',
+    resumed: '<b>↩️ Продолжим текущий check-in</b>\n━━━━━━━━━━━━\nВернемся к последнему незавершенному шагу.',
     interrupted: 'Текущий check-in сбился. Начни заново командой /checkin.',
-    notePrompt: 'Если хочешь, можно добавить заметку за день.',
-    noteInputPrompt: 'Отправь текст заметки одним сообщением.',
-    tagsPrompt: 'Если хочешь, можно отметить теги состояния.',
+    notePrompt: [
+      '<b>📝 Заметка к check-in</b>',
+      '━━━━━━━━━━━━',
+      'Заметка — это свободный контекст именно к сегодняшнему состоянию.',
+      '<i>Пример: «плохо спал, днем был перегруз, прогулка помогла».</i>',
+    ].join('\n'),
+    noteInputPrompt: [
+      '<b>📝 Текст заметки</b>',
+      '━━━━━━━━━━━━',
+      'Отправь заметку одним сообщением.',
+      '<i>Пиши коротко и по делу: что могло повлиять на оценки сегодня.</i>',
+    ].join('\n'),
+    tagsPrompt: '<b>🏷 Теги состояния</b>\n━━━━━━━━━━━━\nМожно отметить несколько тегов, чтобы потом легче читать историю.',
     tagsSelectionPrompt: 'Выбери один или несколько тегов и нажми «Готово».',
     tagsSaved: 'Теги сохранены.',
     noActiveTags: 'Сейчас нет активных тегов. Пропускаем этот шаг.',
-    addEventPrompt: 'Если хочешь, можно добавить событие за этот день.',
+    addEventPrompt: [
+      '<b>🗂 Событие дня</b>',
+      '━━━━━━━━━━━━',
+      'Событие — это отдельный факт дня с категорией и оценкой.',
+      '<i>Заметка объясняет состояние, событие фиксирует конкретный контекст: работа, спорт, встреча, сон, здоровье.</i>',
+    ].join('\n'),
     repeatedStepPrompt: 'Продолжим текущий шаг.',
   },
   event: {
-    startedStandalone: '🗂 Добавим событие.',
-    typePrompt: 'Выбери тип события.',
-    titlePrompt: 'Укажи короткое название события.',
-    scorePrompt: 'Оцени событие от 0 до 10, где 0 = ужасно, 10 = прекрасно.',
-    descriptionPrompt: 'Можно добавить описание одним сообщением или нажать «Пропустить».',
+    startedStandalone:
+      '<b>🗂 Новое событие</b>\n━━━━━━━━━━━━\nСобытие — отдельный факт дня: работа, спорт, встреча, сон или здоровье. Добавим категорию и оценку, чтобы позже видеть связь с состоянием.',
+    typePrompt: '<b>🗂 Тип события</b>\n━━━━━━━━━━━━\nВыбери категорию кнопкой ниже.',
+    titlePrompt: '<b>✍️ Название события</b>\n━━━━━━━━━━━━\nУкажи короткое название одним сообщением.',
+    scorePrompt: '<b>🔢 Оценка события</b>\n━━━━━━━━━━━━\nОцени от <b>0</b> до <b>10</b>, где 0 = ужасно, 10 = прекрасно.',
+    descriptionPrompt:
+      '<b>📝 Описание события</b>\n━━━━━━━━━━━━\nМожно добавить детали именно об этом событии или нажать «Далее».',
     endDatePrompt:
-      'Если событие длилось несколько дней, отправь дату окончания в формате YYYY-MM-DD. Для однодневного события нажми «Пропустить».',
+      '<b>📅 Длительность</b>\n━━━━━━━━━━━━\nЕсли событие длилось несколько дней, отправь дату окончания в формате YYYY-MM-DD. Для однодневного события нажми «Далее».',
     savedStandalone: 'Событие сохранено.',
   },
   history: {
@@ -187,10 +265,11 @@ export const telegramCopy = {
     stale: 'Этот список уже неактуален. Открой /history снова.',
   },
   stats: {
-    periodPrompt: '📊 Выбери период статистики.',
+    periodPrompt: '<b>📊 Статистика</b>\n━━━━━━━━━━━━\nВыбери период для сводки.',
     metricPromptPrefix: '📊 Выбери метрику для периода',
     metricPromptHint:
       'В боте доступна краткая статистика по одной метрике за раз. Расширенная аналитика появится позже в веб-панели.',
+    metricUnavailable: 'Эта метрика сейчас недоступна. Выбери метрику заново.',
     loading: '📊 Собираю сводку…',
     empty: 'Недостаточно данных для сводки. Сделай несколько отметок и попробуй снова.',
     selectedMetricLead: 'Краткая статистика по одной метрике.',
@@ -261,19 +340,26 @@ export const telegramCopy = {
   },
   help: {
     text: [
-      '🧭 emoTrack помогает отслеживать состояние, сон и события по дням.',
+      '<b>❔ Помощь emoTrack</b>',
+      '━━━━━━━━━━━━',
+      'emoTrack помогает отслеживать состояние, сон и события по дням.',
       '',
-      'Команды:',
-      '/start — запуск и возвращение в бота',
-      '/terms — пользовательское соглашение',
+      '<b>Основная навигация</b>',
+      '/menu — разделы и быстрые ссылки',
       '/checkin — отметить состояние',
       '/event — добавить событие',
+      '',
+      '<b>Разделы</b>',
       '/history — последние записи',
       '/stats — сводка и графики',
       '/settings — настройки',
-      '/help — помощь',
+      '/terms — пользовательское соглашение',
       '',
-      'Это не диагностика и не замена специалиста.',
+      '<b>Заметки и события</b>',
+      'Заметка — короткое пояснение к check-in: что могло повлиять на состояние.',
+      'Событие — отдельный факт дня с категорией и оценкой, чтобы потом искать связи.',
+      '',
+      '<i>Это не диагностика и не замена специалиста.</i>',
     ].join('\n'),
   },
   validation: {
@@ -379,31 +465,44 @@ export interface SettingsMetricOptionData {
   enabled: boolean;
 }
 
+export function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (char) => {
+    switch (char) {
+      case '&':
+        return '&amp;';
+      case '<':
+        return '&lt;';
+      case '>':
+        return '&gt;';
+      case '"':
+        return '&quot;';
+      case "'":
+        return '&#39;';
+      default:
+        return char;
+    }
+  });
+}
+
 export function formatCheckinConfirmation(data: CheckinConfirmationData): string {
-  const lines = [data.updated ? 'Готово. Запись за сегодня обновлена.' : 'Готово. Запись за сегодня сохранена.'];
+  const lines = [
+    data.updated ? '✅ <b>Запись за сегодня обновлена</b>' : '✅ <b>Запись за сегодня сохранена</b>',
+    '━━━━━━━━━━━━',
+  ];
+  const coreMetricsLine = formatCheckinCoreMetrics(data);
+  const extraMetricsLine = formatCheckinExtraMetrics(data);
+  const sleepLine = formatCheckinSleep(data);
 
-  if (typeof data.moodScore === 'number') {
-    lines.push(`Настроение: ${data.moodScore}`);
+  if (coreMetricsLine) {
+    lines.push(coreMetricsLine);
   }
 
-  if (typeof data.energyScore === 'number') {
-    lines.push(`Энергия: ${data.energyScore}`);
+  if (extraMetricsLine) {
+    lines.push(extraMetricsLine);
   }
 
-  if (typeof data.stressScore === 'number') {
-    lines.push(`Стресс: ${data.stressScore}`);
-  }
-
-  for (const metric of data.extraMetricScores ?? []) {
-    lines.push(`${metric.label}: ${metric.value}`);
-  }
-
-  if (typeof data.sleepHours === 'number' && typeof data.sleepQuality === 'number') {
-    lines.push(`Сон: ${data.sleepHours} ч, качество ${data.sleepQuality}`);
-  } else if (typeof data.sleepHours === 'number') {
-    lines.push(`Сон: ${data.sleepHours} ч`);
-  } else if (typeof data.sleepQuality === 'number') {
-    lines.push(`Качество сна: ${data.sleepQuality}`);
+  if (sleepLine) {
+    lines.push(sleepLine);
   }
 
   const extras: string[] = [];
@@ -421,10 +520,55 @@ export function formatCheckinConfirmation(data: CheckinConfirmationData): string
   }
 
   if (extras.length > 0) {
-    lines.push(`Дополнительно: ${extras.join(', ')}`);
+    lines.push(`➕ Добавлено: ${extras.join(', ')}`);
   }
 
   return lines.join('\n');
+}
+
+function formatCheckinCoreMetrics(data: CheckinConfirmationData): string | null {
+  const parts: string[] = [];
+
+  if (typeof data.moodScore === 'number') {
+    parts.push(`настроение ${data.moodScore}`);
+  }
+
+  if (typeof data.energyScore === 'number') {
+    parts.push(`энергия ${data.energyScore}`);
+  }
+
+  if (typeof data.stressScore === 'number') {
+    parts.push(`стресс ${data.stressScore}`);
+  }
+
+  return parts.length > 0 ? `🌡 Состояние: ${parts.join(', ')}` : null;
+}
+
+function formatCheckinExtraMetrics(data: CheckinConfirmationData): string | null {
+  if (!data.extraMetricScores || data.extraMetricScores.length === 0) {
+    return null;
+  }
+
+  const summary = data.extraMetricScores
+    .map((metric) => `${escapeHtml(metric.label)} ${metric.value}`)
+    .join(', ');
+  return `🧩 Доп. метрики: ${summary}`;
+}
+
+function formatCheckinSleep(data: CheckinConfirmationData): string | null {
+  if (typeof data.sleepHours === 'number' && typeof data.sleepQuality === 'number') {
+    return `😴 Сон: ${data.sleepHours} ч, качество ${data.sleepQuality}`;
+  }
+
+  if (typeof data.sleepHours === 'number') {
+    return `😴 Сон: ${data.sleepHours} ч`;
+  }
+
+  if (typeof data.sleepQuality === 'number') {
+    return `😴 Качество сна: ${data.sleepQuality}`;
+  }
+
+  return null;
 }
 
 export function getCheckinPrompt(
@@ -437,20 +581,35 @@ export function getCheckinPrompt(
 
   switch (state) {
     case 'checkin_mood':
-      return `Шаг ${stepNumber}/${totalSteps}. Оцени настроение: 0..10`;
+      return `<b>🌤 Шаг ${stepNumber}/${totalSteps} · Настроение</b>\n━━━━━━━━━━━━\nОцени <b>настроение</b>: <b>0..10</b>\n<i>0 — очень плохо, 10 — отлично.</i>`;
     case 'checkin_energy':
-      return `Шаг ${stepNumber}/${totalSteps}. Оцени энергию: 0..10`;
+      return `<b>⚡ Шаг ${stepNumber}/${totalSteps} · Энергия</b>\n━━━━━━━━━━━━\nОцени <b>энергию</b>: <b>0..10</b>\n<i>0 — нет сил, 10 — очень много энергии.</i>`;
     case 'checkin_stress':
-      return `Шаг ${stepNumber}/${totalSteps}. Оцени стресс: 0..10`;
+      return `<b>🧯 Шаг ${stepNumber}/${totalSteps} · Стресс</b>\n━━━━━━━━━━━━\nОцени <b>стресс</b>: <b>0..10</b>\n<i>0 — спокойно, 10 — очень напряженно.</i>`;
     case 'checkin_sleep_hours':
-      return `Шаг ${stepNumber}/${totalSteps}. Сколько часов спал? Можно число от 0 до 24, например 7.5`;
+      return `<b>😴 Шаг ${stepNumber}/${totalSteps} · Часы сна</b>\n━━━━━━━━━━━━\nСколько <b>часов сна</b> было?\n<i>Можно число от 0 до 24, например 7.5.</i>`;
     case 'checkin_sleep_quality':
-      return `Шаг ${stepNumber}/${totalSteps}. Оцени качество сна: 0..10`;
+      return `<b>🌙 Шаг ${stepNumber}/${totalSteps} · Качество сна</b>\n━━━━━━━━━━━━\nОцени <b>качество сна</b>: <b>0..10</b>\n<i>0 — сон совсем не восстановил, 10 — отлично восстановил.</i>`;
   }
 }
 
 export function getExtraMetricCheckinPrompt(label: string, stepNumber: number, totalSteps: number): string {
-  return `Шаг ${stepNumber}/${totalSteps}. Оцени ${label.toLowerCase()}: 0..10`;
+  const safeLabel = escapeHtml(label);
+  return `<b>🧩 Шаг ${stepNumber}/${totalSteps} · ${safeLabel}</b>\n━━━━━━━━━━━━\nОцени <b>${safeLabel.toLowerCase()}</b>: <b>0..10</b>`;
+}
+
+export function formatCheckinTagsSelectionPrompt(selectedCount: number): string {
+  const selectedLine =
+    selectedCount > 0
+      ? `Выбрано: <b>${formatTagsCount(selectedCount)}</b>`
+      : 'Выбрано: <i>пока ничего</i>';
+
+  return [
+    '<b>🏷 Теги состояния</b>',
+    '━━━━━━━━━━━━',
+    selectedLine,
+    '<i>Можно выбрать несколько тегов. Готово сохранит выбор.</i>',
+  ].join('\n');
 }
 
 function formatTagsCount(tagsCount: number): string {
@@ -471,34 +630,37 @@ function formatTagsCount(tagsCount: number): string {
 
 export function formatSettingsText(data: SettingsViewData): string {
   const lines = [
-    telegramCopy.settings.title,
+    `<b>${telegramCopy.settings.title}</b>`,
+    '━━━━━━━━━━━━',
+    `<b>${telegramCopy.settings.remindersSectionTitle}</b>`,
+    `• ${data.remindersEnabled ? telegramCopy.settings.remindersEnabled : telegramCopy.settings.remindersDisabled}`,
+    `• ${formatReminderRuntimeLine(data)}`,
+    `• ${telegramCopy.settings.reminderTimeLabel}: ${escapeHtml(data.reminderTime ?? '—')}`,
+    `• ${telegramCopy.settings.weeklyDigestLabel}: ${formatWeeklyDigestRuntimeLine(data)}`,
     '',
-    telegramCopy.settings.remindersSectionTitle,
-    `- ${data.remindersEnabled ? telegramCopy.settings.remindersEnabled : telegramCopy.settings.remindersDisabled}`,
-    `- ${formatReminderRuntimeLine(data)}`,
-    `- ${telegramCopy.settings.reminderTimeLabel}: ${data.reminderTime ?? '—'}`,
-    `- ${telegramCopy.settings.weeklyDigestLabel}: ${formatWeeklyDigestRuntimeLine(data)}`,
-    '',
-    telegramCopy.settings.checkinSectionTitle,
-    `- ${telegramCopy.settings.sleepModeLabel}: ${SLEEP_MODE_LABELS[data.sleepMode]}`,
-    `- ${telegramCopy.settings.dailyTrackingLabel}: ${formatTrackedMetricsSummary(data)}`,
+    `<b>${telegramCopy.settings.checkinSectionTitle}</b>`,
+    `• ${telegramCopy.settings.sleepModeLabel}: ${SLEEP_MODE_LABELS[data.sleepMode]}`,
+    `• ${telegramCopy.settings.dailyTrackingLabel}: ${escapeHtml(formatTrackedMetricsSummary(data))}`,
   ];
 
   return lines.join('\n');
 }
 
 export function formatDailyMetricsSettingsText(metrics: SettingsMetricOptionData[]): string {
-  const activeMetrics = metrics.filter((metric) => metric.enabled).map((metric) => metric.label.toLowerCase());
+  const activeMetrics = metrics
+    .filter((metric) => metric.enabled)
+    .map((metric) => escapeHtml(metric.label.toLowerCase()));
   const lines = [
-    telegramCopy.settings.dailyMetricsTitle,
-    telegramCopy.settings.dailyMetricsHint,
+    `<b>${telegramCopy.settings.dailyMetricsTitle}</b>`,
+    '━━━━━━━━━━━━',
+    `<i>${telegramCopy.settings.dailyMetricsHint}</i>`,
     '',
     `${telegramCopy.settings.dailyMetricsActiveLabel}: ${activeMetrics.length > 0 ? activeMetrics.join(', ') : '—'}`,
     '',
   ];
 
   for (const metric of metrics) {
-    lines.push(`• ${metric.label}: ${metric.enabled ? 'вкл' : 'выкл'}`);
+    lines.push(`• ${escapeHtml(metric.label)}: ${metric.enabled ? 'вкл' : 'выкл'}`);
   }
 
   lines.push('', telegramCopy.settings.dailyMetricsGuard);
@@ -574,7 +736,7 @@ export function formatHistoryEntries(
   }
 
   const items = entries.map((entry) => {
-    const lines = [`• ${formatHistoryDate(entry.entryDate)}`];
+    const lines = [`📅 <b>${formatHistoryDate(entry.entryDate)}</b>`];
     const coreMetricsLine = formatHistoryCoreMetrics(entry);
     const extraMetricsLine = formatHistoryExtraMetrics(entry);
 
@@ -598,23 +760,26 @@ export function formatHistoryEntries(
     return lines.join('\n');
   });
 
-  return `${options.title ?? telegramCopy.history.title}\n\n${items.join('\n\n')}`;
+  return `<b>${options.title ?? telegramCopy.history.title}</b>\n━━━━━━━━━━━━\n\n${items.join('\n\n')}`;
 }
 
 export function formatHistoryEntryDetail(entry: HistoryEntryDetailData): string {
-  const lines = [`${telegramCopy.history.detailTitlePrefix} ${formatHistoryDate(entry.entryDate)}`];
+  const lines = [
+    `<b>${telegramCopy.history.detailTitlePrefix} ${formatHistoryDate(entry.entryDate)}</b>`,
+    '━━━━━━━━━━━━',
+  ];
   const coreMetricsLine = formatHistoryCoreMetrics(entry);
   const extraMetricsLine = formatHistoryExtraMetrics(entry);
   const sleepLine = formatHistorySleep(entry);
 
   if (coreMetricsLine) {
-    lines.push('', 'Состояние', coreMetricsLine);
+    lines.push('', '<b>🌤 Состояние</b>', coreMetricsLine);
   } else if (extraMetricsLine) {
-    lines.push('', 'Состояние', extraMetricsLine);
+    lines.push('', '<b>🌤 Состояние</b>', extraMetricsLine);
   }
 
   if (sleepLine) {
-    lines.push('', 'Сон', formatHistorySleepValue(entry));
+    lines.push('', '<b>😴 Сон</b>', formatHistorySleepValue(entry));
   }
 
   if (coreMetricsLine && extraMetricsLine) {
@@ -622,31 +787,31 @@ export function formatHistoryEntryDetail(entry: HistoryEntryDetailData): string 
   }
 
   if (entry.noteText?.trim()) {
-    lines.push('', 'Заметка');
-    lines.push(entry.noteText.trim());
+    lines.push('', '<b>📝 Заметка</b>');
+    lines.push(escapeHtml(entry.noteText.trim()));
   }
 
   if (entry.tags && entry.tags.length > 0) {
-    lines.push('', 'Теги');
-    lines.push(...entry.tags.map((tag) => `- ${tag.label}`));
+    lines.push('', '<b>🏷 Теги</b>');
+    lines.push(...entry.tags.map((tag) => `• ${escapeHtml(tag.label)}`));
   }
 
   if (entry.events && entry.events.length > 0) {
-    lines.push('', 'События');
+    lines.push('', '<b>🗂 События</b>');
 
     for (const event of entry.events) {
       const eventTypeLabel = EVENT_TYPE_LABELS[event.eventType] ?? event.eventType;
       const eventRange = formatHistoryEventRange(event.eventDate, event.eventEndDate ?? null);
-      const summaryParts = [`${eventTypeLabel}: ${event.title}`, `оценка ${event.eventScore}`];
+      const summaryParts = [`${eventTypeLabel}: <b>${escapeHtml(event.title)}</b>`, `оценка ${event.eventScore}`];
 
       if (eventRange) {
         summaryParts.push(eventRange);
       }
 
-      lines.push(`- ${summaryParts.join(' · ')}`);
+      lines.push(`• ${summaryParts.join(' · ')}`);
 
       if (event.description?.trim()) {
-        lines.push(`  ${event.description.trim()}`);
+        lines.push(`  <i>${escapeHtml(event.description.trim())}</i>`);
       }
     }
   }
@@ -654,8 +819,8 @@ export function formatHistoryEntryDetail(entry: HistoryEntryDetailData): string 
   return lines.join('\n');
 }
 
-function formatMetricOrDash(value: number | null): string {
-  return typeof value === 'number' ? String(value) : '—';
+function formatMetricOrDashBold(value: number | null): string {
+  return typeof value === 'number' ? `<b>${value}</b>` : '—';
 }
 
 function formatHistoryCoreMetrics(
@@ -669,7 +834,11 @@ function formatHistoryCoreMetrics(
     return null;
   }
 
-  return `Настроение / энергия / стресс: ${formatMetricOrDash(entry.moodScore)} / ${formatMetricOrDash(entry.energyScore)} / ${formatMetricOrDash(entry.stressScore)}`;
+  return [
+    `настроение ${formatMetricOrDashBold(entry.moodScore)}`,
+    `энергия ${formatMetricOrDashBold(entry.energyScore)}`,
+    `стресс ${formatMetricOrDashBold(entry.stressScore)}`,
+  ].join(' · ');
 }
 
 function formatHistoryDate(entryDate: Date): string {
@@ -681,15 +850,15 @@ function formatHistorySleep(
   entry: Pick<HistoryEntryData, 'sleepHours' | 'sleepQuality'>,
 ): string | null {
   if (typeof entry.sleepHours === 'number' && typeof entry.sleepQuality === 'number') {
-    return `Сон: ${entry.sleepHours} ч, качество ${entry.sleepQuality}`;
+    return `😴 <b>Сон</b>: ${entry.sleepHours} ч · качество ${entry.sleepQuality}`;
   }
 
   if (typeof entry.sleepHours === 'number') {
-    return `Сон: ${entry.sleepHours} ч`;
+    return `😴 <b>Сон</b>: ${entry.sleepHours} ч`;
   }
 
   if (typeof entry.sleepQuality === 'number') {
-    return `Качество сна: ${entry.sleepQuality}`;
+    return `😴 <b>Качество сна</b>: ${entry.sleepQuality}`;
   }
 
   return null;
@@ -721,24 +890,24 @@ function formatHistoryExtraMetrics(
   }
 
   const summary = entry.extraMetricScores
-    .map((metric) => `${metric.label} ${metric.value}`)
+    .map((metric) => `${escapeHtml(metric.label)} <b>${metric.value}</b>`)
     .join(', ');
 
-  return `Доп. метрики: ${summary}`;
+  return `🧩 <b>Доп. метрики</b>: ${summary}`;
 }
 
 function formatHistoryEntrySummary(hasNote: boolean, tagsCount: number, eventsCount: number): string {
   const markers: string[] = [];
 
   if (hasNote) {
-    markers.push('Есть заметка');
+    markers.push('📝 заметка');
   }
 
   if (tagsCount > 0) {
-    markers.push(formatTagsCount(tagsCount));
+    markers.push(`🏷 ${formatTagsCount(tagsCount)}`);
   }
 
-  markers.push(formatEventsCount(eventsCount));
+  markers.push(`🗂 ${formatEventsCount(eventsCount)}`);
 
   return markers.join(' · ');
 }
@@ -824,8 +993,10 @@ export function getDailyMetricLabel(key: DailyMetricCatalogKey): string {
 
 export function formatStatsMetricPrompt(periodType: SummaryPeriodType): string {
   return [
+    '<b>📊 Метрика статистики</b>',
+    '━━━━━━━━━━━━',
     `${telegramCopy.stats.metricPromptPrefix}: ${STATS_PERIOD_LABELS[periodType]}.`,
-    telegramCopy.stats.metricPromptHint,
+    `<i>${telegramCopy.stats.metricPromptHint}</i>`,
   ].join('\n');
 }
 

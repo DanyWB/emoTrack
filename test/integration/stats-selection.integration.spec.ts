@@ -278,4 +278,37 @@ describe('Stats metric selection integration', () => {
       expect.anything(),
     );
   });
+
+  it('recovers from an unknown stats metric callback without generating a summary', async () => {
+    const user = await createReadyUser();
+    const router = createRouter();
+    await ctx.fsmService.setState(user.id, FSM_STATES.stats_metric_select, {
+      statsPeriodType: SummaryPeriodType.d7,
+    });
+
+    const telegramCtx = {
+      from: {
+        id: 8801,
+        is_bot: false,
+        first_name: 'Stats',
+      },
+      callbackQuery: {
+        data: `${TELEGRAM_CALLBACKS.statsMetricPrefix}unknown_metric`,
+      },
+      answerCbQuery: jest.fn().mockResolvedValue(undefined),
+      reply: jest.fn().mockResolvedValue(undefined),
+    };
+
+    await (router as any).handleCallbackQuery(telegramCtx);
+
+    expect(await ctx.fsmService.getState(user.id)).toBe(FSM_STATES.stats_metric_select);
+    expect(telegramCtx.reply).toHaveBeenNthCalledWith(1, telegramCopy.stats.metricUnavailable);
+    expect((telegramCtx.reply.mock.calls[1] as [string])[0]).toContain(telegramCopy.stats.metricPromptPrefix);
+    expect(
+      telegramCtx.reply.mock.calls.some(
+        ([message]: [string]) => typeof message === 'string' && message === telegramCopy.stats.loading,
+      ),
+    ).toBe(false);
+    expect(ctx.summariesRepository.summaries).toEqual([]);
+  });
 });

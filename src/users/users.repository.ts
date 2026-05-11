@@ -19,6 +19,21 @@ export class UsersRepository {
     });
   }
 
+  findUsersWithActiveReminders(): Promise<User[]> {
+    return this.prisma.user.findMany({
+      where: {
+        onboardingCompleted: true,
+        remindersEnabled: true,
+        reminderTime: {
+          not: null,
+        },
+      },
+      orderBy: {
+        createdAt: 'asc',
+      },
+    });
+  }
+
   create(data: Prisma.UserCreateInput): Promise<User> {
     return this.prisma.user.create({ data });
   }

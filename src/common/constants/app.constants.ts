@@ -5,10 +5,6 @@
 export const TELEGRAM_MAIN_MENU_BUTTONS = [
   'Отметить состояние',
   'Добавить событие',
-  'Моя статистика',
-  'История',
-  'Настройки',
-  'Помощь',
 ] as const;
 
 export const TEXT_LIMITS = {
@@ -19,8 +15,15 @@ export const TEXT_LIMITS = {
 
 export const TELEGRAM_CALLBACKS = {
   consentAccept: 'onboarding:consent:accept',
+  onboardingReminderLater: 'onboarding:reminder:later',
   onboardingStartFirstCheckin: 'onboarding:first-checkin:start',
   onboardingLater: 'onboarding:first-checkin:later',
+
+  menuStats: 'menu:stats',
+  menuHistory: 'menu:history',
+  menuSettings: 'menu:settings',
+  menuHelp: 'menu:help',
+  menuTerms: 'menu:terms',
 
   historyMorePrefix: 'history:more:',
   historyOpenPrefix: 'history:open:',

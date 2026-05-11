@@ -29,11 +29,11 @@ describe('formatHistoryEntries', () => {
     );
 
     expect(text).toContain(telegramCopy.history.moreTitle);
-    expect(text).toContain('• 12.03.2026');
-    expect(text).toContain('Настроение / энергия / стресс: 7 / 6 / 4');
-    expect(text).toContain('Сон: 7.5 ч, качество 8');
-    expect(text).toContain('Есть заметка · 2 тега · 2 события');
-    expect(text).toContain('• 11.03.2026');
-    expect(text).toContain('0 событий');
+    expect(text).toContain('📅 <b>12.03.2026</b>');
+    expect(text).toContain('настроение <b>7</b> · энергия <b>6</b> · стресс <b>4</b>');
+    expect(text).toContain('😴 <b>Сон</b>: 7.5 ч · качество 8');
+    expect(text).toContain('📝 заметка · 🏷 2 тега · 🗂 2 события');
+    expect(text).toContain('📅 <b>11.03.2026</b>');
+    expect(text).toContain('🗂 0 событий');
   });
 });

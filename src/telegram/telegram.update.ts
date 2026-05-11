@@ -6,8 +6,8 @@ import { formatErrorLogEvent, formatLogEvent, toLogErrorDetails } from '../commo
 import type { TelegramMode } from '../config/telegram.config';
 import { TELEGRAM_COMMANDS } from './telegram.copy';
 import { TelegramRouter } from './telegram.router';
-
-const TELEGRAM_BOT_TOKEN = 'TELEGRAM_BOT';
+import { TelegramRuntimeStatusService } from './telegram.runtime-status';
+import { TELEGRAM_BOT } from './telegram.tokens';
 
 @Injectable()
 export class TelegramUpdate implements OnModuleInit, OnModuleDestroy {
@@ -16,9 +16,10 @@ export class TelegramUpdate implements OnModuleInit, OnModuleDestroy {
   private mode: TelegramMode = 'polling';
 
   constructor(
-    @Inject(TELEGRAM_BOT_TOKEN) private readonly bot: Telegraf<Context>,
+    @Inject(TELEGRAM_BOT) private readonly bot: Telegraf<Context>,
     private readonly telegramRouter: TelegramRouter,
     private readonly configService: ConfigService,
+    private readonly telegramRuntimeStatus: TelegramRuntimeStatusService,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -29,10 +30,14 @@ export class TelegramUpdate implements OnModuleInit, OnModuleDestroy {
       (this.configService.get<string>('telegram.mode', { infer: true }) as TelegramMode | undefined) ??
       'polling';
     const nodeEnv = this.configService.get<string>('app.nodeEnv');
+    const skipReason = this.resolveLaunchSkipReason(token, nodeEnv);
 
-    if (!token || token.startsWith('replace_with_') || nodeEnv === 'test') {
+    this.telegramRuntimeStatus.markStarting(this.mode, !skipReason);
+
+    if (skipReason) {
+      this.telegramRuntimeStatus.markSkipped(this.mode, skipReason);
       this.logger.warn(formatLogEvent('telegram_launch_skipped', {
-        reason: !token || token.startsWith('replace_with_') ? 'token_placeholder' : 'test_environment',
+        reason: skipReason,
         mode: this.mode,
         nodeEnv,
       }));
@@ -47,25 +52,31 @@ export class TelegramUpdate implements OnModuleInit, OnModuleDestroy {
         const webhookSecret = this.configService.get<string>('telegram.webhookSecret', { infer: true });
 
         if (!webhookUrl) {
+          const error = new Error('TELEGRAM_WEBHOOK_URL is required in webhook mode.');
+          this.telegramRuntimeStatus.markFailed(this.mode, error, 'webhook_url_missing');
           this.logger.warn(formatLogEvent('telegram_webhook_url_missing', {
             mode: this.mode,
           }));
           return;
         }
 
-        await this.bot.telegram.setWebhook(webhookUrl, {
-          secret_token: webhookSecret,
-        });
+        await this.bot.telegram.setWebhook(
+          webhookUrl,
+          webhookSecret ? { secret_token: webhookSecret } : undefined,
+        );
 
         this.logger.log(`Telegram bot configured for webhook mode: ${webhookUrl}`);
+        this.telegramRuntimeStatus.markReady(this.mode);
         return;
       }
 
       await this.bot.launch();
       this.isLaunched = true;
+      this.telegramRuntimeStatus.markReady(this.mode);
       this.logger.log('Telegram bot launched in polling mode.');
     } catch (error) {
       const err = toLogErrorDetails(error);
+      this.telegramRuntimeStatus.markFailed(this.mode, error);
       this.logger.error(formatErrorLogEvent('telegram_launch_failed', error, { mode: this.mode }), err.stack);
     }
   }
@@ -86,5 +97,17 @@ export class TelegramUpdate implements OnModuleInit, OnModuleDestroy {
         commandsCount: TELEGRAM_COMMANDS.length,
       }));
     }
+  }
+
+  private resolveLaunchSkipReason(token: string | undefined, nodeEnv: string | undefined): string | null {
+    if (!token || token.startsWith('replace_with_')) {
+      return 'token_placeholder';
+    }
+
+    if (nodeEnv === 'test') {
+      return 'test_environment';
+    }
+
+    return null;
   }
 }

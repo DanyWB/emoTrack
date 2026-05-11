@@ -263,6 +263,38 @@ describe('Prisma database smoke', () => {
     });
   });
 
+  it('reads only users eligible for reminder job reconciliation', async () => {
+    const activeA = await usersRepository.update((await createTestUser('reminder-active-a')).id, {
+      remindersEnabled: true,
+      reminderTime: '21:15',
+    });
+    const disabled = await usersRepository.update((await createTestUser('reminder-disabled')).id, {
+      remindersEnabled: false,
+      reminderTime: '21:15',
+    });
+    const missingTime = await usersRepository.update((await createTestUser('reminder-missing-time')).id, {
+      remindersEnabled: true,
+      reminderTime: null,
+    });
+    const notOnboarded = await usersRepository.update((await createTestUser('reminder-not-onboarded')).id, {
+      onboardingCompleted: false,
+      remindersEnabled: true,
+      reminderTime: '21:15',
+    });
+    const activeB = await usersRepository.update((await createTestUser('reminder-active-b')).id, {
+      remindersEnabled: true,
+      reminderTime: '08:00',
+    });
+
+    const eligibleUsers = await usersRepository.findUsersWithActiveReminders();
+    const eligibleIds = eligibleUsers.map((user) => user.id);
+
+    expect(eligibleIds).toEqual(expect.arrayContaining([activeA.id, activeB.id]));
+    expect(eligibleIds).not.toContain(disabled.id);
+    expect(eligibleIds).not.toContain(missingTime.id);
+    expect(eligibleIds).not.toContain(notOnboarded.id);
+  });
+
   it('keeps event overlap reads inclusive and ignores legacy series rows', async () => {
     const user = await createTestUser('events');
     const singleDay = await eventsRepository.create({

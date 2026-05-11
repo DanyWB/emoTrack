@@ -7,6 +7,7 @@ import { PrismaService } from '../../src/database/prisma.service';
 import { RedisService } from '../../src/database/redis.service';
 import { HealthController } from '../../src/health/health.controller';
 import { HealthService } from '../../src/health/health.service';
+import { TelegramRuntimeStatusService, type TelegramRuntimeSnapshot } from '../../src/telegram/telegram.runtime-status';
 
 interface HealthTestOptions {
   redisEnabled?: boolean;
@@ -14,6 +15,7 @@ interface HealthTestOptions {
   databaseOk?: boolean;
   redisOk?: boolean;
   redisClientPresent?: boolean;
+  telegramSnapshot?: Partial<TelegramRuntimeSnapshot>;
 }
 
 async function createHealthApp(options: HealthTestOptions = {}): Promise<{
@@ -41,6 +43,16 @@ async function createHealthApp(options: HealthTestOptions = {}): Promise<{
     getClient: jest.fn().mockReturnValue(redisClientPresent ? redisClient : null),
     isEnabled: jest.fn().mockReturnValue(redisClientPresent),
   };
+  const telegramRuntimeStatus = {
+    getSnapshot: jest.fn().mockReturnValue({
+      status: 'skipped',
+      mode: 'polling',
+      required: false,
+      reason: 'token_placeholder',
+      updatedAt: '2026-03-12T10:00:00.000Z',
+      ...options.telegramSnapshot,
+    } satisfies TelegramRuntimeSnapshot),
+  };
   const configService = {
     get: jest.fn((key: string) => {
       switch (key) {
@@ -61,6 +73,7 @@ async function createHealthApp(options: HealthTestOptions = {}): Promise<{
       { provide: ConfigService, useValue: configService },
       { provide: PrismaService, useValue: prismaService },
       { provide: RedisService, useValue: redisService },
+      { provide: TelegramRuntimeStatusService, useValue: telegramRuntimeStatus },
     ],
   }).compile();
 
@@ -107,6 +120,10 @@ describe('Health integration', () => {
           checks: {
             database: { status: 'up' },
             redis: { status: 'skipped' },
+            telegram: {
+              status: 'skipped',
+              message: 'token_placeholder',
+            },
           },
         }),
       );
@@ -138,6 +155,10 @@ describe('Health integration', () => {
           checks: {
             database: { status: 'up' },
             redis: { status: 'up' },
+            telegram: {
+              status: 'skipped',
+              message: 'token_placeholder',
+            },
           },
         }),
       );
@@ -161,6 +182,36 @@ describe('Health integration', () => {
           checks: expect.objectContaining({
             database: expect.objectContaining({
               status: 'down',
+            }),
+          }),
+        }),
+      );
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('returns 503 from /health/ready when the required Telegram runtime failed', async () => {
+    const { app } = await createHealthApp({
+      telegramSnapshot: {
+        status: 'failed',
+        mode: 'webhook',
+        required: true,
+        reason: 'telegram_runtime_failed',
+        errorMessage: 'setWebhook failed',
+      },
+    });
+
+    try {
+      const response = await request(app.getHttpServer()).get('/health/ready').expect(503);
+
+      expect(response.body).toEqual(
+        expect.objectContaining({
+          status: 'error',
+          checks: expect.objectContaining({
+            telegram: expect.objectContaining({
+              status: 'down',
+              message: 'setWebhook failed',
             }),
           }),
         }),

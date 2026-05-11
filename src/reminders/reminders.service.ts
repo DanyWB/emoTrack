@@ -57,6 +57,8 @@ export class RemindersService {
     }
 
     if (!isValidTimeFormat(user.reminderTime)) {
+      await this.removeExistingDailyReminder(userId);
+      await this.removeExistingWeeklyDigest(userId);
       this.logger.warn(formatLogEvent('invalid_reminder_time_skipped', {
         userId,
         reminderTime: user.reminderTime,
@@ -109,6 +111,7 @@ export class RemindersService {
     }
 
     await this.removeExistingDailyReminder(userId);
+    await this.removeExistingWeeklyDigest(userId);
     await this.scheduleDailyReminder(userId);
   }
 

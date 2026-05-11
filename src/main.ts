@@ -1,4 +1,5 @@
 import 'reflect-metadata';
+import './config/bootstrap-env';
 
 import { mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';

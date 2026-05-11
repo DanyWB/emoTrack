@@ -21,7 +21,7 @@ function scoreRows(): CallbackButton[][] {
   ];
 }
 
-function actionRow(options: { back?: boolean; skip?: boolean }): CallbackButton[] {
+function actionRow(options: { back?: boolean; skip?: boolean; skipLabel?: string; cancel?: boolean }): CallbackButton[] {
   const row: CallbackButton[] = [];
 
   if (options.back) {
@@ -29,10 +29,13 @@ function actionRow(options: { back?: boolean; skip?: boolean }): CallbackButton[
   }
 
   if (options.skip) {
-    row.push(Markup.button.callback(telegramCopy.buttons.skip, TELEGRAM_CALLBACKS.actionSkip));
+    row.push(Markup.button.callback(options.skipLabel ?? telegramCopy.buttons.skip, TELEGRAM_CALLBACKS.actionSkip));
   }
 
-  row.push(Markup.button.callback(telegramCopy.buttons.cancel, TELEGRAM_CALLBACKS.actionCancel));
+  if (options.cancel ?? !options.back) {
+    row.push(Markup.button.callback(telegramCopy.buttons.cancel, TELEGRAM_CALLBACKS.actionCancel));
+  }
+
   return row;
 }
 
@@ -62,11 +65,22 @@ export const telegramKeyboards = {
   mainMenu: () =>
     Markup.keyboard([
       [TELEGRAM_MAIN_MENU_BUTTONS[0], TELEGRAM_MAIN_MENU_BUTTONS[1]],
-      [TELEGRAM_MAIN_MENU_BUTTONS[2], TELEGRAM_MAIN_MENU_BUTTONS[3]],
-      [TELEGRAM_MAIN_MENU_BUTTONS[4], TELEGRAM_MAIN_MENU_BUTTONS[5]],
     ])
       .resize()
       .persistent(),
+
+  navigationMenu: () =>
+    Markup.inlineKeyboard([
+      [
+        Markup.button.callback(telegramCopy.buttons.menuStats, TELEGRAM_CALLBACKS.menuStats),
+        Markup.button.callback(telegramCopy.buttons.menuHistory, TELEGRAM_CALLBACKS.menuHistory),
+      ],
+      [
+        Markup.button.callback(telegramCopy.buttons.menuSettings, TELEGRAM_CALLBACKS.menuSettings),
+        Markup.button.callback(telegramCopy.buttons.menuHelp, TELEGRAM_CALLBACKS.menuHelp),
+      ],
+      [Markup.button.callback(telegramCopy.buttons.menuTerms, TELEGRAM_CALLBACKS.menuTerms)],
+    ]),
 
   consent: () =>
     Markup.inlineKeyboard([
@@ -82,12 +96,23 @@ export const telegramKeyboards = {
       [Markup.button.callback(telegramCopy.buttons.later, TELEGRAM_CALLBACKS.onboardingLater)],
     ]),
 
+  onboardingReminderTime: () =>
+    Markup.inlineKeyboard([
+      [Markup.button.callback(telegramCopy.buttons.reminderLater, TELEGRAM_CALLBACKS.onboardingReminderLater)],
+      [Markup.button.callback(telegramCopy.buttons.cancel, TELEGRAM_CALLBACKS.actionCancel)],
+    ]),
+
   scorePicker: (options: { back?: boolean; skip?: boolean } = {}) =>
     Markup.inlineKeyboard([...scoreRows(), actionRow(options)]),
 
   cancelOnly: () =>
     Markup.inlineKeyboard([
       [Markup.button.callback(telegramCopy.buttons.cancel, TELEGRAM_CALLBACKS.actionCancel)],
+    ]),
+
+  backOnly: () =>
+    Markup.inlineKeyboard([
+      [Markup.button.callback(telegramCopy.buttons.back, TELEGRAM_CALLBACKS.actionBack)],
     ]),
 
   sleepHoursActions: (options: { back?: boolean } = {}) =>
@@ -160,16 +185,16 @@ export const telegramKeyboards = {
     Markup.inlineKeyboard([actionRow({ back: options.back })]),
 
   eventDescriptionActions: (options: { back?: boolean } = {}) =>
-    Markup.inlineKeyboard([actionRow({ back: options.back, skip: true })]),
+    Markup.inlineKeyboard([actionRow({ back: options.back, skip: true, skipLabel: telegramCopy.buttons.next })]),
 
   eventEndDateActions: (options: { back?: boolean } = {}) =>
-    Markup.inlineKeyboard([actionRow({ back: options.back, skip: true })]),
+    Markup.inlineKeyboard([actionRow({ back: options.back, skip: true, skipLabel: telegramCopy.buttons.next })]),
   statsPeriodSelector: () =>
     Markup.inlineKeyboard([
       [Markup.button.callback(telegramCopy.buttons.stats7d, `${TELEGRAM_CALLBACKS.statsPeriodPrefix}d7`)],
       [Markup.button.callback(telegramCopy.buttons.stats30d, `${TELEGRAM_CALLBACKS.statsPeriodPrefix}d30`)],
       [Markup.button.callback(telegramCopy.buttons.statsAll, `${TELEGRAM_CALLBACKS.statsPeriodPrefix}all`)],
-      [Markup.button.callback(telegramCopy.buttons.cancel, TELEGRAM_CALLBACKS.actionCancel)],
+      [Markup.button.callback(telegramCopy.buttons.toMenu, TELEGRAM_CALLBACKS.actionCancel)],
     ]),
 
   statsMetricSelector: (metrics: Array<{ key: string; label: string }>) =>
@@ -181,7 +206,7 @@ export const telegramKeyboards = {
         2,
       ),
       [Markup.button.callback(telegramCopy.buttons.back, TELEGRAM_CALLBACKS.actionBack)],
-      [Markup.button.callback(telegramCopy.buttons.cancel, TELEGRAM_CALLBACKS.actionCancel)],
+      [Markup.button.callback(telegramCopy.buttons.toMenu, TELEGRAM_CALLBACKS.actionCancel)],
     ]),
 
   settingsMenu: (options: {
@@ -197,7 +222,6 @@ export const telegramKeyboards = {
       [Markup.button.callback(telegramCopy.buttons.settingsEditReminderTime, TELEGRAM_CALLBACKS.settingsReminderTimeEdit)],
       [Markup.button.callback(telegramCopy.buttons.settingsSleepMode, TELEGRAM_CALLBACKS.settingsSleepModeSelect)],
       [Markup.button.callback(telegramCopy.buttons.settingsDailyMetrics, TELEGRAM_CALLBACKS.settingsDailyMetricsOpen)],
-      [Markup.button.callback(telegramCopy.buttons.cancel, TELEGRAM_CALLBACKS.actionCancel)],
     ]),
 
   settingsDailyMetrics: (metrics: SettingsMetricOptionData[]) => {
@@ -211,7 +235,6 @@ export const telegramKeyboards = {
     return Markup.inlineKeyboard([
       ...chunkButtons(metricButtons, 2),
       [Markup.button.callback(telegramCopy.buttons.back, TELEGRAM_CALLBACKS.actionBack)],
-      [Markup.button.callback(telegramCopy.buttons.cancel, TELEGRAM_CALLBACKS.actionCancel)],
     ]);
   },
 
@@ -221,6 +244,5 @@ export const telegramKeyboards = {
       [Markup.button.callback(SLEEP_MODE_LABELS.quality, `${TELEGRAM_CALLBACKS.settingsSleepModePrefix}quality`)],
       [Markup.button.callback(SLEEP_MODE_LABELS.both, `${TELEGRAM_CALLBACKS.settingsSleepModePrefix}both`)],
       [Markup.button.callback(telegramCopy.buttons.back, TELEGRAM_CALLBACKS.actionBack)],
-      [Markup.button.callback(telegramCopy.buttons.cancel, TELEGRAM_CALLBACKS.actionCancel)],
     ]),
 };

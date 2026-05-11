@@ -78,6 +78,12 @@ export class InMemoryUsersRepository {
     return this.users.get(id) ?? null;
   }
 
+  async findUsersWithActiveReminders(): Promise<User[]> {
+    return [...this.users.values()]
+      .filter((user) => user.onboardingCompleted && user.remindersEnabled && user.reminderTime !== null)
+      .sort((left, right) => left.createdAt.getTime() - right.createdAt.getTime());
+  }
+
   async create(data: Record<string, unknown>): Promise<User> {
     const now = new Date();
     const user: User = {

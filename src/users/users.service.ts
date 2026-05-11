@@ -36,6 +36,10 @@ export class UsersService {
     return this.usersRepository.findById(userId);
   }
 
+  findUsersWithActiveReminders(): Promise<User[]> {
+    return this.usersRepository.findUsersWithActiveReminders();
+  }
+
   async createFromTelegramProfile(profile: TelegramProfile): Promise<User> {
     const user = await this.usersRepository.create({
       telegramId: profile.telegramId,

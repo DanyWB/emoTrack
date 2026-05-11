@@ -19,6 +19,10 @@ export class OnboardingService {
     await this.usersService.setReminderTime(userId, reminderTime);
   }
 
+  async setRemindersEnabled(userId: string, remindersEnabled: boolean): Promise<void> {
+    await this.usersService.setRemindersEnabled(userId, remindersEnabled);
+  }
+
   async completeOnboarding(userId: string): Promise<void> {
     await this.usersService.completeOnboarding(userId);
   }

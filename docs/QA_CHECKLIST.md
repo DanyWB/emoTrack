@@ -15,30 +15,57 @@ Use this checklist before a local handoff or release candidate review.
 
 - app boots with `REDIS_ENABLED=false`
 - app boots with `JOBS_ENABLED=false`
+- setting `JOBS_ENABLED=true` in local `.env` is respected during BullMQ module wiring when Redis is configured
 - polling mode works with `TELEGRAM_MODE=polling`
 - startup does not require webhook variables in polling mode
 - `GET /health/live` returns `200`
 - `GET /health/ready` returns `200` with database `up` and Redis `skipped`
+- `GET /health/ready` reports Telegram as `skipped` when the local placeholder bot token is used
+
+## Webhook Mode
+
+- with `TELEGRAM_MODE=webhook`, `TELEGRAM_WEBHOOK_URL` points to the public `POST /telegram/webhook` endpoint
+- a webhook request with the configured `x-telegram-bot-api-secret-token` is dispatched into the bot router
+- a webhook request with a wrong secret returns `401` and does not dispatch the update
+- when the app is in polling mode, `POST /telegram/webhook` returns a skipped response and logs `event=telegram_webhook_update_skipped`
 
 ## Onboarding
 
 - new user sends `/start`
-- user sees intro and disclaimer
+- user sees one concise intro that explains the bot, the first route, and the medical disclaimer
+- intro explains the difference between a check-in note and a separate event
 - user sees explicit consent prompt
 - `/terms` works before onboarding is complete
 - `/terms` shows the agreement text and offers acceptance
 - trying to open a product command before consent redirects back into the consent flow
-- `Согласен` moves to reminder time input
+- `Согласен` moves to daily reminder setup by editing the current agreement/onboarding message where Telegram allows it
+- reminder setup offers `Настрою позже`
 - invalid reminder time shows Russian validation error
 - valid reminder time is saved
+- choosing `Настрою позже` completes onboarding with reminders disabled, no reminder time, and no extra standalone “skipped” message
 - onboarding completes
 - first check-in offer is shown
+- choosing `Начать check-in` and completing the first check-in shows the save confirmation and then immediately opens the inline navigation menu
+- choosing `Позже` on the first check-in offer removes the inline offer where possible, shows the main menu, and explains the main benefits
+- choosing `Позже` also opens the inline navigation menu after the explanatory message
 
 ## Existing User `/start`
 
 - existing onboarded user sends `/start`
-- bot shows concise ready-state response
-- main menu is shown
+- bot shows concise ready-state response with inline navigation buttons for statistics, history, settings, help, and the user agreement
+- bottom keyboard from the ready flow still contains only `Отметить состояние` and `Добавить событие`
+
+## Navigation Menu
+
+- `/menu` works for an onboarded user
+- `/menu` is visually formatted with a clear heading, separator, and short navigation hint
+- `/menu` shows inline buttons for statistics, history, settings, help, and the user agreement
+- `📊 Статистика` opens the stats period selector by editing the current `/menu` message
+- `📚 История` opens history by editing the current `/menu` message
+- `⚙️ Настройки` opens settings by editing the current `/menu` message
+- `❔ Помощь` opens help by editing the current `/menu` message
+- `📄 Соглашение` opens the agreement from the menu
+- product-only menu callbacks still redirect through consent/onboarding if the user is not ready
 
 ## Check-in by Sleep Mode
 
@@ -70,9 +97,12 @@ Use this checklist before a local handoff or release candidate review.
 ## Check-in Navigation
 
 - `Отмена` clears active onboarding flow safely
-- `Отмена` clears active check-in flow safely
+- `Отмена` clears active check-in flow safely and returns to navigation instead of only saying “cancelled”
 - `Назад` works on multi-step check-in
 - running `/checkin` during an active check-in resumes the current step instead of resetting progress
+- check-in score prompts have bold step titles that name the active metric, such as `Шаг 1/5 · Настроение`
+- tapping score/back/skip buttons refreshes the current inline check-in prompt where possible instead of adding a new prompt each time
+- when `Назад` is available in a check-in/event prompt, the same inline row does not also show generic `Отмена`
 - `Back` is available on the optional note prompt
 - after going back from optional steps to sleep/core steps, already saved note/tag data is still reflected in the final confirmation
 - invalid score input shows Russian validation error
@@ -104,11 +134,17 @@ Use this checklist before a local handoff or release candidate review.
 ## Optional Check-in Data
 
 - note step accepts a valid text note
+- note prompt explains that notes are free-form context attached to the daily check-in and gives a concrete example
 - too-long note is rejected
 - tag selection allows multi-select
+- tapping tag buttons updates the existing tag-selection message instead of sending a new tag prompt each time
+- if Telegram cannot edit the old tag-selection message, the bot falls back to one normal reply
 - tag selection saves without duplicate relations
+- skipping the tag-selection screen after selecting draft tags does not report those draft tags as saved
 - event can be added from the check-in continuation
 - final confirmation reflects optional data correctly
+- when final confirmation is reached from an inline check-in callback, the previous inline prompt is removed where Telegram allows it
+- final confirmation stays compact and only lists saved/tracked values
 
 ## Standalone Event
 
@@ -116,10 +152,12 @@ Use this checklist before a local handoff or release candidate review.
 - valid event type can be selected
 - title is required
 - invalid title is rejected
+- after sending a valid event title, the previous title prompt and the user's title message are removed where Telegram allows it
 - score must be 0..10
-- description can be skipped
+- optional description uses the `Далее` button instead of `Пропустить`
 - valid standalone event is saved successfully
 - standalone event can be saved without an end date and remains single-day
+- optional end-date continuation uses the `Далее` button instead of `Пропустить`
 - standalone event can be saved with an inclusive end date for a bounded multi-day period
 - end date earlier than start date is rejected
 - check-in-created event remains single-day only
@@ -129,13 +167,13 @@ Use this checklist before a local handoff or release candidate review.
 - `/history` works for a user with entries
 - entries are ordered descending by date
 - the first history page stays compact and readable in Telegram
-- each history item shows mood/energy/stress when present
+- each history item shows a bold date and mood/energy/stress when present
 - sleep data appears when present
 - if an entry has saved extra score metrics, `/history` shows a compact `Доп. метрики` line for them
 - extra score metrics remain visible in `/history` even if their metric definition was later marked inactive
 - an extra-only history entry does not show the empty legacy core placeholder line
 - history list items use a compact summary line for note, tags, and linked events
-- opening a history entry shows full note text, tags, extra metrics, and day events
+- opening a history entry shows clearly separated sections for state, sleep, full note text, tags, extra metrics, and day events
 - empty note/tag/event sections are hidden in the detail view instead of showing placeholder dashes
 - the detail view can return to the same history page without duplicating messages
 - stale `Открыть` callbacks degrade gracefully back to the regular history entry point
@@ -148,9 +186,11 @@ Use this checklist before a local handoff or release candidate review.
 ## Stats and Summaries
 
 - `/stats` opens period selector
-- after choosing a period, `/stats` opens a metric selector instead of sending a combined all-metrics summary immediately
+- after choosing a period, `/stats` opens a metric selector by editing the current selector message instead of sending a combined all-metrics summary immediately
+- `В меню` from the period or metric selector returns to `/menu` by editing the current stats message
 - the metric selector shows only the user's enabled metrics from the `Check-in criteria` submenu
 - the metric selector shows the light-stats helper text about one metric at a time
+- stale or unknown stats metric callbacks re-open the metric selector and do not generate a summary
 - selecting an enabled score metric returns a single-metric summary text
 - selecting `sleep` returns the sleep-specific summary text
 - empty-data state is handled gracefully
@@ -190,6 +230,7 @@ Use this checklist before a local handoff or release candidate review.
 - `/settings` opens settings menu
 - current settings screen shows reminder state, reminder time, weekly digest runtime status, sleep mode, tracked daily metrics, and current auto-reminder runtime status
 - `Критерии check-in` opens as a separate submenu from the main settings screen
+- settings submenu buttons refresh the current inline settings message where possible
 - opening the submenu lazily syncs `user_tracked_metrics` if they are missing for the user
 - the submenu can enable and disable both core metrics and supported extra score metrics
 - trying to disable the last remaining daily metric shows the generic guard text `Нужно оставить хотя бы одну ежедневную метрику.`
@@ -197,12 +238,14 @@ Use this checklist before a local handoff or release candidate review.
 - enabling reminders with `JOBS_ENABLED=false` keeps settings saved but does not imply background delivery is active
 - reminder time can be updated
 - invalid reminder time is rejected
+- reminder-time editing uses `Назад`, not generic `Отмена`
 - after a valid reminder time update, the refreshed settings screen is shown again
 - reminder messages distinguish between “saved” and “background delivery unavailable in this environment”
 - weekly digest is described as using the same reminder path and staying unavailable when jobs are disabled
 - sleep mode can be changed to `hours`
 - sleep mode can be changed to `quality`
 - sleep mode can be changed to `both`
+- the sleep-mode submenu has `Назад` and does not show generic `Отмена`
 - `Назад` from the metric submenu returns to the main settings screen
 - after each settings change, the user returns to a clear current-state settings screen
 
@@ -211,12 +254,15 @@ Use this checklist before a local handoff or release candidate review.
 - `/help` works
 - `/help` works before consent is accepted
 - help text is concise
+- help text points users to `/menu` for navigation
 - help text includes `/terms`
 - help text states that the bot is not a diagnostic or medical tool
 
 ## Telegram Commands
 
-- Telegram command hints are registered for `/start`, `/help`, `/terms`, `/checkin`, `/event`, `/history`, `/stats`, and `/settings`
+- Telegram command hints are registered for `/start`, `/menu`, `/help`, `/terms`, `/checkin`, `/event`, `/history`, `/stats`, and `/settings`
+- `/menu` is the second command in the Telegram command list
+- command descriptions in Telegram's command menu include distinct icons
 - if Telegram command sync fails, app startup still continues
 
 ## Optional Jobs Path
@@ -226,6 +272,9 @@ Run this section only when Redis is available and enabled.
 - app boots with `REDIS_ENABLED=true`
 - app boots with `JOBS_ENABLED=true`
 - reminder scheduling does not crash startup
+- startup reconciles repeatable daily reminder and weekly digest jobs for users with completed onboarding, enabled reminders, and a saved reminder time
+- per-user reconciliation failures log `event=reminder_job_reconcile_failed` and do not stop the remaining eligible users from being attempted
+- invalid persisted reminder times remove stale repeatable reminder and weekly digest jobs before the user is skipped
 - disabling reminders cancels scheduling path cleanly
 - `GET /health/ready` returns `200` and includes Redis `up`
 
@@ -248,14 +297,17 @@ Run this section only when an isolated local PostgreSQL test database is availab
 - Prisma migrations were applied to the test database before running the smoke suite
 - `npm run test:db` passes when `DATABASE_URL_TEST` is configured
 - with no `DATABASE_URL_TEST`, `npm run test:db` skips the DB smoke suite instead of requiring Docker or PostgreSQL setup
-- the DB smoke suite verifies repository connectivity, same-day `DailyEntry` uniqueness, metric catalog reads, and inclusive event overlap queries
+- the DB smoke suite verifies repository connectivity, same-day `DailyEntry` uniqueness, metric catalog reads, active-reminder user reads, and inclusive event overlap queries
 
 ## Logging Checks
 
 - error and warning logs use searchable `event=...` keys for critical failure paths
+- webhook failures and skipped webhook updates include `event=telegram_webhook_update_failed` or `event=telegram_webhook_update_skipped`
 - Telegram route failures include `event=telegram_route_failed`, `routeKey`, `userId` when known, and `fsmState` when available
+- when a real Telegram bot runtime fails to launch or register webhook, `GET /health/ready` returns Telegram `down`
 - chart failures include stats/chart context and still return a text summary to the user
 - readiness failures include `event=readiness_database_check_failed` or `event=readiness_redis_check_failed`
+- reminder startup reconciliation logs `event=reminder_jobs_reconciled` and per-user failures log `event=reminder_job_reconcile_failed`
 - user-facing Telegram errors stay generic and do not expose raw stack traces
 - Jest mutes routine `Logger.log`, `Logger.debug`, and `Logger.verbose` output, while warnings and errors remain visible unless a test explicitly spies on them
 
@@ -269,7 +321,9 @@ Run this section only when an isolated local PostgreSQL test database is availab
 - router contract coverage is included in `npm run test:integration` for Telegram route registration, callback guards, stale callback recovery, and route-error fallback
 - `npm run test:db` passes or skips clearly depending on `DATABASE_URL_TEST`
 - `npm run test:coverage` passes and respects the configured global coverage baseline
+- `npm run audit:prod` passes with no production vulnerabilities
 - `npm run check` passes before handoff when a full local gate is needed
+- `npm run verify` passes before release/handoff when DB smoke tests are available
 - release/runbook docs were reviewed before handoff
 
 ## Daily Metric Catalog Groundwork

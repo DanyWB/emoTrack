@@ -1,4 +1,5 @@
 ﻿import {
+  escapeHtml,
   formatCheckinConfirmation,
   formatHistoryEntries,
   formatHistoryEntryDetail,
@@ -18,9 +19,10 @@ describe('formatCheckinConfirmation', () => {
       eventAdded: true,
     });
 
-    expect(text).toContain('Готово. Запись за сегодня обновлена.');
-    expect(text).toContain('Сон: 7.5 ч, качество 8');
-    expect(text).toContain('Дополнительно: заметка, 2 тега, событие');
+    expect(text).toContain('✅ <b>Запись за сегодня обновлена</b>');
+    expect(text).toContain('🌡 Состояние: настроение 8, энергия 7, стресс 3');
+    expect(text).toContain('😴 Сон: 7.5 ч, качество 8');
+    expect(text).toContain('➕ Добавлено: заметка, 2 тега, событие');
   });
 
   it('omits extras when only core scores are present', () => {
@@ -31,8 +33,8 @@ describe('formatCheckinConfirmation', () => {
       updated: false,
     });
 
-    expect(text).toContain('Готово. Запись за сегодня сохранена.');
-    expect(text).not.toContain('Дополнительно:');
+    expect(text).toContain('✅ <b>Запись за сегодня сохранена</b>');
+    expect(text).not.toContain('Добавлено:');
   });
 
   it('renders only the available core metrics in a partial confirmation', () => {
@@ -42,10 +44,9 @@ describe('formatCheckinConfirmation', () => {
       updated: false,
     });
 
-    expect(text).toContain('Настроение: 9');
-    expect(text).toContain('Стресс: 3');
-    expect(text).not.toContain('Энергия:');
-    expect(text).not.toContain('Сон:');
+    expect(text).toContain('🌡 Состояние: настроение 9, стресс 3');
+    expect(text).not.toContain('энергия');
+    expect(text).not.toContain('😴 Сон:');
   });
 
   it('renders enabled extra score metrics in the confirmation body', () => {
@@ -66,8 +67,22 @@ describe('formatCheckinConfirmation', () => {
       updated: false,
     });
 
-    expect(text).toContain('Радость: 8');
-    expect(text).toContain('Самочувствие: 6');
+    expect(text).toContain('🧩 Доп. метрики: Радость 8, Самочувствие 6');
+  });
+
+  it('escapes dynamic extra metric labels for HTML parse mode', () => {
+    const text = formatCheckinConfirmation({
+      extraMetricScores: [
+        {
+          key: 'joy',
+          label: 'Joy <fast> & steady',
+          value: 8,
+        },
+      ],
+      updated: false,
+    });
+
+    expect(text).toContain('Joy &lt;fast&gt; &amp; steady 8');
   });
 });
 
@@ -100,10 +115,11 @@ describe('formatHistoryEntries', () => {
       },
     ]);
 
-    expect(text).toContain('Настроение / энергия / стресс: 8 / 7 / 3');
-    expect(text).toContain('Сон: 7.5 ч, качество 8');
-    expect(text).toContain('Доп. метрики: Радость 8, Самочувствие 6');
-    expect(text).toContain('Есть заметка · 2 тега · 2 события');
+    expect(text).toContain('📅 <b>12.03.2026</b>');
+    expect(text).toContain('настроение <b>8</b> · энергия <b>7</b> · стресс <b>3</b>');
+    expect(text).toContain('😴 <b>Сон</b>: 7.5 ч · качество 8');
+    expect(text).toContain('🧩 <b>Доп. метрики</b>: Радость <b>8</b>, Самочувствие <b>6</b>');
+    expect(text).toContain('📝 заметка · 🏷 2 тега · 🗂 2 события');
   });
 
   it('does not render the legacy core placeholder line for an extra-only entry', () => {
@@ -127,8 +143,8 @@ describe('formatHistoryEntries', () => {
       },
     ]);
 
-    expect(text).toContain('Доп. метрики: Радость 8');
-    expect(text).toContain('0 событий');
+    expect(text).toContain('🧩 <b>Доп. метрики</b>: Радость <b>8</b>');
+    expect(text).toContain('🗂 0 событий');
     expect(text).not.toContain('Настроение / энергия / стресс: — / — / —');
   });
 });
@@ -171,12 +187,49 @@ describe('formatHistoryEntryDetail', () => {
 
     expect(text).toContain('Запись за 12.03.2026');
     expect(text).toContain('Состояние');
-    expect(text).toContain('Настроение / энергия / стресс: 8 / 7 / 3');
-    expect(text).toContain('Сон\n7.5 ч, качество 8');
-    expect(text).toContain('Доп. метрики: Радость 8');
-    expect(text).toContain('Заметка\nBusy day');
-    expect(text).toContain('Теги\n- Тревога');
-    expect(text).toContain('События\n- Путешествия: Trip · оценка 7 · 11.03.2026–12.03.2026');
-    expect(text).toContain('Two-day trip');
+    expect(text).toContain('настроение <b>8</b> · энергия <b>7</b> · стресс <b>3</b>');
+    expect(text).toContain('<b>😴 Сон</b>\n7.5 ч, качество 8');
+    expect(text).toContain('🧩 <b>Доп. метрики</b>: Радость <b>8</b>');
+    expect(text).toContain('<b>📝 Заметка</b>\nBusy day');
+    expect(text).toContain('<b>🏷 Теги</b>\n• Тревога');
+    expect(text).toContain('<b>🗂 События</b>\n• Путешествия: <b>Trip</b> · оценка 7 · 11.03.2026–12.03.2026');
+    expect(text).toContain('<i>Two-day trip</i>');
+  });
+
+  it('escapes user-provided history details for HTML parse mode', () => {
+    const text = formatHistoryEntryDetail({
+      entryDate: new Date('2026-03-12T00:00:00.000Z'),
+      moodScore: null,
+      energyScore: null,
+      stressScore: null,
+      noteText: '<b>raw note</b>',
+      tags: [
+        {
+          id: 'tag-1',
+          label: 'Tag & mood',
+        },
+      ],
+      events: [
+        {
+          id: 'event-1',
+          eventType: 'other',
+          title: 'Event <x>',
+          description: 'Description & details',
+          eventScore: 5,
+          eventDate: new Date('2026-03-12T00:00:00.000Z'),
+        },
+      ],
+    });
+
+    expect(text).toContain('&lt;b&gt;raw note&lt;/b&gt;');
+    expect(text).toContain('Tag &amp; mood');
+    expect(text).toContain('Event &lt;x&gt;');
+    expect(text).toContain('Description &amp; details');
+  });
+});
+
+describe('escapeHtml', () => {
+  it('escapes HTML control characters', () => {
+    expect(escapeHtml(`A&B <x> "q" 's'`)).toBe('A&amp;B &lt;x&gt; &quot;q&quot; &#39;s&#39;');
   });
 });

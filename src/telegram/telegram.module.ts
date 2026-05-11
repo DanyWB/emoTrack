@@ -14,9 +14,10 @@ import { SummariesModule } from '../summaries/summaries.module';
 import { TagsModule } from '../tags/tags.module';
 import { UsersModule } from '../users/users.module';
 import { TelegramRouter } from './telegram.router';
+import { TelegramRuntimeStatusService } from './telegram.runtime-status';
+import { TELEGRAM_BOT } from './telegram.tokens';
 import { TelegramUpdate } from './telegram.update';
-
-export const TELEGRAM_BOT = 'TELEGRAM_BOT';
+import { TelegramWebhookController } from './telegram.webhook.controller';
 
 @Module({
   imports: [
@@ -46,8 +47,10 @@ export const TELEGRAM_BOT = 'TELEGRAM_BOT';
       },
     },
     TelegramRouter,
+    TelegramRuntimeStatusService,
     TelegramUpdate,
   ],
-  exports: [TELEGRAM_BOT, TelegramRouter],
+  controllers: [TelegramWebhookController],
+  exports: [TELEGRAM_BOT, TelegramRouter, TelegramRuntimeStatusService],
 })
 export class TelegramModule {}

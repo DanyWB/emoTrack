@@ -42,6 +42,7 @@ export interface CheckinFlowResult {
   tagsCount?: number;
   eventAdded?: boolean;
   resumed?: boolean;
+  showMenuAfterSave?: boolean;
 }
 
 interface CheckinStepTarget {
@@ -68,7 +69,7 @@ export class CheckinsFlowService {
       return {
         status: 'next',
         nextState: state,
-        selectedTagIds: payload.selectedTagIds,
+        selectedTagIds: payload.selectedTagIds ?? payload.confirmedTagIds,
         resumed: true,
       };
     }
@@ -217,7 +218,7 @@ export class CheckinsFlowService {
     }
 
     const payload = this.extractPayload(session?.payloadJson);
-    const selectedTagIds = [...new Set(payload.selectedTagIds ?? [])];
+    const selectedTagIds = this.getFinalizedTagIds(payload);
 
     await this.fsmService.setState(user.id, FSM_STATES.checkin_tags, {
       ...payload,
@@ -304,6 +305,7 @@ export class CheckinsFlowService {
     await this.fsmService.setState(user.id, FSM_STATES.checkin_add_event_confirm, {
       ...payload,
       selectedTagIds,
+      confirmedTagIds: selectedTagIds,
     });
 
     return {
@@ -356,7 +358,13 @@ export class CheckinsFlowService {
     }
 
     if (state === FSM_STATES.checkin_tags) {
-      await this.fsmService.setState(user.id, FSM_STATES.checkin_add_event_confirm, payload);
+      const confirmedTagIds = this.getConfirmedTagIds(payload);
+
+      await this.fsmService.setState(user.id, FSM_STATES.checkin_add_event_confirm, {
+        ...payload,
+        selectedTagIds: confirmedTagIds,
+        confirmedTagIds,
+      });
       return {
         status: 'next',
         nextState: FSM_STATES.checkin_add_event_confirm,
@@ -430,7 +438,13 @@ export class CheckinsFlowService {
         return { status: 'next', nextState: FSM_STATES.checkin_note_prompt };
       }
       case FSM_STATES.checkin_tags: {
-        await this.fsmService.setState(user.id, FSM_STATES.checkin_tags_prompt, payload);
+        const confirmedTagIds = this.getConfirmedTagIds(payload);
+
+        await this.fsmService.setState(user.id, FSM_STATES.checkin_tags_prompt, {
+          ...payload,
+          selectedTagIds: confirmedTagIds,
+          confirmedTagIds,
+        });
         return { status: 'next', nextState: FSM_STATES.checkin_tags_prompt };
       }
       case FSM_STATES.checkin_add_event_confirm: {
@@ -518,8 +532,9 @@ export class CheckinsFlowService {
       isUpdate: payload.isUpdate ?? false,
       entryPayload,
       noteAdded: !!payload.noteText,
-      tagsCount: payload.selectedTagIds?.length ?? 0,
+      tagsCount: this.getFinalizedTagIds(payload).length,
       eventAdded: !!payload.eventAdded,
+      showMenuAfterSave: !!payload.showMenuAfterSave,
     };
   }
 
@@ -802,6 +817,22 @@ export class CheckinsFlowService {
     }
 
     return next;
+  }
+
+  private getConfirmedTagIds(payload: CheckinDraftPayload): string[] {
+    return this.uniqueStringIds(payload.confirmedTagIds);
+  }
+
+  private getFinalizedTagIds(payload: CheckinDraftPayload): string[] {
+    return this.uniqueStringIds(payload.confirmedTagIds ?? payload.selectedTagIds);
+  }
+
+  private uniqueStringIds(values: unknown): string[] {
+    if (!Array.isArray(values)) {
+      return [];
+    }
+
+    return [...new Set(values.filter((value): value is string => typeof value === 'string'))];
   }
 
   private hasCapturedAnyMetric(payload: CheckinDraftPayload): boolean {

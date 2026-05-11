@@ -7,11 +7,12 @@ The MVP focuses on daily state tracking, optional notes/tags/events, recent hist
 
 The bot helps a user:
 
-- complete onboarding with consent and reminder time
+- complete onboarding with consent, optional reminder setup, and an immediate first check-in offer
 - log one daily check-in per day
 - update the same day entry instead of creating duplicates
 - add an optional note, predefined tags, and an event
 - create standalone single-day or bounded multi-day events
+- use `/menu` for secondary navigation while the bottom keyboard keeps only the two frequent actions
 - view recent history
 - request 7-day, 30-day, or all-time stats
 - receive chart images in the stats flow
@@ -194,8 +195,15 @@ Use for local development:
 Use when deploying behind a reachable public URL:
 
 - `TELEGRAM_MODE=webhook`
-- `TELEGRAM_WEBHOOK_URL` must be set
+- `TELEGRAM_WEBHOOK_URL` must be set to the public bot endpoint, usually `https://<host>/telegram/webhook`
 - `TELEGRAM_WEBHOOK_SECRET` is recommended
+
+Webhook runtime behavior:
+
+- the app exposes `POST /telegram/webhook`
+- Telegram updates are dispatched through the same Telegraf router used by polling mode
+- when `TELEGRAM_WEBHOOK_SECRET` is configured, the endpoint requires Telegram's `x-telegram-bot-api-secret-token` header
+- in polling mode, incoming webhook calls are skipped and logged instead of being processed accidentally
 
 ## Redis and Jobs Behavior
 
@@ -205,8 +213,10 @@ Rules:
 
 - if `REDIS_ENABLED=false`, Redis is not required for boot
 - if `JOBS_ENABLED=false`, BullMQ queues/processors do not block startup
+- local `.env` is loaded before conditional BullMQ module wiring, so `JOBS_ENABLED=true` works from the normal local `.env` workflow as well as from externally injected process env
 - reminder settings still persist even if background jobs are disabled
 - reminder scheduling methods degrade to no-op when jobs are disabled
+- when jobs are enabled, startup reconciles repeatable reminder and weekly digest jobs for users with completed onboarding, enabled reminders, and a saved reminder time
 
 If you want local reminder jobs, set:
 
@@ -268,6 +278,7 @@ npm run test:unit
 npm run test:integration
 npm run test:db
 npm run test:coverage
+npm run audit:prod
 npm run test:watch
 ```
 
@@ -275,7 +286,10 @@ Full local verification:
 
 ```powershell
 npm run check
+npm run verify
 ```
+
+`npm run verify` runs `npm run check`, the optional DB smoke suite, and the production dependency audit.
 
 Prisma:
 
@@ -295,6 +309,8 @@ Operational health endpoints:
 - `GET /health/ready`
   - always requires database readiness
   - requires Redis readiness only when Redis or jobs are enabled
+  - requires Telegram runtime readiness when a real bot token is configured and the app is not running in test mode
+  - reports Telegram as `skipped` for the accepted local placeholder-token workflow
   - stays healthy in the accepted local no-Docker mode with `REDIS_ENABLED=false` and `JOBS_ENABLED=false`
 
 Example local smoke checks:
@@ -319,7 +335,7 @@ Covered areas:
 - validation helpers
 - onboarding flow
 - check-in flow
-- Telegram router registration, callback guards, stale callback recovery, and route-error fallback
+- Telegram router registration, `/menu` navigation, callback guards, stale callback recovery, and route-error fallback
 - repeated same-day check-in update behavior
 - summary generation path
 - chart failure fallback path
@@ -335,8 +351,10 @@ Test design notes:
 - `npm run test:integration` runs the current in-memory/Nest integration suite only
 - `npm run test:db` runs opt-in PostgreSQL smoke tests against `DATABASE_URL_TEST`
 - `npm run test:coverage` runs the full suite with coverage collection for `src/**/*.ts`
+- `npm run audit:prod` runs `npm audit --omit=dev`
 - global coverage thresholds are intentionally modest baseline gates at 50% for statements, branches, functions, and lines
 - `npm run check` is the recommended local pre-handoff gate and runs lint, build, and coverage-backed tests
+- `npm run verify` is the stronger release/handoff gate and runs `check`, `test:db`, and `audit:prod`
 
 DB smoke test notes:
 
@@ -365,15 +383,17 @@ Current access behavior is explicit and mandatory:
 - the agreement is available through `/terms`
 - before acceptance, product commands redirect into the consent flow instead of opening check-in, history, stats, or settings
 - the existing `consentGiven` onboarding step remains the acceptance source of truth; this step was not redesigned into a separate legal subsystem
-- after acceptance, onboarding continues with reminder time as before
+- after acceptance, onboarding offers daily reminder setup by time, but the user can defer it and still continue to the first check-in offer
 
 ## Telegram Commands
 
 The bot now registers Telegram command hints through `setMyCommands` when the Telegram API is available.
+Command names stay plain slash commands, while descriptions include icons so Telegram's command menu is easier to scan.
 
 Current command list:
 
 - `/start`
+- `/menu`
 - `/help`
 - `/terms`
 - `/checkin`
@@ -388,13 +408,49 @@ Runtime note:
 - if Telegram command sync fails, startup continues and the bot still launches in the current mode
 - local polling mode behavior is unchanged
 
+## Telegram Navigation UX
+
+Current navigation is split by frequency:
+
+- the persistent bottom keyboard contains only `Отметить состояние` and `Добавить событие`
+- `/menu` opens a formatted navigation screen with inline buttons for statistics, history, settings, help, and the user agreement
+- `/menu` is registered as the second Telegram command after `/start`
+- `/start` for an already onboarded user now opens the same inline navigation menu instead of only sending a passive ready-state message
+- slash commands remain available for direct access to `/checkin`, `/event`, `/history`, `/stats`, `/settings`, `/help`, and `/terms`
+- key bot messages use Telegram HTML formatting for clearer headings, separators, and hints
+- safe callback-driven screens edit the current inline message where possible instead of appending duplicate messages; if Telegram cannot edit a stale message, the bot falls back to a normal reply
+- callback flows that must return the persistent bottom keyboard safely delete the current inline message before sending one new menu/confirmation message
+- cancel actions return the user to navigation instead of leaving a bare `Действие отменено` message
+- active check-in/event prompts keep the last bot prompt `message_id` in the existing FSM payload, so text-input steps can best-effort delete the previous prompt and the user's input before showing the next prompt
+- inline rows do not show `Отмена` next to `Назад`; when back navigation is available, the user sees the narrower back/continue path
+
+## Onboarding UX Notes
+
+Current first-run behavior is product-first:
+
+- `/start` shows one concise intro explaining what the bot tracks, how check-ins, notes, and events differ, and what the first route will do
+- consent is still required before saving user data
+- accepting consent edits the current agreement/onboarding message into the reminder step where Telegram allows it
+- after consent, the user is offered daily reminder setup by entering a time such as `21:30`
+- reminder setup can be deferred with `Настрою позже`; in that case reminders are disabled until the user enables them in `/settings`
+- after reminder setup or deferral, the bot immediately offers the first check-in for today
+- if the user postpones the first check-in, the bot removes the inline offer where possible, shows the main menu, and explains history, stats, notes, events, and reminders
+- after the first onboarding check-in is saved, the bot sends the normal save confirmation with the persistent bottom keyboard and immediately opens the inline navigation menu
+
 ## Check-in UX Notes
 
 Current check-in behavior is intentionally conservative:
 
 - `/checkin` resumes an active check-in instead of silently resetting progress
 - `Back` is available on optional note/tag/event branches where the FSM supports it
+- score-step prompts now make the active metric explicit in the bold step title, for example `Шаг 1/5 · Настроение`
+- note copy explains that a note is free-form context attached to the daily check-in, while events are separate categorized facts
+- score, skip, back, note, tag, and check-in event callbacks refresh the current inline screen where possible instead of producing a stack of prompts
+- final confirmation from an inline check-in callback removes the previous inline screen before sending the saved-entry confirmation
 - if a user returns to core sleep steps after already saving optional note/tag data in the same flow, the final confirmation still reflects that saved optional data
+- final confirmation is compact and reports only values and optional data that were actually saved
+- draft tag selections are not reported as saved until the user confirms them with `Готово`
+- tag selection updates the existing inline message as tags are toggled, so the chat does not fill with duplicate tag prompts
 - if the check-in FSM loses context, the user gets a safe restart message instead of a raw or ambiguous error
 - same-day upsert behavior remains unchanged: one normalized day key, one `DailyEntry`
 
@@ -478,12 +534,12 @@ The project includes a backward-compatible metric catalog layer that is now acti
 
 ## History UX Notes
 
-Current `/history` behavior stays intentionally simple:
+Current `/history` behavior stays intentionally simple, but the Telegram text is formatted for scanning:
 
 - the first page shows the most recent 5 entries in a compact Telegram-friendly layout
 - each history row now includes an inline `Открыть` action for a full entry view
-- each item still shows date, mood/energy/stress, sleep data when present, and a compact summary line for note, tags, and linked events
-- if an entry contains saved extra score metrics, `/history` adds one compact `Доп. метрики` line for them
+- each item shows a bold date, mood/energy/stress when present, sleep data when present, and an icon summary line for note, tags, and linked events
+- if an entry contains saved extra score metrics, `/history` adds one compact formatted `Доп. метрики` line for them
 - extra-only entries do not render a useless empty core placeholder line; the first meaningful metric line is shown instead
 - opening an entry shows a detail view with:
   - all saved score metrics
@@ -491,11 +547,12 @@ Current `/history` behavior stays intentionally simple:
   - full note text
   - attached tags
   - overlapped events for that day
-- the detail view hides empty note/tag/event sections instead of rendering placeholder dashes
+- the detail view uses clear section headings and hides empty note/tag/event sections instead of rendering placeholder dashes
 - the detail view uses a single `К списку` action and returns to the same history page
 - history day counts are overlap-aware for events: a multi-day event is counted on each day in its inclusive span
 - older entries are loaded through a single inline `Еще` action
 - `Еще` edits the same history message instead of appending duplicate history blocks
+- history messages are sent with HTML parse mode and escape user-provided note, tag, event, and custom metric text before rendering
 - stale `Еще` and stale `Открыть` callbacks degrade gracefully and ask the user to open `/history` again
 
 ## Event Model Notes
@@ -506,6 +563,8 @@ Current event behavior stays intentionally bounded:
 - standalone `/event` supports:
   - a single-day event
   - an optional inclusive end date for a multi-day period event
+- event flow uses `Далее` for optional description/end-date continuation, because the action means “continue without this optional detail”, not “cancel the event”
+- event prompts with `Назад` do not also show `Отмена`; text-input steps best-effort remove the previous prompt and the user's submitted text before the next prompt
 - legacy schema metadata for event series may still exist in the database, but repeated standalone event creation is currently disabled in the UI
 - series-backed legacy rows are intentionally excluded from user-facing history and stats while the event UX is being simplified
 - stats period reads are overlap-aware:
@@ -517,6 +576,8 @@ Current event behavior stays intentionally bounded:
 Current `/settings` behavior stays within the original scope, but is clearer about runtime state:
 
 - after each settings update, the user is returned to the current settings screen
+- settings callback actions refresh the current inline settings screen instead of sending a separate confirmation plus a new menu message
+- settings screens no longer show generic `Отмена`; sleep mode and reminder-time editing use `Назад` for safe return to the main settings screen
 - the settings screen shows reminder state, reminder time, weekly digest runtime status, sleep mode, tracked daily metrics, and whether background auto-reminders are actually available
 - when jobs are disabled locally, reminder preferences are still saved, but the bot explicitly distinguishes between “settings saved” and “background delivery unavailable in this environment”
 - tracked daily metrics are managed in a separate `Критерии check-in` submenu inside `/settings`
@@ -534,6 +595,7 @@ Current `/stats` behavior is now intentionally lightweight for Telegram:
 - the metric selector explicitly positions Telegram stats as a light one-metric view; deeper analytics remain future web-panel scope
 - the bot then shows a compact single-metric summary instead of a large all-in-one analytics screen
 - this keeps Telegram stats useful and fast, while deeper analytics remain out of scope for the current bot UI
+- stats selectors label the cancel action as `В меню` and return to the navigation menu by editing the current inline screen
 
 Low-data contract:
 
@@ -610,6 +672,8 @@ Error and warning logs now use stable searchable key-value events where practica
 - `event=telegram_route_failed`
 - `event=telegram_fallback_reply_failed`
 - `event=telegram_fsm_reset_after_error`
+- `event=telegram_webhook_update_skipped`
+- `event=telegram_webhook_update_failed`
 - `event=stats_chart_generation_failed`
 - `event=stats_selected_metric_chart_generation_failed`
 - `event=history_callback_stale`
@@ -626,6 +690,9 @@ Error and warning logs now use stable searchable key-value events where practica
 - `event=telegram_commands_sync_failed`
 - `event=daily_metric_catalog_empty`
 - `event=invalid_reminder_time_skipped`
+- `event=reminder_jobs_reconcile_skipped`
+- `event=reminder_job_reconcile_failed`
+- `event=reminder_jobs_reconciled`
 
 Useful search examples:
 
@@ -643,6 +710,7 @@ Safety behavior:
 - chart failures do not break `/stats`
 - analytics persistence failures do not break user flows
 - summary persistence failures do not break `/stats`
+- stale or unknown stats metric callbacks re-open the metric selector instead of generating a summary for an unavailable metric
 
 ## Staging and Release Discipline
 
@@ -687,6 +755,23 @@ Chart presentation notes:
 See the manual QA checklist here:
 
 - [docs/QA_CHECKLIST.md](docs/QA_CHECKLIST.md)
+
+## Current Development Direction
+
+The Telegram bot foundation is ready enough to move into the next controlled phase.
+
+Current order of work:
+
+1. deploy the current Telegram bot backend and PostgreSQL database to the server
+2. verify server env, migrations, health checks, logs, backup, and rollback basics
+3. add a web interface as a second client of the same backend and domain services
+4. add shared AI analytics later as a common backend layer for both Telegram and web
+
+The planned AI layer should not be Telegram-only. It should start as an isolated backend module/service boundary that consumes prepared analytics snapshots and can expose the same insights to Telegram and the future web interface.
+
+See the detailed plan in:
+
+- [docs/ROADMAP.md](docs/ROADMAP.md)
 
 ## Known MVP Limitations
 

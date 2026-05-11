@@ -4,6 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import { formatErrorLogEvent, formatLogEvent } from '../common/utils/logging.utils';
 import { PrismaService } from '../database/prisma.service';
 import { RedisService } from '../database/redis.service';
+import { TelegramRuntimeStatusService } from '../telegram/telegram.runtime-status';
 
 type HealthStatus = 'up' | 'down' | 'skipped';
 
@@ -30,6 +31,7 @@ export interface ReadinessPayload {
   checks: {
     database: HealthCheckResult;
     redis: HealthCheckResult;
+    telegram: HealthCheckResult;
   };
 }
 
@@ -41,6 +43,7 @@ export class HealthService {
     private readonly configService: ConfigService,
     private readonly prismaService: PrismaService,
     private readonly redisService: RedisService,
+    private readonly telegramRuntimeStatus: TelegramRuntimeStatusService,
   ) {}
 
   getLiveness(): LivenessPayload {
@@ -55,6 +58,7 @@ export class HealthService {
     const checks: ReadinessPayload['checks'] = {
       database: { status: 'up' },
       redis: mode.redisRequired ? { status: 'down', message: 'Redis check not started.' } : { status: 'skipped' },
+      telegram: this.resolveTelegramReadiness(),
     };
 
     try {
@@ -96,7 +100,9 @@ export class HealthService {
 
     const payload: ReadinessPayload = {
       status:
-        checks.database.status === 'up' && (!mode.redisRequired || checks.redis.status === 'up')
+        checks.database.status === 'up' &&
+        (!mode.redisRequired || checks.redis.status === 'up') &&
+        checks.telegram.status !== 'down'
           ? 'ok'
           : 'error',
       timestamp: new Date().toISOString(),
@@ -119,6 +125,40 @@ export class HealthService {
       redisEnabled,
       jobsEnabled,
       redisRequired: redisEnabled || jobsEnabled,
+    };
+  }
+
+  private resolveTelegramReadiness(): HealthCheckResult {
+    const snapshot = this.telegramRuntimeStatus.getSnapshot();
+
+    if (snapshot.status === 'ready') {
+      return { status: 'up' };
+    }
+
+    if (snapshot.status === 'skipped') {
+      return {
+        status: 'skipped',
+        message: snapshot.reason,
+      };
+    }
+
+    if (snapshot.status === 'failed') {
+      return {
+        status: 'down',
+        message: snapshot.errorMessage ?? snapshot.reason ?? 'Telegram runtime failed.',
+      };
+    }
+
+    if (snapshot.required) {
+      return {
+        status: 'down',
+        message: 'Telegram runtime is not ready.',
+      };
+    }
+
+    return {
+      status: 'skipped',
+      message: 'Telegram runtime is not required.',
     };
   }
 }

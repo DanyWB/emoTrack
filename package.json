@@ -20,6 +20,8 @@
     "test:coverage": "jest --runInBand --coverage",
     "test:watch": "jest --watch",
     "check": "npm run lint && npm run build && npm run test:coverage",
+    "audit:prod": "npm audit --omit=dev",
+    "verify": "npm run check && npm run test:db && npm run audit:prod",
     "prisma:migrate": "prisma migrate dev",
     "prisma:generate": "prisma generate",
     "prisma:seed": "prisma db seed"

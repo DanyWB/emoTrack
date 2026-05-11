@@ -89,6 +89,22 @@ export class OnboardingFlow {
     return { step: 'first_checkin_offer' };
   }
 
+  async skipReminderTime(user: User): Promise<OnboardingStepResult> {
+    await this.onboardingService.setRemindersEnabled(user.id, false);
+    await this.remindersService.cancelDailyReminder(user.id);
+    await this.analyticsService.track('reminder_time_skipped', {}, user.id);
+
+    if (!user.onboardingCompleted) {
+      await this.onboardingService.completeOnboarding(user.id);
+      await this.analyticsService.track('onboarding_completed', {}, user.id);
+      this.logger.log(`Completed onboarding for user ${user.id}`);
+    }
+
+    await this.fsmService.setState(user.id, FSM_STATES.onboarding_first_checkin, {});
+
+    return { step: 'first_checkin_offer' };
+  }
+
   async cancel(userId: string): Promise<void> {
     await this.fsmService.clearSession(userId);
   }

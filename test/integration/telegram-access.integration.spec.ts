@@ -54,9 +54,18 @@ describe('Telegram access integration', () => {
 
     await (router as any).handleStartCommand(telegramCtx);
 
-    expect(telegramCtx.reply).toHaveBeenNthCalledWith(1, telegramCopy.onboarding.intro);
-    expect(telegramCtx.reply).toHaveBeenNthCalledWith(2, telegramCopy.onboarding.disclaimer);
-    expect(telegramCtx.reply).toHaveBeenNthCalledWith(3, telegramCopy.onboarding.consentPrompt, expect.any(Object));
+    expect(telegramCtx.reply).toHaveBeenCalledTimes(1);
+
+    const [message, extra] = telegramCtx.reply.mock.calls[0] as [
+      string,
+      { parse_mode?: string; reply_markup?: { inline_keyboard?: Array<Array<{ callback_data: string }>> } },
+    ];
+
+    expect(message).toContain(telegramCopy.onboarding.intro);
+    expect(message).toContain(telegramCopy.onboarding.disclaimer);
+    expect(message).toContain(telegramCopy.onboarding.consentPrompt);
+    expect(extra.parse_mode).toBe('HTML');
+    expect(extra.reply_markup?.inline_keyboard?.[0]?.[0]?.callback_data).toBe(TELEGRAM_CALLBACKS.consentAccept);
 
     const user = await ctx.usersService.findByTelegramId(BigInt(8101));
     expect(user?.consentGiven).toBe(false);
@@ -72,10 +81,18 @@ describe('Telegram access integration', () => {
 
     await (router as any).handleTermsCommand(telegramCtx);
 
-    expect(telegramCtx.reply).toHaveBeenCalledTimes(2);
-    expect((telegramCtx.reply.mock.calls[0] as [string])[0]).toContain(telegramCopy.terms.title);
-    expect((telegramCtx.reply.mock.calls[0] as [string])[0]).toContain(telegramCopy.terms.text);
-    expect((telegramCtx.reply.mock.calls[1] as [string])[0]).toBe(telegramCopy.terms.acceptPrompt);
+    expect(telegramCtx.reply).toHaveBeenCalledTimes(1);
+
+    const [message, extra] = telegramCtx.reply.mock.calls[0] as [
+      string,
+      { parse_mode?: string; reply_markup?: { inline_keyboard?: Array<Array<{ callback_data: string }>> } },
+    ];
+
+    expect(message).toContain(telegramCopy.terms.title);
+    expect(message).toContain(telegramCopy.terms.text);
+    expect(message).toContain(telegramCopy.terms.acceptPrompt);
+    expect(extra.parse_mode).toBe('HTML');
+    expect(extra.reply_markup?.inline_keyboard?.[0]?.[0]?.callback_data).toBe(TELEGRAM_CALLBACKS.consentAccept);
 
     const user = await ctx.usersService.findByTelegramId(BigInt(8102));
     expect(await ctx.fsmService.getState(user!.id)).toBe(FSM_STATES.onboarding_consent);
@@ -105,7 +122,7 @@ describe('Telegram access integration', () => {
     expect(await ctx.fsmService.getState('user-access-1')).toBe(FSM_STATES.onboarding_consent);
   });
 
-  it('accepts terms from the callback flow and unlocks the reminder-time step', async () => {
+  it('accepts terms from the callback flow and offers the daily reminder step', async () => {
     await ctx.usersRepository.create(
       buildUser({
         id: 'user-access-2',
@@ -132,9 +149,58 @@ describe('Telegram access integration', () => {
     const updatedUser = await ctx.usersService.findById('user-access-2');
 
     expect(updatedUser?.consentGiven).toBe(true);
-    expect(telegramCtx.reply).toHaveBeenNthCalledWith(1, telegramCopy.onboarding.consentAccepted);
-    expect(telegramCtx.reply).toHaveBeenNthCalledWith(2, telegramCopy.onboarding.reminderPrompt, expect.any(Object));
+    expect(telegramCtx.reply).toHaveBeenCalledTimes(1);
+
+    const [message, extra] = telegramCtx.reply.mock.calls[0] as [
+      string,
+      { parse_mode?: string; reply_markup?: { inline_keyboard?: Array<Array<{ callback_data: string }>> } },
+    ];
+
+    expect(message).toBe(telegramCopy.onboarding.reminderPrompt);
+    expect(extra.parse_mode).toBe('HTML');
+    expect(extra.reply_markup?.inline_keyboard?.flat().map((button) => button.callback_data)).toEqual([
+      TELEGRAM_CALLBACKS.onboardingReminderLater,
+      TELEGRAM_CALLBACKS.actionCancel,
+    ]);
     expect(await ctx.fsmService.getState('user-access-2')).toBe(FSM_STATES.onboarding_reminder_time);
+  });
+
+  it('lets a new user skip reminder setup and continue to the first check-in offer', async () => {
+    const user = await ctx.usersService.getOrCreateTelegramUser({
+      telegramId: BigInt(8107),
+      username: 'tester',
+      firstName: 'Test',
+      languageCode: 'ru',
+    });
+    await ctx.usersService.setConsentGiven(user.id, true);
+    await ctx.fsmService.setState(user.id, FSM_STATES.onboarding_reminder_time, {});
+
+    const router = createRouter();
+    const telegramCtx = {
+      ...buildBaseContext(8107),
+      callbackQuery: {
+        data: TELEGRAM_CALLBACKS.onboardingReminderLater,
+      },
+      answerCbQuery: jest.fn().mockResolvedValue(undefined),
+      reply: jest.fn().mockResolvedValue(undefined),
+    };
+
+    await (router as any).handleCallbackQuery(telegramCtx);
+
+    const updatedUser = await ctx.usersService.findById(user.id);
+
+    expect(updatedUser).toMatchObject({
+      onboardingCompleted: true,
+      remindersEnabled: false,
+      reminderTime: null,
+    });
+    expect(telegramCtx.reply).toHaveBeenCalledTimes(1);
+    expect(telegramCtx.reply).toHaveBeenNthCalledWith(
+      1,
+      telegramCopy.onboarding.firstCheckinOffer,
+      expect.objectContaining({ parse_mode: 'HTML' }),
+    );
+    expect(await ctx.fsmService.getState(user.id)).toBe(FSM_STATES.onboarding_first_checkin);
   });
 
   it('lets an accepted ready user continue into product flows normally', async () => {
@@ -159,6 +225,43 @@ describe('Telegram access integration', () => {
     expect(
       telegramCtx.reply.mock.calls.every(([message]: [string]) => message !== telegramCopy.terms.accessRequired),
     ).toBe(true);
+  });
+
+  it('opens navigation menu on /start for a ready user', async () => {
+    await ctx.usersRepository.create(
+      buildUser({
+        id: 'user-access-ready-start',
+        telegramId: BigInt(8108),
+        onboardingCompleted: true,
+        consentGiven: true,
+      }),
+    );
+
+    const router = createRouter();
+    const telegramCtx = {
+      ...buildBaseContext(8108),
+      reply: jest.fn().mockResolvedValue(undefined),
+    };
+
+    await (router as any).handleStartCommand(telegramCtx);
+
+    expect(telegramCtx.reply).toHaveBeenCalledTimes(1);
+
+    const [message, extra] = telegramCtx.reply.mock.calls[0] as [
+      string,
+      { parse_mode?: string; reply_markup?: { inline_keyboard?: Array<Array<{ callback_data: string }>> } },
+    ];
+    const callbacks = extra.reply_markup?.inline_keyboard?.flat().map((button) => button.callback_data) ?? [];
+
+    expect(message).toBe(telegramCopy.startup.alreadyReady);
+    expect(extra.parse_mode).toBe('HTML');
+    expect(callbacks).toEqual([
+      TELEGRAM_CALLBACKS.menuStats,
+      TELEGRAM_CALLBACKS.menuHistory,
+      TELEGRAM_CALLBACKS.menuSettings,
+      TELEGRAM_CALLBACKS.menuHelp,
+      TELEGRAM_CALLBACKS.menuTerms,
+    ]);
   });
 
   it('keeps /help available before consent and includes /terms in the command list', async () => {

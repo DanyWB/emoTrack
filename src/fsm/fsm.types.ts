@@ -48,6 +48,7 @@ export interface CheckinDraftPayload extends FsmPayload {
   isUpdate?: boolean;
   noteText?: string;
   selectedTagIds?: string[];
+  confirmedTagIds?: string[];
   eventAdded?: boolean;
   eventFlowSource?: EventFlowSource;
   eventType?: EventType;
@@ -63,4 +64,6 @@ export interface CheckinDraftPayload extends FsmPayload {
   settingsAwaiting?: 'reminder_time' | 'sleep_mode';
   settingsView?: 'main' | 'daily_metrics';
   statsPeriodType?: 'd7' | 'd30' | 'all';
+  telegramPromptMessageId?: number | null;
+  showMenuAfterSave?: boolean;
 }
