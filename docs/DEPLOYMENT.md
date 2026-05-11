@@ -177,9 +177,17 @@ Notes:
 
 - if the database password contains special URL characters, URL-encode it; the generated hex password above avoids that problem
 - `TELEGRAM_BOT_TOKEN` must be real, not the placeholder from `.env.example`
-- `DEFAULT_TIMEZONE` should match the intended default audience; keep another value if needed
+- `DEFAULT_TIMEZONE` should match the intended default audience; it is applied to newly created users
+- changing `DEFAULT_TIMEZONE` does not rewrite existing user rows; update `users.timezone` manually if early users were created with the wrong timezone
 - `TELEGRAM_STARTUP_TIMEOUT_MS` bounds Telegram command sync, webhook registration, and polling readiness; polling itself runs as a background long-polling loop and must not block HTTP startup
 - polling mode requires outbound HTTPS access to Telegram, but no inbound public port for Telegram
+
+To correct existing users after changing the server default timezone:
+
+```bash
+sudo -u postgres psql -d emotrack -c \
+"update users set timezone = 'Europe/Moscow' where timezone = 'Europe/Berlin';"
+```
 
 ### 7. Install dependencies, generate Prisma client, build, migrate, seed
 

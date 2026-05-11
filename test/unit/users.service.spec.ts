@@ -30,6 +30,18 @@ function buildUser(overrides: Partial<User> = {}): User {
 }
 
 describe('UsersService', () => {
+  function createConfigService(defaultTimezone = 'Europe/Berlin') {
+    return {
+      get: jest.fn((key: string) => {
+        const values: Record<string, unknown> = {
+          'app.defaultTimezone': defaultTimezone,
+        };
+
+        return values[key];
+      }),
+    };
+  }
+
   it('rejects settings updates that disable all tracked daily metrics', async () => {
     const currentUser = buildUser();
     const repository = {
@@ -39,7 +51,7 @@ describe('UsersService', () => {
     const dailyMetricsService = {
       ensureUserTrackedMetrics: jest.fn(),
     };
-    const service = new UsersService(repository as never, dailyMetricsService as never);
+    const service = new UsersService(repository as never, dailyMetricsService as never, createConfigService() as never);
 
     await expect(
       service.updateSettings(currentUser.id, {
@@ -69,7 +81,7 @@ describe('UsersService', () => {
     const dailyMetricsService = {
       ensureUserTrackedMetrics: jest.fn().mockResolvedValue(undefined),
     };
-    const service = new UsersService(repository as never, dailyMetricsService as never);
+    const service = new UsersService(repository as never, dailyMetricsService as never, createConfigService() as never);
 
     const result = await service.updateSettings(currentUser.id, {
       trackEnergy: false,
@@ -87,5 +99,39 @@ describe('UsersService', () => {
     expect(result.trackStress).toBe(false);
     expect(result.trackSleep).toBe(false);
     expect(dailyMetricsService.ensureUserTrackedMetrics).toHaveBeenCalledWith(updatedUser);
+  });
+
+  it('creates Telegram users with the configured default timezone', async () => {
+    const createdUser = buildUser({
+      timezone: 'Europe/Moscow',
+    });
+    const repository = {
+      create: jest.fn().mockResolvedValue(createdUser),
+    };
+    const dailyMetricsService = {
+      ensureUserTrackedMetrics: jest.fn().mockResolvedValue(undefined),
+    };
+    const service = new UsersService(
+      repository as never,
+      dailyMetricsService as never,
+      createConfigService('Europe/Moscow') as never,
+    );
+
+    const result = await service.createFromTelegramProfile({
+      telegramId: BigInt(1001),
+      username: 'tester',
+      firstName: 'Test',
+      languageCode: 'ru',
+    });
+
+    expect(repository.create).toHaveBeenCalledWith({
+      telegramId: BigInt(1001),
+      username: 'tester',
+      firstName: 'Test',
+      languageCode: 'ru',
+      timezone: 'Europe/Moscow',
+    });
+    expect(dailyMetricsService.ensureUserTrackedMetrics).toHaveBeenCalledWith(createdUser);
+    expect(result.timezone).toBe('Europe/Moscow');
   });
 });

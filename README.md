@@ -146,6 +146,8 @@ DEFAULT_TIMEZONE=Europe/Berlin
 CHART_TEMP_DIR=./tmp/charts
 ```
 
+`DEFAULT_TIMEZONE` is applied when a new Telegram user is created. Existing users keep the timezone stored in the database until it is changed explicitly.
+
 ### 3. Install Dependencies
 
 ```powershell

@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { SleepMode, type User } from '@prisma/client';
 
 import {
@@ -26,6 +27,7 @@ export class UsersService {
   constructor(
     private readonly usersRepository: UsersRepository,
     private readonly dailyMetricsService: DailyMetricsService,
+    private readonly configService: ConfigService,
   ) {}
 
   findByTelegramId(telegramId: bigint): Promise<User | null> {
@@ -46,6 +48,7 @@ export class UsersService {
       username: profile.username,
       firstName: profile.firstName,
       languageCode: profile.languageCode ?? 'ru',
+      timezone: this.configService.get<string>('app.defaultTimezone', { infer: true }) ?? 'Europe/Berlin',
     });
 
     await this.dailyMetricsService.ensureUserTrackedMetrics(user);
