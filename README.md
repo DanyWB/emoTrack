@@ -729,6 +729,7 @@ Current Stage B operational discipline includes:
 See:
 
 - [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)
+- [docs/SERVER_RUNBOOK.md](docs/SERVER_RUNBOOK.md)
 
 ## Charts and Temp Files
 

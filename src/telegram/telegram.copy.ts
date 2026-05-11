@@ -6,7 +6,10 @@ import {
   type CoreCheckinState,
 } from '../checkins/checkins.steps';
 import { formatDateKey } from '../common/utils/date.utils';
-import { DAILY_METRIC_LABELS_BY_KEY, type DailyMetricCatalogKey } from '../daily-metrics/daily-metrics.catalog';
+import {
+  DAILY_METRIC_LABELS_BY_KEY,
+  type DailyMetricCatalogKey,
+} from '../daily-metrics/daily-metrics.catalog';
 
 export const EVENT_TYPE_LABELS: Record<EventType, string> = {
   work: 'Работа',
@@ -123,7 +126,8 @@ export const telegramCopy = {
     menuTerms: '📄 Соглашение',
   },
   startup: {
-    alreadyReady: '<b>👋 Ты уже в emoTrack</b>\n━━━━━━━━━━━━\nОткрываю меню. Выбери нужный раздел ниже.',
+    alreadyReady:
+      '<b>👋 Ты уже в emoTrack</b>\n━━━━━━━━━━━━\nОткрываю меню. Выбери нужный раздел ниже.',
     unknownInput: 'Не понял сообщение. Выбери действие из меню или используй команду.',
   },
   placeholders: {
@@ -131,7 +135,8 @@ export const telegramCopy = {
   },
   common: {
     cancelled: 'Действие отменено.',
-    cancelledToMenu: '<b>🧭 Действие остановлено</b>\n━━━━━━━━━━━━\nВернул тебя в меню. Можно выбрать следующий раздел ниже.',
+    cancelledToMenu:
+      '<b>🧭 Действие остановлено</b>\n━━━━━━━━━━━━\nВернул тебя в меню. Можно выбрать следующий раздел ниже.',
     backUnavailable: 'Назад на этом шаге недоступно.',
     actionNotAllowed: 'Это действие сейчас недоступно. Продолжим текущий шаг.',
     updated: 'Сохранено.',
@@ -153,7 +158,8 @@ export const telegramCopy = {
       '• предложу ежедневное напоминание',
       '• сразу сможешь отметить состояние за сегодня',
     ].join('\n'),
-    disclaimer: '<i>Это инструмент самонаблюдения. Он не заменяет специалиста и не ставит диагнозы.</i>',
+    disclaimer:
+      '<i>Это инструмент самонаблюдения. Он не заменяет специалиста и не ставит диагнозы.</i>',
     consentPrompt:
       '<b>📄 Перед стартом</b>\nЧтобы сохранять записи, нужно принять пользовательское соглашение. Перед согласием можно открыть /terms.',
     consentAccepted: '✅ Соглашение принято.',
@@ -219,7 +225,8 @@ export const telegramCopy = {
   },
   checkin: {
     started: '<b>🌤 Check-in за сегодня</b>\n━━━━━━━━━━━━\nОтметим состояние короткими шагами.',
-    resumed: '<b>↩️ Продолжим текущий check-in</b>\n━━━━━━━━━━━━\nВернемся к последнему незавершенному шагу.',
+    resumed:
+      '<b>↩️ Продолжим текущий check-in</b>\n━━━━━━━━━━━━\nВернемся к последнему незавершенному шагу.',
     interrupted: 'Текущий check-in сбился. Начни заново командой /checkin.',
     notePrompt: [
       '<b>📝 Заметка к check-in</b>',
@@ -233,7 +240,8 @@ export const telegramCopy = {
       'Отправь заметку одним сообщением.',
       '<i>Пиши коротко и по делу: что могло повлиять на оценки сегодня.</i>',
     ].join('\n'),
-    tagsPrompt: '<b>🏷 Теги состояния</b>\n━━━━━━━━━━━━\nМожно отметить несколько тегов, чтобы потом легче читать историю.',
+    tagsPrompt:
+      '<b>🏷 Теги состояния</b>\n━━━━━━━━━━━━\nМожно отметить несколько тегов, чтобы потом легче читать историю.',
     tagsSelectionPrompt: 'Выбери один или несколько тегов и нажми «Готово».',
     tagsSaved: 'Теги сохранены.',
     noActiveTags: 'Сейчас нет активных тегов. Пропускаем этот шаг.',
@@ -249,8 +257,10 @@ export const telegramCopy = {
     startedStandalone:
       '<b>🗂 Новое событие</b>\n━━━━━━━━━━━━\nСобытие — отдельный факт дня: работа, спорт, встреча, сон или здоровье. Добавим категорию и оценку, чтобы позже видеть связь с состоянием.',
     typePrompt: '<b>🗂 Тип события</b>\n━━━━━━━━━━━━\nВыбери категорию кнопкой ниже.',
-    titlePrompt: '<b>✍️ Название события</b>\n━━━━━━━━━━━━\nУкажи короткое название одним сообщением.',
-    scorePrompt: '<b>🔢 Оценка события</b>\n━━━━━━━━━━━━\nОцени от <b>0</b> до <b>10</b>, где 0 = ужасно, 10 = прекрасно.',
+    titlePrompt:
+      '<b>✍️ Название события</b>\n━━━━━━━━━━━━\nУкажи короткое название одним сообщением.',
+    scorePrompt:
+      '<b>🔢 Оценка события</b>\n━━━━━━━━━━━━\nОцени от <b>0</b> до <b>10</b>, где 0 = ужасно, 10 = прекрасно.',
     descriptionPrompt:
       '<b>📝 Описание события</b>\n━━━━━━━━━━━━\nМожно добавить детали именно об этом событии или нажать «Далее».',
     endDatePrompt:
@@ -317,7 +327,8 @@ export const telegramCopy = {
     sleepModeLabel: 'Режим сна',
     dailyTrackingLabel: 'Критерии',
     dailyMetricsTitle: 'Критерии check-in:',
-    dailyMetricsHint: 'Выбери, что бот спрашивает в ежедневной отметке. Прошлые записи это не меняет.',
+    dailyMetricsHint:
+      'Выбери, что бот спрашивает в ежедневной отметке. Прошлые записи это не меняет.',
     dailyMetricsActiveLabel: 'Сейчас активно',
     dailyMetricsGuard: 'Нужно оставить хотя бы один критерий.',
     dailyMetricsStale: 'Этот экран уже неактуален. Показываю текущие настройки.',
@@ -330,11 +341,21 @@ export const telegramCopy = {
     remindersEnabledUpdated: 'Напоминания включены.',
     remindersEnabledWithoutDelivery:
       'Напоминания включены. Время сохранено, но фоновая отправка в этой среде недоступна.',
-    remindersDisabledUpdated: 'Напоминания выключены. Ежедневные и еженедельные отправки остановлены.',
+    remindersDisabledUpdated:
+      'Напоминания выключены. Ежедневные и еженедельные отправки остановлены.',
     dailyTrackingUpdated: 'Критерии check-in обновлены.',
   },
   reminders: {
-    dailyPrompt: 'Напоминание: отметь состояние за сегодня командой /checkin.',
+    dailyPrompt: [
+      '⏰ Время короткого check-in',
+      '',
+      'Как ты сегодня?',
+      'Отметь настроение, энергию, сон и важные события дня.',
+      '',
+      'Это займет около минуты',
+      '',
+      '👉 /checkin',
+    ].join('\n'),
     weeklyDigestTitle: 'Еженедельная сводка',
     weeklyDigestLead: 'Краткий итог за последние 7 дней.',
   },
@@ -374,9 +395,9 @@ export const telegramCopy = {
     invalidEventDescription: 'Описание слишком длинное или пустое. Отправь более короткий текст.',
     invalidEventEndDate:
       'Некорректная дата окончания. Используй формат YYYY-MM-DD, и дата не должна быть раньше даты начала события.',
-    invalidDailyTrackingConfiguration:
-      'Нужно оставить хотя бы одну ежедневную метрику.',
-    missingDailyMetricValue: 'Нужно заполнить хотя бы одну ежедневную метрику, прежде чем завершать запись.',
+    invalidDailyTrackingConfiguration: 'Нужно оставить хотя бы одну ежедневную метрику.',
+    missingDailyMetricValue:
+      'Нужно заполнить хотя бы одну ежедневную метрику, прежде чем завершать запись.',
   },
 } as const;
 
@@ -486,7 +507,9 @@ export function escapeHtml(value: string): string {
 
 export function formatCheckinConfirmation(data: CheckinConfirmationData): string {
   const lines = [
-    data.updated ? '✅ <b>Запись за сегодня обновлена</b>' : '✅ <b>Запись за сегодня сохранена</b>',
+    data.updated
+      ? '✅ <b>Запись за сегодня обновлена</b>'
+      : '✅ <b>Запись за сегодня сохранена</b>',
     '━━━━━━━━━━━━',
   ];
   const coreMetricsLine = formatCheckinCoreMetrics(data);
@@ -571,10 +594,7 @@ function formatCheckinSleep(data: CheckinConfirmationData): string | null {
   return null;
 }
 
-export function getCheckinPrompt(
-  state: CoreCheckinState,
-  config: CheckinStepConfig,
-): string {
+export function getCheckinPrompt(state: CoreCheckinState, config: CheckinStepConfig): string {
   const stepPosition = getCoreCheckinStepPosition(config, state);
   const stepNumber = stepPosition?.stepNumber ?? 1;
   const totalSteps = stepPosition?.totalSteps ?? 1;
@@ -593,7 +613,11 @@ export function getCheckinPrompt(
   }
 }
 
-export function getExtraMetricCheckinPrompt(label: string, stepNumber: number, totalSteps: number): string {
+export function getExtraMetricCheckinPrompt(
+  label: string,
+  stepNumber: number,
+  totalSteps: number,
+): string {
   const safeLabel = escapeHtml(label);
   return `<b>🧩 Шаг ${stepNumber}/${totalSteps} · ${safeLabel}</b>\n━━━━━━━━━━━━\nОцени <b>${safeLabel.toLowerCase()}</b>: <b>0..10</b>`;
 }
@@ -709,18 +733,26 @@ export function getTrackedMetricToggleButtonLabel(
   enabled: boolean,
 ): string {
   if (metric === 'trackMood') {
-    return enabled ? telegramCopy.buttons.settingsTrackMoodOn : telegramCopy.buttons.settingsTrackMoodOff;
+    return enabled
+      ? telegramCopy.buttons.settingsTrackMoodOn
+      : telegramCopy.buttons.settingsTrackMoodOff;
   }
 
   if (metric === 'trackEnergy') {
-    return enabled ? telegramCopy.buttons.settingsTrackEnergyOn : telegramCopy.buttons.settingsTrackEnergyOff;
+    return enabled
+      ? telegramCopy.buttons.settingsTrackEnergyOn
+      : telegramCopy.buttons.settingsTrackEnergyOff;
   }
 
   if (metric === 'trackStress') {
-    return enabled ? telegramCopy.buttons.settingsTrackStressOn : telegramCopy.buttons.settingsTrackStressOff;
+    return enabled
+      ? telegramCopy.buttons.settingsTrackStressOn
+      : telegramCopy.buttons.settingsTrackStressOff;
   }
 
-  return enabled ? telegramCopy.buttons.settingsTrackSleepOn : telegramCopy.buttons.settingsTrackSleepOff;
+  return enabled
+    ? telegramCopy.buttons.settingsTrackSleepOn
+    : telegramCopy.buttons.settingsTrackSleepOff;
 }
 
 export function getSettingsMetricToggleButtonLabel(label: string, enabled: boolean): string {
@@ -802,7 +834,10 @@ export function formatHistoryEntryDetail(entry: HistoryEntryDetailData): string 
     for (const event of entry.events) {
       const eventTypeLabel = EVENT_TYPE_LABELS[event.eventType] ?? event.eventType;
       const eventRange = formatHistoryEventRange(event.eventDate, event.eventEndDate ?? null);
-      const summaryParts = [`${eventTypeLabel}: <b>${escapeHtml(event.title)}</b>`, `оценка ${event.eventScore}`];
+      const summaryParts = [
+        `${eventTypeLabel}: <b>${escapeHtml(event.title)}</b>`,
+        `оценка ${event.eventScore}`,
+      ];
 
       if (eventRange) {
         summaryParts.push(eventRange);
@@ -896,7 +931,11 @@ function formatHistoryExtraMetrics(
   return `🧩 <b>Доп. метрики</b>: ${summary}`;
 }
 
-function formatHistoryEntrySummary(hasNote: boolean, tagsCount: number, eventsCount: number): string {
+function formatHistoryEntrySummary(
+  hasNote: boolean,
+  tagsCount: number,
+  eventsCount: number,
+): string {
   const markers: string[] = [];
 
   if (hasNote) {
@@ -974,7 +1013,10 @@ function formatTrackedMetricsSummary(
 
   const enabledMetrics = (
     Object.entries(DAILY_TRACKING_LABELS) as Array<
-      [keyof typeof DAILY_TRACKING_LABELS, (typeof DAILY_TRACKING_LABELS)[keyof typeof DAILY_TRACKING_LABELS]]
+      [
+        keyof typeof DAILY_TRACKING_LABELS,
+        (typeof DAILY_TRACKING_LABELS)[keyof typeof DAILY_TRACKING_LABELS],
+      ]
     >
   )
     .filter(([key]) => data[key])
@@ -1010,5 +1052,3 @@ export function formatStatsSelectedMetricChartCaption(
 export function formatStatsSleepChartCaption(periodType: SummaryPeriodType): string {
   return `${telegramCopy.stats.chartSelectedMetricPrefix}: Сон, ${STATS_PERIOD_LABELS[periodType].toLowerCase()}.`;
 }
-
-

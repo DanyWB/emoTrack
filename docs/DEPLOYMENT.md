@@ -5,6 +5,8 @@ This document is intentionally practical and conservative.
 It does not describe a full CI/CD system because this repository does not include one.
 It documents the current recommended manual staging and release discipline.
 
+For day-to-day operations on the current Ubuntu server, use [SERVER_RUNBOOK.md](SERVER_RUNBOOK.md).
+
 ## Scope and Guarantees
 
 Current operational support includes:

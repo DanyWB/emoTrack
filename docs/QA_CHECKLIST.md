@@ -238,6 +238,7 @@ Use this checklist before a local handoff or release candidate review.
 - enabling reminders with `JOBS_ENABLED=false` keeps settings saved but does not imply background delivery is active
 - reminder time can be updated
 - invalid reminder time is rejected
+- delivered daily reminder text is readable and includes the polished emoji/check-in call to action
 - reminder-time editing uses `Назад`, not generic `Отмена`
 - after a valid reminder time update, the refreshed settings screen is shown again
 - reminder messages distinguish between “saved” and “background delivery unavailable in this environment”
