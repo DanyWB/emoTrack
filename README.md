@@ -407,7 +407,7 @@ Runtime note:
 
 - command registration is best-effort
 - if Telegram command sync fails, startup continues and the bot still launches in the current mode
-- Telegram command sync, webhook registration, and polling launch are bounded by `TELEGRAM_STARTUP_TIMEOUT_MS`; if Telegram API hangs, HTTP startup continues and readiness reports Telegram as failed
+- Telegram command sync, webhook registration, and polling readiness are bounded by `TELEGRAM_STARTUP_TIMEOUT_MS`; polling runs as a background Telegram loop, so HTTP startup is not blocked by the long-polling lifecycle
 - local polling mode behavior is unchanged
 
 ## Telegram Navigation UX

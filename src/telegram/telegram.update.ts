@@ -75,10 +75,7 @@ export class TelegramUpdate implements OnModuleInit, OnModuleDestroy {
         return;
       }
 
-      await this.withStartupTimeout(this.bot.launch(), 'launch');
-      this.isLaunched = true;
-      this.telegramRuntimeStatus.markReady(this.mode);
-      this.logger.log('Telegram bot launched in polling mode.');
+      this.launchPollingInBackground();
     } catch (error) {
       const err = toLogErrorDetails(error);
       this.telegramRuntimeStatus.markFailed(this.mode, error);
@@ -114,6 +111,37 @@ export class TelegramUpdate implements OnModuleInit, OnModuleDestroy {
     }
 
     return null;
+  }
+
+  private launchPollingInBackground(): void {
+    const timeoutMs = this.resolveStartupTimeoutMs();
+    let ready = false;
+
+    const timeout = setTimeout(() => {
+      if (ready) {
+        return;
+      }
+
+      const error = new Error(`Telegram startup operation timed out: launch after ${timeoutMs}ms.`);
+      this.telegramRuntimeStatus.markFailed(this.mode, error, 'polling_launch_timeout');
+      this.logger.error(formatErrorLogEvent('telegram_launch_failed', error, { mode: this.mode }));
+    }, timeoutMs);
+
+    this.bot
+      .launch(() => {
+        ready = true;
+        clearTimeout(timeout);
+        this.isLaunched = true;
+        this.telegramRuntimeStatus.markReady(this.mode);
+        this.logger.log('Telegram bot launched in polling mode.');
+      })
+      .catch((error) => {
+        clearTimeout(timeout);
+        this.isLaunched = false;
+        const err = toLogErrorDetails(error);
+        this.telegramRuntimeStatus.markFailed(this.mode, error);
+        this.logger.error(formatErrorLogEvent('telegram_launch_failed', error, { mode: this.mode }), err.stack);
+      });
   }
 
   private async withStartupTimeout<T>(operation: Promise<T>, operationName: string): Promise<T> {

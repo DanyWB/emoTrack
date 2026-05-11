@@ -36,7 +36,10 @@ describe('TelegramUpdate', () => {
       telegram: {
         setMyCommands: jest.fn().mockResolvedValue(undefined),
       },
-      launch: jest.fn().mockResolvedValue(undefined),
+      launch: jest.fn((onLaunch?: () => void) => {
+        onLaunch?.();
+        return new Promise(() => undefined);
+      }),
       stop: jest.fn().mockResolvedValue(undefined),
     };
     const router = {
@@ -49,7 +52,7 @@ describe('TelegramUpdate', () => {
 
     expect(router.register).toHaveBeenCalledWith(bot);
     expect(bot.telegram.setMyCommands).toHaveBeenCalledWith([...TELEGRAM_COMMANDS]);
-    expect(bot.launch).toHaveBeenCalledTimes(1);
+    expect(bot.launch).toHaveBeenCalledWith(expect.any(Function));
     expect(runtimeStatus.markStarting).toHaveBeenCalledWith('polling', true);
     expect(runtimeStatus.markReady).toHaveBeenCalledWith('polling');
   });
@@ -60,7 +63,10 @@ describe('TelegramUpdate', () => {
         setMyCommands: jest.fn().mockResolvedValue(undefined),
         setWebhook: jest.fn().mockResolvedValue(undefined),
       },
-      launch: jest.fn().mockResolvedValue(undefined),
+      launch: jest.fn((onLaunch?: () => void) => {
+        onLaunch?.();
+        return new Promise(() => undefined);
+      }),
       stop: jest.fn().mockResolvedValue(undefined),
     };
     const router = {
@@ -96,7 +102,10 @@ describe('TelegramUpdate', () => {
       telegram: {
         setMyCommands: jest.fn().mockRejectedValue(new Error('set commands failed')),
       },
-      launch: jest.fn().mockResolvedValue(undefined),
+      launch: jest.fn((onLaunch?: () => void) => {
+        onLaunch?.();
+        return new Promise(() => undefined);
+      }),
       stop: jest.fn().mockResolvedValue(undefined),
     };
     const router = {
@@ -109,7 +118,7 @@ describe('TelegramUpdate', () => {
       await update.onModuleInit();
 
       expect(bot.telegram.setMyCommands).toHaveBeenCalledWith([...TELEGRAM_COMMANDS]);
-      expect(bot.launch).toHaveBeenCalledTimes(1);
+      expect(bot.launch).toHaveBeenCalledWith(expect.any(Function));
       expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('event=telegram_commands_sync_failed'));
       expect(runtimeStatus.markReady).toHaveBeenCalledWith('polling');
     } finally {
@@ -124,7 +133,10 @@ describe('TelegramUpdate', () => {
       telegram: {
         setMyCommands: jest.fn().mockReturnValue(new Promise(() => undefined)),
       },
-      launch: jest.fn().mockResolvedValue(undefined),
+      launch: jest.fn((onLaunch?: () => void) => {
+        onLaunch?.();
+        return new Promise(() => undefined);
+      }),
       stop: jest.fn().mockResolvedValue(undefined),
     };
     const router = {
@@ -149,7 +161,7 @@ describe('TelegramUpdate', () => {
       await initPromise;
 
       expect(bot.telegram.setMyCommands).toHaveBeenCalledWith([...TELEGRAM_COMMANDS]);
-      expect(bot.launch).toHaveBeenCalledTimes(1);
+      expect(bot.launch).toHaveBeenCalledWith(expect.any(Function));
       expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('event=telegram_commands_sync_failed'));
       expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('setMyCommands'));
       expect(runtimeStatus.markReady).toHaveBeenCalledWith('polling');
@@ -176,8 +188,9 @@ describe('TelegramUpdate', () => {
 
     try {
       await update.onModuleInit();
+      await Promise.resolve();
 
-      expect(bot.launch).toHaveBeenCalledTimes(1);
+      expect(bot.launch).toHaveBeenCalledWith(expect.any(Function));
       expect(runtimeStatus.markFailed).toHaveBeenCalledWith('polling', expect.any(Error));
       expect(errorSpy).toHaveBeenCalledWith(
         expect.stringContaining('event=telegram_launch_failed'),
@@ -216,19 +229,17 @@ describe('TelegramUpdate', () => {
     try {
       const initPromise = update.onModuleInit();
 
-      await jest.advanceTimersByTimeAsync(1000);
       await initPromise;
+      await jest.advanceTimersByTimeAsync(1000);
 
-      expect(bot.launch).toHaveBeenCalledTimes(1);
-      expect(runtimeStatus.markFailed).toHaveBeenCalledWith('polling', expect.any(Error));
-      expect(errorSpy).toHaveBeenCalledWith(
-        expect.stringContaining('event=telegram_launch_failed'),
-        expect.any(String),
+      expect(bot.launch).toHaveBeenCalledWith(expect.any(Function));
+      expect(runtimeStatus.markFailed).toHaveBeenCalledWith(
+        'polling',
+        expect.any(Error),
+        'polling_launch_timeout',
       );
-      expect(errorSpy).toHaveBeenCalledWith(
-        expect.stringContaining('launch after 1000ms'),
-        expect.any(String),
-      );
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('event=telegram_launch_failed'));
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('launch after 1000ms'));
     } finally {
       errorSpy.mockRestore();
       jest.useRealTimers();
