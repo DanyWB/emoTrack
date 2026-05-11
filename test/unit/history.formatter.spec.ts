@@ -1,4 +1,4 @@
-import { formatHistoryEntries, telegramCopy } from '../../src/telegram/telegram.copy';
+﻿import { formatHistoryEntries, telegramCopy } from '../../src/telegram/telegram.copy';
 
 describe('formatHistoryEntries', () => {
   it('renders compact history items without losing meaning', () => {
@@ -12,6 +12,7 @@ describe('formatHistoryEntries', () => {
           sleepHours: 7.5,
           sleepQuality: 8,
           hasNote: true,
+          tagsCount: 2,
           eventsCount: 2,
         },
         {
@@ -20,6 +21,7 @@ describe('formatHistoryEntries', () => {
           energyScore: 5,
           stressScore: 5,
           hasNote: false,
+          tagsCount: 0,
           eventsCount: 0,
         },
       ],
@@ -28,10 +30,10 @@ describe('formatHistoryEntries', () => {
 
     expect(text).toContain(telegramCopy.history.moreTitle);
     expect(text).toContain('• 12.03.2026');
-    expect(text).toContain('Настр./Энерг./Стресс: 7/6/4');
+    expect(text).toContain('Настроение / энергия / стресс: 7 / 6 / 4');
     expect(text).toContain('Сон: 7.5 ч, качество 8');
-    expect(text).toContain('Заметка: есть · События: 2');
+    expect(text).toContain('Есть заметка · 2 тега · 2 события');
     expect(text).toContain('• 11.03.2026');
-    expect(text).toContain('Заметка: — · События: 0');
+    expect(text).toContain('0 событий');
   });
 });

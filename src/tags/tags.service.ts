@@ -15,6 +15,14 @@ export class TagsService {
     return this.tagsRepository.findByKeys(keys);
   }
 
+  resolveTagsByIds(ids: string[]): Promise<PredefinedTag[]> {
+    if (ids.length === 0) {
+      return Promise.resolve([]);
+    }
+
+    return this.tagsRepository.findByIds(ids);
+  }
+
   resolveActiveTagsByIds(ids: string[]): Promise<PredefinedTag[]> {
     if (ids.length === 0) {
       return Promise.resolve([]);

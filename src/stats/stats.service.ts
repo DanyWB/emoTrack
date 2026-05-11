@@ -1,8 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { SummaryPeriodType, type DailyEntry, type Event } from '@prisma/client';
 
-import { CheckinsService } from '../checkins/checkins.service';
+import { CheckinsService, type EntryWithExtraMetricScores } from '../checkins/checkins.service';
 import { formatDateKey } from '../common/utils/date.utils';
+import { DAILY_METRIC_LABELS_BY_KEY, type DailyMetricCatalogKey } from '../daily-metrics/daily-metrics.catalog';
 import { EventsService } from '../events/events.service';
 import { doesEventOverlapDay } from '../events/events.utils';
 import { average, roundToTwo } from './calculators/stats.calculator';
@@ -27,10 +28,14 @@ import {
   type StatsAverages,
   type StatsDaySummary,
   type StatsDelta,
+  type StatsExtraMetricAverage,
   type StatsEventCompanionPattern,
   type StatsPatternInsights,
+  type StatsSelectedMetricKey,
   type StatsSleepStatePattern,
   type StatsWeekdayMoodPattern,
+  type SelectedMetricChartPoint,
+  type SelectedMetricStatsPayload,
 } from './stats.types';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -54,8 +59,11 @@ export class StatsService {
     options: { timezone?: string | null } = {},
   ): Promise<PeriodStatsPayload> {
     const range = this.resolvePeriodRange(periodType, options.timezone);
-    const entries = await this.checkinsService.getEntriesForPeriod(userId, range.periodStart, range.periodEnd);
-    const events = await this.eventsService.getEventsForPeriod(userId, range.periodStart, range.periodEnd);
+    const [entries, extraMetricAverages, events] = await Promise.all([
+      this.checkinsService.getEntriesForPeriod(userId, range.periodStart, range.periodEnd),
+      this.checkinsService.getExtraMetricAveragesForPeriod(userId, range.periodStart, range.periodEnd),
+      this.eventsService.getEventsForPeriod(userId, range.periodStart, range.periodEnd),
+    ]);
     const isLowData = isLowDataStats(entries.length);
 
     const averages = this.calculateAverages(entries);
@@ -94,6 +102,10 @@ export class StatsService {
       eventsCount: events.length,
       isLowData,
       averages,
+      extraMetricAverages: extraMetricAverages.map((metric) => ({
+        ...metric,
+        average: roundToTwo(metric.average),
+      })),
       bestDay,
       worstDay,
       eventBreakdown,
@@ -118,6 +130,22 @@ export class StatsService {
     };
   }
 
+  async buildSelectedMetricStatsFromPayload(
+    userId: string,
+    payload: PeriodStatsPayload,
+    metricKey: StatsSelectedMetricKey,
+  ): Promise<SelectedMetricStatsPayload> {
+    if (metricKey === 'sleep') {
+      return this.buildSelectedSleepMetricStats(payload);
+    }
+
+    if (this.isLegacyCoreMetric(metricKey)) {
+      return this.buildSelectedCoreMetricStats(payload, metricKey);
+    }
+
+    return this.buildSelectedExtraMetricStats(userId, payload, metricKey);
+  }
+
   calculateAverages(entries: DailyEntry[]): StatsAverages {
     const moodValues = entries.map((entry) => entry.moodScore).filter(isNumber);
     const energyValues = entries.map((entry) => entry.energyScore).filter(isNumber);
@@ -138,8 +166,158 @@ export class StatsService {
     };
   }
 
+  calculateExtraMetricAverages(entries: Array<Pick<EntryWithExtraMetricScores, 'extraMetricScores'>>): StatsExtraMetricAverage[] {
+    const metricsByKey = new Map<string, { label: string; values: number[] }>();
+
+    for (const entry of entries) {
+      for (const metric of entry.extraMetricScores) {
+        const current: { label: string; values: number[] } = metricsByKey.get(metric.key) ?? {
+          label: metric.label,
+          values: [],
+        };
+        current.values.push(metric.value);
+        metricsByKey.set(metric.key, current);
+      }
+    }
+
+    return [...metricsByKey.entries()]
+      .map(([key, data]) => ({
+        key,
+        label: data.label,
+        average: roundToTwo(average(data.values) ?? 0),
+        observationsCount: data.values.length,
+      }))
+      .sort((left, right) => left.label.localeCompare(right.label));
+  }
+
+  private buildSelectedCoreMetricStats(
+    payload: PeriodStatsPayload,
+    metricKey: 'mood' | 'energy' | 'stress',
+  ): SelectedMetricStatsPayload {
+    const metricLabel = DAILY_METRIC_LABELS_BY_KEY[metricKey];
+    const chartPoints = payload.chartPoints.map((point) => ({
+      date: point.date,
+      value: this.getCoreMetricPointValue(point, metricKey),
+    }));
+    const observationsCount = chartPoints.filter((point) => typeof point.value === 'number').length;
+
+    return {
+      periodType: payload.periodType,
+      periodStart: payload.periodStart,
+      periodEnd: payload.periodEnd,
+      entriesCount: payload.entriesCount,
+      eventsCount: payload.eventsCount,
+      isLowData: payload.isLowData,
+      metricKey,
+      metricLabel,
+      metricKind: 'score',
+      observationsCount,
+      average: payload.averages[metricKey],
+      deltaVsPreviousPeriod: payload.deltaVsPreviousPeriod?.[metricKey] ?? null,
+      sleepHoursDeltaVsPreviousPeriod: null,
+      sleepQualityDeltaVsPreviousPeriod: null,
+      bestDay: metricKey === 'mood' ? payload.bestDay : null,
+      worstDay: metricKey === 'mood' ? payload.worstDay : null,
+      sleepHoursAverage: null,
+      sleepQualityAverage: null,
+      sleepHoursObservationsCount: 0,
+      sleepQualityObservationsCount: 0,
+      chartPoints,
+      sleepChartPoints: [],
+    };
+  }
+
+  private buildSelectedSleepMetricStats(payload: PeriodStatsPayload): SelectedMetricStatsPayload {
+    const sleepChartPoints = payload.chartPoints.map((point) => ({
+      date: point.date,
+      sleepHours: point.sleepHours,
+      sleepQuality: point.sleepQuality,
+      isSleepMissing: point.isSleepMissing,
+    }));
+
+    return {
+      periodType: payload.periodType,
+      periodStart: payload.periodStart,
+      periodEnd: payload.periodEnd,
+      entriesCount: payload.entriesCount,
+      eventsCount: payload.eventsCount,
+      isLowData: payload.isLowData,
+      metricKey: 'sleep',
+      metricLabel: DAILY_METRIC_LABELS_BY_KEY.sleep,
+      metricKind: 'sleep_block',
+      observationsCount: sleepChartPoints.filter(
+        (point) => typeof point.sleepHours === 'number' || typeof point.sleepQuality === 'number',
+      ).length,
+      average: null,
+      deltaVsPreviousPeriod: null,
+      sleepHoursDeltaVsPreviousPeriod: payload.deltaVsPreviousPeriod?.sleepHours ?? null,
+      sleepQualityDeltaVsPreviousPeriod: payload.deltaVsPreviousPeriod?.sleepQuality ?? null,
+      bestDay: null,
+      worstDay: null,
+      sleepHoursAverage: payload.averages.sleepHours,
+      sleepQualityAverage: payload.averages.sleepQuality,
+      sleepHoursObservationsCount: sleepChartPoints.filter((point) => typeof point.sleepHours === 'number').length,
+      sleepQualityObservationsCount: sleepChartPoints.filter((point) => typeof point.sleepQuality === 'number').length,
+      chartPoints: [],
+      sleepChartPoints,
+    };
+  }
+
+  private async buildSelectedExtraMetricStats(
+    userId: string,
+    payload: PeriodStatsPayload,
+    metricKey: DailyMetricCatalogKey,
+  ): Promise<SelectedMetricStatsPayload> {
+    const selectedAverage = payload.extraMetricAverages.find((metric) => metric.key === metricKey) ?? null;
+    const entriesWithExtraMetrics =
+      selectedAverage && selectedAverage.observationsCount > 0
+        ? await this.checkinsService.getEntriesForPeriodWithExtraMetrics(userId, payload.periodStart, payload.periodEnd)
+        : [];
+    const extraMetricValuesByDate = new Map<string, number>();
+
+    for (const entry of entriesWithExtraMetrics) {
+      const metric = entry.extraMetricScores.find((item) => item.key === metricKey);
+
+      if (!metric) {
+        continue;
+      }
+
+      extraMetricValuesByDate.set(formatDateKey(entry.entryDate), metric.value);
+    }
+
+    const chartPoints: SelectedMetricChartPoint[] = payload.chartPoints.map((point) => ({
+      date: point.date,
+      value: extraMetricValuesByDate.get(point.date),
+    }));
+
+    return {
+      periodType: payload.periodType,
+      periodStart: payload.periodStart,
+      periodEnd: payload.periodEnd,
+      entriesCount: payload.entriesCount,
+      eventsCount: payload.eventsCount,
+      isLowData: payload.isLowData,
+      metricKey,
+      metricLabel: selectedAverage?.label ?? DAILY_METRIC_LABELS_BY_KEY[metricKey],
+      metricKind: 'score',
+      observationsCount: selectedAverage?.observationsCount ?? 0,
+      average: selectedAverage?.average ?? null,
+      deltaVsPreviousPeriod: null,
+      sleepHoursDeltaVsPreviousPeriod: null,
+      sleepQualityDeltaVsPreviousPeriod: null,
+      bestDay: null,
+      worstDay: null,
+      sleepHoursAverage: null,
+      sleepQualityAverage: null,
+      sleepHoursObservationsCount: 0,
+      sleepQualityObservationsCount: 0,
+      chartPoints,
+      sleepChartPoints: [],
+    };
+  }
+
   findBestDay(entries: DailyEntry[]): StatsDaySummary | null {
-    const eligibleEntries = entries.filter((entry) => this.hasCompleteCoreScores(entry));
+    const eligibleEntries = entries.filter((entry) => isNumber(entry.moodScore));
 
     if (eligibleEntries.length === 0) {
       return null;
@@ -150,11 +328,11 @@ export class StatsService {
         return (right.moodScore as number) - (left.moodScore as number);
       }
 
-      if (left.energyScore !== right.energyScore) {
+      if (isNumber(left.energyScore) && isNumber(right.energyScore) && left.energyScore !== right.energyScore) {
         return (right.energyScore as number) - (left.energyScore as number);
       }
 
-      if (left.stressScore !== right.stressScore) {
+      if (isNumber(left.stressScore) && isNumber(right.stressScore) && left.stressScore !== right.stressScore) {
         return (left.stressScore as number) - (right.stressScore as number);
       }
 
@@ -165,7 +343,7 @@ export class StatsService {
   }
 
   findWorstDay(entries: DailyEntry[]): StatsDaySummary | null {
-    const eligibleEntries = entries.filter((entry) => this.hasCompleteCoreScores(entry));
+    const eligibleEntries = entries.filter((entry) => isNumber(entry.moodScore));
 
     if (eligibleEntries.length === 0) {
       return null;
@@ -176,11 +354,11 @@ export class StatsService {
         return (left.moodScore as number) - (right.moodScore as number);
       }
 
-      if (left.energyScore !== right.energyScore) {
+      if (isNumber(left.energyScore) && isNumber(right.energyScore) && left.energyScore !== right.energyScore) {
         return (left.energyScore as number) - (right.energyScore as number);
       }
 
-      if (left.stressScore !== right.stressScore) {
+      if (isNumber(left.stressScore) && isNumber(right.stressScore) && left.stressScore !== right.stressScore) {
         return (right.stressScore as number) - (left.stressScore as number);
       }
 
@@ -421,8 +599,8 @@ export class StatsService {
     return {
       date: formatDateKey(entry.entryDate),
       moodScore: entry.moodScore as number,
-      energyScore: entry.energyScore as number,
-      stressScore: entry.stressScore as number,
+      energyScore: entry.energyScore ?? null,
+      stressScore: entry.stressScore ?? null,
     };
   }
 
@@ -570,7 +748,23 @@ export class StatsService {
     return dayKeys;
   }
 
-  private hasCompleteCoreScores(entry: DailyEntry): boolean {
-    return isNumber(entry.moodScore) && isNumber(entry.energyScore) && isNumber(entry.stressScore);
+  private getCoreMetricPointValue(
+    point: PeriodStatsPayload['chartPoints'][number],
+    metricKey: 'mood' | 'energy' | 'stress',
+  ): number | undefined {
+    if (metricKey === 'mood') {
+      return point.mood;
+    }
+
+    if (metricKey === 'energy') {
+      return point.energy;
+    }
+
+    return point.stress;
   }
+
+  private isLegacyCoreMetric(metricKey: StatsSelectedMetricKey): metricKey is 'mood' | 'energy' | 'stress' {
+    return metricKey === 'mood' || metricKey === 'energy' || metricKey === 'stress';
+  }
+
 }

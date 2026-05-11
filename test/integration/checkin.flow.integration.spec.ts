@@ -58,6 +58,19 @@ describe('Check-in flow integration', () => {
     return ctx.checkinsFlow.skipCurrentStep(user);
   }
 
+  function listMetricValuesByKey(entryId: string) {
+    const definitionsById = new Map(
+      ctx.dailyMetricsRepository.listDefinitions().map((definition) => [definition.id, definition.key] as const),
+    );
+
+    return Object.fromEntries(
+      ctx.checkinsRepository
+        .listMetricValuesForEntry(entryId)
+        .map((metricValue) => [definitionsById.get(metricValue.metricDefinitionId), metricValue.value])
+        .filter((entry): entry is [string, number] => typeof entry[0] === 'string'),
+    );
+  }
+
   it('persists mood, energy, stress and sleep through the core check-in flow', async () => {
     const user = await createReadyUser({
       id: 'user-checkin-1',
@@ -135,6 +148,66 @@ describe('Check-in flow integration', () => {
     });
   });
 
+  it('persists enabled extra metrics alongside legacy core values', async () => {
+    const user = await createReadyUser({
+      id: 'user-checkin-1c',
+      telegramId: BigInt(6014),
+      trackMood: true,
+      trackEnergy: false,
+      trackStress: false,
+      trackSleep: false,
+    });
+
+    await ctx.usersService.setTrackedMetric(user.id, 'joy', true);
+    const updatedUser = await ctx.usersService.findById(user.id);
+
+    if (!updatedUser) {
+      throw new Error('User not found');
+    }
+
+    const started = await ctx.checkinsFlow.start(updatedUser);
+    expect(started).toMatchObject({
+      status: 'next',
+      nextState: FSM_STATES.checkin_mood,
+    });
+
+    const nextStep = await ctx.checkinsFlow.submitScore(updatedUser, '7');
+    expect(nextStep).toMatchObject({
+      status: 'next',
+      nextState: FSM_STATES.checkin_metric_score,
+    });
+
+    await ctx.checkinsFlow.submitScore(updatedUser, '9');
+    await ctx.checkinsFlow.skipCurrentStep(updatedUser);
+    await ctx.checkinsFlow.skipCurrentStep(updatedUser);
+    const result = await ctx.checkinsFlow.skipCurrentStep(updatedUser);
+
+    const [entry] = ctx.checkinsRepository.listEntries();
+    const metricValues = listMetricValuesByKey(entry.id);
+
+    expect(result).toMatchObject({
+      status: 'saved',
+      entryPayload: {
+        moodScore: 7,
+        metricValues: expect.arrayContaining([
+          expect.objectContaining({ key: 'mood', value: 7 }),
+          expect.objectContaining({ key: 'joy', value: 9 }),
+        ]),
+      },
+    });
+    expect(entry).toMatchObject({
+      moodScore: 7,
+      energyScore: null,
+      stressScore: null,
+      sleepHours: null,
+      sleepQuality: null,
+    });
+    expect(metricValues).toMatchObject({
+      mood: 7,
+      joy: 9,
+    });
+  });
+
   it('updates the same DailyEntry on a repeated same-day check-in', async () => {
     const user = await createReadyUser({
       id: 'user-checkin-2',
@@ -205,6 +278,60 @@ describe('Check-in flow integration', () => {
       sleepQuality: 6,
     });
     expect(entry.sleepHours?.toString()).toBe('7');
+  });
+
+  it('keeps untouched generic metric values on a later same-day rerun', async () => {
+    const user = await createReadyUser({
+      id: 'user-checkin-2d',
+      telegramId: BigInt(6015),
+      trackMood: true,
+      trackEnergy: false,
+      trackStress: false,
+      trackSleep: false,
+    });
+
+    await ctx.usersService.setTrackedMetric(user.id, 'joy', true);
+    const firstUser = await ctx.usersService.findById(user.id);
+
+    if (!firstUser) {
+      throw new Error('User not found');
+    }
+
+    await ctx.checkinsFlow.start(firstUser);
+    await ctx.checkinsFlow.submitScore(firstUser, '5');
+    await ctx.checkinsFlow.submitScore(firstUser, '8');
+    await ctx.checkinsFlow.skipCurrentStep(firstUser);
+    await ctx.checkinsFlow.skipCurrentStep(firstUser);
+    await ctx.checkinsFlow.skipCurrentStep(firstUser);
+
+    await ctx.usersService.setTrackedMetric(user.id, 'joy', false);
+    const secondUser = await ctx.usersService.findById(user.id);
+
+    if (!secondUser) {
+      throw new Error('User not found');
+    }
+
+    await ctx.checkinsFlow.start(secondUser);
+    await ctx.checkinsFlow.submitScore(secondUser, '9');
+    await ctx.checkinsFlow.skipCurrentStep(secondUser);
+    await ctx.checkinsFlow.skipCurrentStep(secondUser);
+    const result = await ctx.checkinsFlow.skipCurrentStep(secondUser);
+
+    const [entry] = ctx.checkinsRepository.listEntries();
+    const metricValues = listMetricValuesByKey(entry.id);
+
+    expect(result).toMatchObject({
+      status: 'saved',
+      isUpdate: true,
+      entryPayload: {
+        moodScore: 9,
+        metricValues: expect.arrayContaining([expect.objectContaining({ key: 'mood', value: 9 })]),
+      },
+    });
+    expect(metricValues).toMatchObject({
+      mood: 9,
+      joy: 8,
+    });
   });
 
   it('does not allow skipping the last remaining tracked metric', async () => {

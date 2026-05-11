@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { Telegraf, type Context } from 'telegraf';
 
 import type { TelegramMode } from '../config/telegram.config';
+import { TELEGRAM_COMMANDS } from './telegram.copy';
 import { TelegramRouter } from './telegram.router';
 
 const TELEGRAM_BOT_TOKEN = 'TELEGRAM_BOT';
@@ -34,6 +35,8 @@ export class TelegramUpdate implements OnModuleInit, OnModuleDestroy {
     }
 
     try {
+      await this.syncCommands();
+
       if (this.mode === 'webhook') {
         const webhookUrl = this.configService.get<string>('telegram.webhookUrl', { infer: true });
         const webhookSecret = this.configService.get<string>('telegram.webhookSecret', { infer: true });
@@ -64,6 +67,16 @@ export class TelegramUpdate implements OnModuleInit, OnModuleDestroy {
     if (this.mode === 'polling' && this.isLaunched) {
       await this.bot.stop('module_destroy');
       this.logger.log('Telegram bot stopped.');
+    }
+  }
+
+  private async syncCommands(): Promise<void> {
+    try {
+      await this.bot.telegram.setMyCommands([...TELEGRAM_COMMANDS]);
+      this.logger.log('Telegram commands registered.');
+    } catch (error) {
+      const err = error as Error;
+      this.logger.warn(`Failed to register Telegram commands: ${err.message}`);
     }
   }
 }

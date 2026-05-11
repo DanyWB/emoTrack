@@ -24,6 +24,17 @@ export class TagsRepository {
     });
   }
 
+  findByIds(ids: string[]): Promise<PredefinedTag[]> {
+    return this.prisma.predefinedTag.findMany({
+      where: {
+        id: {
+          in: ids,
+        },
+      },
+      orderBy: [{ sortOrder: 'asc' }, { label: 'asc' }],
+    });
+  }
+
   findActiveByIds(ids: string[]): Promise<PredefinedTag[]> {
     return this.prisma.predefinedTag.findMany({
       where: {

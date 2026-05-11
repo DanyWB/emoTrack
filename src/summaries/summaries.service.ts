@@ -2,7 +2,7 @@
 import { type Prisma } from '@prisma/client';
 
 import { StatsService } from '../stats/stats.service';
-import { type PeriodStatsPayload } from '../stats/stats.types';
+import { type PeriodStatsPayload, type SelectedMetricStatsPayload, type StatsSelectedMetricKey } from '../stats/stats.types';
 import { SummariesFormatter } from './summaries.formatter';
 import { SummariesRepository } from './summaries.repository';
 import { type SummaryGenerateOptions } from './summaries.types';
@@ -57,5 +57,19 @@ export class SummariesService {
 
   formatWeeklyDigestText(payload: PeriodStatsPayload): string {
     return this.summariesFormatter.formatWeeklyDigestText(payload);
+  }
+
+  async generateSelectedMetricSummary(
+    userId: string,
+    periodType: PeriodStatsPayload['periodType'],
+    metricKey: StatsSelectedMetricKey,
+    options: SummaryGenerateOptions = {},
+  ): Promise<SelectedMetricStatsPayload> {
+    const payload = await this.generateSummary(userId, periodType, options);
+    return this.statsService.buildSelectedMetricStatsFromPayload(userId, payload, metricKey);
+  }
+
+  formatSelectedMetricSummaryText(payload: SelectedMetricStatsPayload): string {
+    return this.summariesFormatter.formatSelectedMetricSummaryText(payload);
   }
 }

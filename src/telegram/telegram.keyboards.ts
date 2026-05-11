@@ -5,9 +5,10 @@ import { TELEGRAM_CALLBACKS, TELEGRAM_MAIN_MENU_BUTTONS } from '../common/consta
 import {
   EVENT_TYPE_LABELS,
   SLEEP_MODE_LABELS,
+  getSettingsMetricToggleButtonLabel,
   getSettingsToggleButtonLabel,
-  getTrackedMetricToggleButtonLabel,
   telegramCopy,
+  type SettingsMetricOptionData,
 } from './telegram.copy';
 
 type CallbackButton = ReturnType<typeof Markup.button.callback>;
@@ -43,6 +44,10 @@ function chunkButtons(buttons: CallbackButton[], size: number): CallbackButton[]
   }
 
   return rows;
+}
+
+function formatHistoryButtonDate(entryDate: Date): string {
+  return entryDate.toISOString().slice(5, 10).split('-').reverse().join('.');
 }
 
 function eventTypeButtons(): CallbackButton[][] {
@@ -126,12 +131,27 @@ export const telegramKeyboards = {
       actionRow({ back: true, skip: true }),
     ]),
 
-  historyPage: (nextCursor?: string) =>
-    nextCursor
-      ? Markup.inlineKeyboard([
-          [Markup.button.callback(telegramCopy.buttons.historyMore, `${TELEGRAM_CALLBACKS.historyMorePrefix}${nextCursor}`)],
-        ])
-      : undefined,
+  historyPage: (entries: Array<{ id: string; entryDate: Date }>, pageCursorToken: string, nextCursor?: string) => {
+    const rows: CallbackButton[][] = entries.map((entry) => [
+      Markup.button.callback(
+        `${telegramCopy.buttons.historyOpen} ${formatHistoryButtonDate(entry.entryDate)}`,
+        `${TELEGRAM_CALLBACKS.historyOpenPrefix}${entry.id}:${pageCursorToken}`,
+      ),
+    ]);
+
+    if (nextCursor) {
+      rows.push([
+        Markup.button.callback(telegramCopy.buttons.historyMore, `${TELEGRAM_CALLBACKS.historyMorePrefix}${nextCursor}`),
+      ]);
+    }
+
+    return rows.length > 0 ? Markup.inlineKeyboard(rows) : undefined;
+  },
+
+  historyDetail: (pageCursorToken: string) =>
+    Markup.inlineKeyboard([
+      [Markup.button.callback(telegramCopy.buttons.historyBackToList, `${TELEGRAM_CALLBACKS.historyBackPrefix}${pageCursorToken}`)],
+    ]),
 
   eventTypePicker: (options: { back?: boolean } = {}) =>
     Markup.inlineKeyboard([...eventTypeButtons(), actionRow({ back: options.back })]),
@@ -152,12 +172,20 @@ export const telegramKeyboards = {
       [Markup.button.callback(telegramCopy.buttons.cancel, TELEGRAM_CALLBACKS.actionCancel)],
     ]),
 
+  statsMetricSelector: (metrics: Array<{ key: string; label: string }>) =>
+    Markup.inlineKeyboard([
+      ...chunkButtons(
+        metrics.map((metric) =>
+          Markup.button.callback(metric.label, `${TELEGRAM_CALLBACKS.statsMetricPrefix}${metric.key}`),
+        ),
+        2,
+      ),
+      [Markup.button.callback(telegramCopy.buttons.back, TELEGRAM_CALLBACKS.actionBack)],
+      [Markup.button.callback(telegramCopy.buttons.cancel, TELEGRAM_CALLBACKS.actionCancel)],
+    ]),
+
   settingsMenu: (options: {
     remindersEnabled: boolean;
-    trackMood: boolean;
-    trackEnergy: boolean;
-    trackStress: boolean;
-    trackSleep: boolean;
   }) =>
     Markup.inlineKeyboard([
       [
@@ -168,28 +196,24 @@ export const telegramKeyboards = {
       ],
       [Markup.button.callback(telegramCopy.buttons.settingsEditReminderTime, TELEGRAM_CALLBACKS.settingsReminderTimeEdit)],
       [Markup.button.callback(telegramCopy.buttons.settingsSleepMode, TELEGRAM_CALLBACKS.settingsSleepModeSelect)],
-      [
-        Markup.button.callback(
-          getTrackedMetricToggleButtonLabel('trackMood', options.trackMood),
-          TELEGRAM_CALLBACKS.settingsTrackMoodToggle,
-        ),
-        Markup.button.callback(
-          getTrackedMetricToggleButtonLabel('trackEnergy', options.trackEnergy),
-          TELEGRAM_CALLBACKS.settingsTrackEnergyToggle,
-        ),
-      ],
-      [
-        Markup.button.callback(
-          getTrackedMetricToggleButtonLabel('trackStress', options.trackStress),
-          TELEGRAM_CALLBACKS.settingsTrackStressToggle,
-        ),
-        Markup.button.callback(
-          getTrackedMetricToggleButtonLabel('trackSleep', options.trackSleep),
-          TELEGRAM_CALLBACKS.settingsTrackSleepToggle,
-        ),
-      ],
+      [Markup.button.callback(telegramCopy.buttons.settingsDailyMetrics, TELEGRAM_CALLBACKS.settingsDailyMetricsOpen)],
       [Markup.button.callback(telegramCopy.buttons.cancel, TELEGRAM_CALLBACKS.actionCancel)],
     ]),
+
+  settingsDailyMetrics: (metrics: SettingsMetricOptionData[]) => {
+    const metricButtons = metrics.map((metric) =>
+      Markup.button.callback(
+        getSettingsMetricToggleButtonLabel(metric.label, metric.enabled),
+        `${TELEGRAM_CALLBACKS.settingsDailyMetricTogglePrefix}${metric.key}`,
+      ),
+    );
+
+    return Markup.inlineKeyboard([
+      ...chunkButtons(metricButtons, 2),
+      [Markup.button.callback(telegramCopy.buttons.back, TELEGRAM_CALLBACKS.actionBack)],
+      [Markup.button.callback(telegramCopy.buttons.cancel, TELEGRAM_CALLBACKS.actionCancel)],
+    ]);
+  },
 
   settingsSleepMode: () =>
     Markup.inlineKeyboard([

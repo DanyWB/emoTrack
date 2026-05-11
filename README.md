@@ -1,4 +1,4 @@
-# emoTrack Backend MVP
+﻿# emoTrack Backend MVP
 
 emoTrack is a Telegram-first self-tracking backend built as a modular NestJS monolith.  
 The MVP focuses on daily state tracking, optional notes/tags/events, recent history, stats, server-side charts, reminders, and basic settings.
@@ -233,6 +233,7 @@ Main variables used by the app:
 - `NODE_ENV`
 - `PORT`
 - `DATABASE_URL`
+- `DATABASE_URL_TEST`
 - `REDIS_URL`
 - `REDIS_ENABLED`
 - `JOBS_ENABLED`
@@ -263,7 +264,17 @@ Testing:
 
 ```powershell
 npm test
+npm run test:unit
+npm run test:integration
+npm run test:db
+npm run test:coverage
 npm run test:watch
+```
+
+Full local verification:
+
+```powershell
+npm run check
 ```
 
 Prisma:
@@ -308,6 +319,7 @@ Covered areas:
 - validation helpers
 - onboarding flow
 - check-in flow
+- Telegram router registration, callback guards, stale callback recovery, and route-error fallback
 - repeated same-day check-in update behavior
 - summary generation path
 - chart failure fallback path
@@ -317,6 +329,62 @@ Test design notes:
 - tests do not require Docker
 - tests do not require Redis
 - tests use in-memory repositories and Nest testing utilities for critical flow wiring
+- `npm run test:unit` runs the deterministic unit suite only
+- `npm run test:integration` runs the current in-memory/Nest integration suite only
+- `npm run test:db` runs opt-in PostgreSQL smoke tests against `DATABASE_URL_TEST`
+- `npm run test:coverage` runs the full suite with coverage collection for `src/**/*.ts`
+- global coverage thresholds are intentionally modest baseline gates at 50% for statements, branches, functions, and lines
+- `npm run check` is the recommended local pre-handoff gate and runs lint, build, and coverage-backed tests
+
+DB smoke test notes:
+
+- `npm run test:db` is not part of `npm run check` so the accepted local no-Docker workflow remains fast and Redis-free
+- DB smoke tests read `DATABASE_URL_TEST` from the shell environment or local `.env`
+- DB smoke tests are skipped when `DATABASE_URL_TEST` is not set
+- if `DATABASE_URL_TEST` is set, its database name must contain `test`, for example `emotrack_test`
+- the guard is intentional: DB smoke tests must never run against the normal local development database
+- apply Prisma migrations to the test database before running DB smoke tests
+- the smoke suite verifies real PostgreSQL behavior for repository connectivity, same-day `DailyEntry` uniqueness, metric catalog reads, and event overlap queries
+
+Example PowerShell setup for an isolated local test database:
+
+```powershell
+$env:DATABASE_URL_TEST="postgresql://emotrack:emotrack@localhost:5432/emotrack_test?schema=public"
+$env:DATABASE_URL=$env:DATABASE_URL_TEST
+npx prisma migrate deploy
+npm run test:db
+```
+
+## Terms and Access Notes
+
+Current access behavior is explicit and mandatory:
+
+- a new user must accept the user agreement before product usage
+- the agreement is available through `/terms`
+- before acceptance, product commands redirect into the consent flow instead of opening check-in, history, stats, or settings
+- the existing `consentGiven` onboarding step remains the acceptance source of truth; this step was not redesigned into a separate legal subsystem
+- after acceptance, onboarding continues with reminder time as before
+
+## Telegram Commands
+
+The bot now registers Telegram command hints through `setMyCommands` when the Telegram API is available.
+
+Current command list:
+
+- `/start`
+- `/help`
+- `/terms`
+- `/checkin`
+- `/event`
+- `/history`
+- `/stats`
+- `/settings`
+
+Runtime note:
+
+- command registration is best-effort
+- if Telegram command sync fails, startup continues and the bot still launches in the current mode
+- local polling mode behavior is unchanged
 
 ## Check-in UX Notes
 
@@ -330,7 +398,7 @@ Current check-in behavior is intentionally conservative:
 
 ## Configurable Check-in
 
-Configurable check-in is now active for core daily metrics.
+Configurable check-in now uses the catalog-backed tracked-metrics layer for the daily flow.
 
 - `users` now store per-metric tracking flags:
   - `trackMood`
@@ -342,24 +410,39 @@ Configurable check-in is now active for core daily metrics.
 - `daily_entries.stressScore`
   are nullable in the schema so disabled metrics do not require fake zero values
 - existing users keep the original effective behavior because all tracking flags default to `true`
-- `/settings` now lets a user choose which core metrics appear in the daily check-in:
+- `/settings` shows a separate `Критерии check-in` submenu backed by `user_tracked_metrics`
+- the submenu now exposes the current metric catalog used by the Telegram check-in flow:
   - mood
   - energy
   - stress
   - sleep
-- the check-in flow builds its core steps dynamically in the fixed order:
-  - mood
-  - energy
-  - stress
-  - sleep
-- a user must keep at least one core daily metric enabled
+  - joy
+  - sadness
+  - anxiety
+  - irritation
+  - motivation
+  - concentration
+  - wellbeing
+- the check-in flow builds its metric steps dynamically in a fixed order:
+  - core metrics first:
+    - mood
+    - energy
+    - stress
+    - sleep
+  - then enabled extra score metrics from the catalog
+- sleep remains a dedicated block and still follows the current `sleepMode`
+- a user must keep at least one daily metric enabled
 - same-day update behavior stays patch-like:
   - only prompted metrics are updated
   - disabled metrics are not silently cleared from an existing same-day entry
+- persistence is backward-compatible:
+  - mood/energy/stress are dual-written to legacy `DailyEntry` fields and to `daily_entry_metric_values`
+  - extra score metrics are written to `daily_entry_metric_values`
+  - sleep stays in the legacy sleep fields for now
 
 ## Daily Metric Catalog Groundwork
 
-The project now also includes a backward-compatible groundwork layer for a broader metric catalog.
+The project includes a backward-compatible metric catalog layer that is now active for tracked-metric selection and generic score persistence.
 
 - Prisma now stores:
   - `daily_metric_definitions`
@@ -371,7 +454,7 @@ The project now also includes a backward-compatible groundwork layer for a broad
     - energy
     - stress
     - sleep
-  - additional score-based metrics for future configurable check-in work:
+  - additional score-based metrics:
     - joy
     - sadness
     - anxiety
@@ -379,20 +462,39 @@ The project now also includes a backward-compatible groundwork layer for a broad
     - motivation
     - concentration
     - wellbeing
-- `UsersService` lazily syncs `user_tracked_metrics` for existing and new users so the groundwork can be introduced without a destructive rollout
-- current Telegram UX still uses the accepted core-metric toggle flow from the existing settings/check-in implementation
-- the new catalog tables are groundwork only in the current release; they do not yet replace the existing user-facing daily metric flow
+- `UsersService` lazily syncs `user_tracked_metrics` for existing and new users so the catalog can be introduced without a destructive rollout
+- the `Критерии check-in` submenu reads from `user_tracked_metrics` and keeps legacy core flags synchronized for backward compatibility
+- `daily_entry_metric_values` is now actively used by the check-in flow for:
+  - dual-write of core score metrics
+  - storage of enabled extra score metrics
+- saved extra score metrics are now visible again on the user-facing read-path:
+  - `/history` renders them as a compact extra-metrics line per entry
+  - `/stats` includes them in the text summary as averaged extra metrics
+- historical extra-metric visibility no longer depends on the metric definition staying active in the catalog:
+  - if an extra score was saved earlier, `/history` and `/stats` continue to show it even after that metric is later disabled or marked inactive
+- charts still keep their accepted legacy metric set and are not expanded by generic catalog metrics in this step
 
 ## History UX Notes
 
 Current `/history` behavior stays intentionally simple:
 
 - the first page shows the most recent 5 entries in a compact Telegram-friendly layout
-- each item still shows date, mood/energy/stress, sleep data when present, note marker, and linked event count
+- each history row now includes an inline `Открыть` action for a full entry view
+- each item still shows date, mood/energy/stress, sleep data when present, and a compact summary line for note, tags, and linked events
+- if an entry contains saved extra score metrics, `/history` adds one compact `Доп. метрики` line for them
+- extra-only entries do not render a useless empty core placeholder line; the first meaningful metric line is shown instead
+- opening an entry shows a detail view with:
+  - all saved score metrics
+  - sleep data
+  - full note text
+  - attached tags
+  - overlapped events for that day
+- the detail view hides empty note/tag/event sections instead of rendering placeholder dashes
+- the detail view uses a single `К списку` action and returns to the same history page
 - history day counts are overlap-aware for events: a multi-day event is counted on each day in its inclusive span
 - older entries are loaded through a single inline `Еще` action
 - `Еще` edits the same history message instead of appending duplicate history blocks
-- stale `Еще` callbacks degrade gracefully and ask the user to open `/history` again
+- stale `Еще` and stale `Открыть` callbacks degrade gracefully and ask the user to open `/history` again
 
 ## Event Model Notes
 
@@ -413,22 +515,55 @@ Current event behavior stays intentionally bounded:
 Current `/settings` behavior stays within the original scope, but is clearer about runtime state:
 
 - after each settings update, the user is returned to the current settings screen
-- the settings screen shows reminder state, reminder time, sleep mode, tracked daily metrics, and whether background auto-reminders are actually available
-- when jobs are disabled locally, reminder preferences are still saved, but the bot explicitly says that auto-reminders are unavailable in the current environment
-- tracked daily metrics can be toggled directly from `/settings`
-- the settings layer rejects configurations that would disable all core daily metrics at once
+- the settings screen shows reminder state, reminder time, weekly digest runtime status, sleep mode, tracked daily metrics, and whether background auto-reminders are actually available
+- when jobs are disabled locally, reminder preferences are still saved, but the bot explicitly distinguishes between “settings saved” and “background delivery unavailable in this environment”
+- tracked daily metrics are managed in a separate `Критерии check-in` submenu inside `/settings`
+- that submenu is backed by `user_tracked_metrics`, while legacy core flags are kept synchronized so the current check-in flow remains stable
+- the submenu now includes both core metrics and the currently supported extra score metrics from the catalog
+- the submenu explicitly says that changing criteria affects future daily prompts only and does not rewrite historical entries
+- the settings layer rejects configurations that would disable all daily metrics at once
 
 ## Stats Readability Notes
 
-Current `/stats` behavior keeps the original calculations and period boundaries unchanged, but improves output readability.
+Current `/stats` behavior is now intentionally lightweight for Telegram:
+
+- the flow is `period -> metric -> summary`
+- after choosing a period, the user sees only the currently enabled metrics from the `Check-in criteria` submenu
+- the metric selector explicitly positions Telegram stats as a light one-metric view; deeper analytics remain future web-panel scope
+- the bot then shows a compact single-metric summary instead of a large all-in-one analytics screen
+- this keeps Telegram stats useful and fast, while deeper analytics remain out of scope for the current bot UI
 
 Low-data contract:
 
 - `0` entries in the selected period: empty-state message
 - `1-2` entries in the selected period: preliminary text summary, no charts
-- `3+` entries in the selected period: full summary text and chart sending
+- `3+` entries in the selected period: full selected-metric summary and chart sending
 
 This threshold is explicit by design. It is only a presentation rule and does not change the underlying stats calculations.
+
+Current selected-metric behavior:
+
+- score metrics use a compact summary for the selected metric only
+- sleep remains a dedicated special-case metric with sleep-specific counts and averages
+- extra score metrics from `daily_entry_metric_values` are first-class options in the metric selector when they are enabled for the user
+- if an extra score was saved earlier, it remains visible on the stats read-path even after that metric is later disabled or marked inactive
+- the best/worst day block remains mood-based:
+  - it is shown only when the selected metric is `mood` and mood data exists
+  - it stays hidden for non-mood metrics and for mood periods without usable mood data
+- comparison and pattern logic keep their accepted semantics and are not expanded into a broader analytics browser in this step
+
+Current chart behavior:
+
+- a selected score metric gets one single-metric line chart
+- a selected sleep metric uses the existing sleep chart path
+- selected chart captions now include both the metric and the chosen period
+- extra-only datasets no longer try to send an empty legacy combined chart
+- chart failure fallback is unchanged: the user still receives the text summary
+
+Internal note:
+
+- the `all-time` stats path now aggregates extra-metric averages at repository level instead of loading all generic metric values in memory only for summary formatting
+- this is an internal optimization only; visible `/stats` semantics stay the same
 
 Stage B comparison and pattern notes:
 
@@ -545,5 +680,6 @@ Natural next steps after the MVP:
 ## Optional Docker Path
 
 `docker-compose.yml` remains available as an optional infrastructure path for PostgreSQL and Redis, but Docker is not required for local Windows development.
+
 
 

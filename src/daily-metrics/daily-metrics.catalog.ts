@@ -98,6 +98,12 @@ export const DAILY_METRIC_CATALOG: DailyMetricCatalogEntry[] = [
   },
 ] as const;
 
+export type DailyMetricCatalogKey = (typeof DAILY_METRIC_CATALOG)[number]['key'];
+
+export const DAILY_METRIC_LABELS_BY_KEY = Object.fromEntries(
+  DAILY_METRIC_CATALOG.map((metric) => [metric.key, metric.label]),
+) as Record<DailyMetricCatalogKey, string>;
+
 export const LEGACY_TRACKED_METRIC_MAP = {
   mood: 'trackMood',
   energy: 'trackEnergy',

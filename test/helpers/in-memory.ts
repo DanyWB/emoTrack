@@ -185,6 +185,12 @@ export class InMemoryDailyMetricsRepository {
       .sort((left, right) => left.sortOrder - right.sortOrder || left.key.localeCompare(right.key));
   }
 
+  async findDefinitionsByIds(ids: string[]): Promise<DailyMetricDefinition[]> {
+    return [...this.definitions.values()]
+      .filter((definition) => ids.includes(definition.id))
+      .sort((left, right) => left.sortOrder - right.sortOrder || left.key.localeCompare(right.key));
+  }
+
   async findUserTrackedMetrics(userId: string): Promise<InMemoryUserTrackedMetricWithDefinition[]> {
     return [...this.trackedMetrics.values()]
       .filter((metric) => metric.userId === userId)
@@ -222,6 +228,29 @@ export class InMemoryDailyMetricsRepository {
 
   listDefinitions(): DailyMetricDefinition[] {
     return [...this.definitions.values()];
+  }
+
+  setDefinitionActive(key: string, isActive: boolean): void {
+    const definition = [...this.definitions.values()].find((item) => item.key === key);
+
+    if (!definition) {
+      throw new Error(`Daily metric definition ${key} not found`);
+    }
+
+    this.definitions.set(definition.id, {
+      ...definition,
+      isActive,
+    });
+  }
+
+  removeDefinitionByKey(key: string): void {
+    const definition = [...this.definitions.values()].find((item) => item.key === key);
+
+    if (!definition) {
+      return;
+    }
+
+    this.definitions.delete(definition.id);
   }
 
   listUserTrackedMetrics(userId: string): InMemoryUserTrackedMetricWithDefinition[] {
@@ -292,9 +321,14 @@ export class InMemoryCheckinsRepository {
   private readonly entries = new Map<string, DailyEntry>();
   private readonly tagsByEntry = new Map<string, string[]>();
   private readonly eventCounts = new Map<string, number>();
+  private readonly metricValues = new Map<string, DailyEntryMetricValue>();
 
   async findByUserAndDate(userId: string, entryDate: Date): Promise<DailyEntry | null> {
     return this.entries.get(this.buildKey(userId, entryDate)) ?? null;
+  }
+
+  async findByIdAndUser(userId: string, entryId: string): Promise<DailyEntry | null> {
+    return [...this.entries.values()].find((entry) => entry.userId === userId && entry.id === entryId) ?? null;
   }
 
   async upsertByUserAndDate(
@@ -387,8 +421,89 @@ export class InMemoryCheckinsRepository {
       .sort((left, right) => left.entryDate.getTime() - right.entryDate.getTime());
   }
 
+  async findMetricValuesByEntryIds(entryIds: string[]): Promise<DailyEntryMetricValue[]> {
+    return [...this.metricValues.values()]
+      .filter((metricValue) => entryIds.includes(metricValue.dailyEntryId))
+      .sort((left, right) => {
+        if (left.dailyEntryId !== right.dailyEntryId) {
+          return left.dailyEntryId.localeCompare(right.dailyEntryId);
+        }
+
+        return left.metricDefinitionId.localeCompare(right.metricDefinitionId);
+      });
+  }
+
+  async aggregateMetricAveragesByUserAndDateRange(
+    userId: string,
+    from: Date,
+    to: Date,
+  ): Promise<Array<{ metricDefinitionId: string; average: number }>> {
+    const entriesById = new Map(
+      [...this.entries.values()]
+        .filter(
+          (entry) =>
+            entry.userId === userId &&
+            entry.entryDate.getTime() >= from.getTime() &&
+            entry.entryDate.getTime() <= to.getTime(),
+        )
+        .map((entry) => [entry.id, entry] as const),
+    );
+    const valuesByMetricDefinitionId = new Map<string, number[]>();
+
+    for (const metricValue of this.metricValues.values()) {
+      if (!entriesById.has(metricValue.dailyEntryId)) {
+        continue;
+      }
+
+      const bucket = valuesByMetricDefinitionId.get(metricValue.metricDefinitionId) ?? [];
+      bucket.push(metricValue.value);
+      valuesByMetricDefinitionId.set(metricValue.metricDefinitionId, bucket);
+    }
+
+    return [...valuesByMetricDefinitionId.entries()]
+      .map(([metricDefinitionId, values]) => ({
+        metricDefinitionId,
+        average: values.reduce((sum, value) => sum + value, 0) / values.length,
+        observationsCount: values.length,
+      }))
+      .sort((left, right) => left.metricDefinitionId.localeCompare(right.metricDefinitionId));
+  }
+
+  async upsertMetricValues(
+    dailyEntryId: string,
+    values: Array<{ metricDefinitionId: string; value: number }>,
+  ): Promise<DailyEntryMetricValue[]> {
+    const updatedAt = new Date();
+
+    return values.map((metricValue) => {
+      const key = this.buildMetricValueKey(dailyEntryId, metricValue.metricDefinitionId);
+      const existing = this.metricValues.get(key);
+      const next: DailyEntryMetricValue = {
+        id: existing?.id ?? randomUUID(),
+        dailyEntryId,
+        metricDefinitionId: metricValue.metricDefinitionId,
+        value: metricValue.value,
+        createdAt: existing?.createdAt ?? updatedAt,
+        updatedAt,
+      };
+
+      this.metricValues.set(key, next);
+      return next;
+    });
+  }
+
   listEntries(): DailyEntry[] {
     return [...this.entries.values()].sort((left, right) => left.entryDate.getTime() - right.entryDate.getTime());
+  }
+
+  listMetricValuesForEntry(entryId: string): DailyEntryMetricValue[] {
+    return [...this.metricValues.values()]
+      .filter((metricValue) => metricValue.dailyEntryId === entryId)
+      .sort((left, right) => left.metricDefinitionId.localeCompare(right.metricDefinitionId));
+  }
+
+  async findTagIdsByEntryId(entryId: string): Promise<string[]> {
+    return this.getTagIdsForEntry(entryId);
   }
 
   getTagIdsForEntry(entryId: string): string[] {
@@ -405,6 +520,10 @@ export class InMemoryCheckinsRepository {
 
   private buildKey(userId: string, entryDate: Date): string {
     return `${userId}:${entryDate.toISOString()}`;
+  }
+
+  private buildMetricValueKey(dailyEntryId: string, metricDefinitionId: string): string {
+    return `${dailyEntryId}:${metricDefinitionId}`;
   }
 }
 
@@ -581,6 +700,12 @@ export class InMemoryTagsRepository {
 
   async findByKeys(keys: string[]): Promise<PredefinedTag[]> {
     return [...this.tags.values()].filter((tag) => keys.includes(tag.key));
+  }
+
+  async findByIds(ids: string[]): Promise<PredefinedTag[]> {
+    return [...this.tags.values()]
+      .filter((tag) => ids.includes(tag.id))
+      .sort((left, right) => left.sortOrder - right.sortOrder || left.label.localeCompare(right.label));
   }
 
   async findActiveByIds(ids: string[]): Promise<PredefinedTag[]> {

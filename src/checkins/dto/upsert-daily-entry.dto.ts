@@ -1,6 +1,11 @@
 import { Type } from 'class-transformer';
 import { IsInt, IsNumber, IsOptional, IsString, Max, Min } from 'class-validator';
 
+export interface DailyMetricValueInput {
+  key: string;
+  value: number;
+}
+
 export class UpsertDailyEntryDto {
   @Type(() => Number)
   @IsOptional()
@@ -40,4 +45,7 @@ export class UpsertDailyEntryDto {
   @IsOptional()
   @IsString()
   noteText?: string;
+
+  @IsOptional()
+  metricValues?: DailyMetricValueInput[];
 }

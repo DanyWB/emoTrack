@@ -23,6 +23,8 @@ export const TELEGRAM_CALLBACKS = {
   onboardingLater: 'onboarding:first-checkin:later',
 
   historyMorePrefix: 'history:more:',
+  historyOpenPrefix: 'history:open:',
+  historyBackPrefix: 'history:back:',
 
   scorePrefix: 'checkin:score:',
   checkinNoteAdd: 'checkin:note:add',
@@ -35,10 +37,13 @@ export const TELEGRAM_CALLBACKS = {
   eventRepeatModePrefix: 'event:repeat-mode:',
   eventRepeatCountPrefix: 'event:repeat-count:',
   statsPeriodPrefix: 'stats:period:',
+  statsMetricPrefix: 'stats:metric:',
   settingsRemindersToggle: 'settings:reminders:toggle',
   settingsReminderTimeEdit: 'settings:reminder-time:edit',
   settingsSleepModeSelect: 'settings:sleep-mode:select',
   settingsSleepModePrefix: 'settings:sleep-mode:',
+  settingsDailyMetricsOpen: 'settings:daily-metrics:open',
+  settingsDailyMetricTogglePrefix: 'settings:daily-metrics:toggle:',
   settingsTrackMoodToggle: 'settings:track:mood',
   settingsTrackEnergyToggle: 'settings:track:energy',
   settingsTrackStressToggle: 'settings:track:stress',

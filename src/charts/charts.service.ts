@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 
-import type { ChartPoint, GeneratedCharts } from './charts.types';
+import type { ChartPoint, GeneratedCharts, SingleMetricChartPoint } from './charts.types';
 import { ChartsRenderer } from './charts.renderer';
 import { shouldRenderMoodHeatStrip } from './charts.utils';
 
@@ -16,23 +16,35 @@ export class ChartsService {
       return {};
     }
 
-    const combinedChartBuffer = await this.renderCombinedChart(points);
+    const hasCombinedMetricData = points.some(
+      (point) =>
+        typeof point.mood === 'number' ||
+        typeof point.energy === 'number' ||
+        typeof point.stress === 'number',
+    );
     const hasSleepData = points.some(
       (point) => typeof point.sleepHours === 'number' || typeof point.sleepQuality === 'number',
     );
-    const shouldAddMoodHeatStrip = shouldRenderMoodHeatStrip(points.length);
+    const hasMoodData = points.some((point) => typeof point.mood === 'number');
+    const shouldAddMoodHeatStrip = hasMoodData && shouldRenderMoodHeatStrip(points.length);
+    const combinedChartBuffer = hasCombinedMetricData ? await this.renderCombinedChart(points) : undefined;
     const moodHeatStripBuffer = shouldAddMoodHeatStrip ? await this.renderMoodHeatStrip(points) : undefined;
+
+    if (!hasCombinedMetricData && !hasSleepData) {
+      this.logger.debug('Skipped chart generation because there are no supported chart series.');
+      return {};
+    }
 
     if (!hasSleepData) {
       this.logger.log(
-        `Generated combined chart${moodHeatStripBuffer ? ' and mood strip' : ''} for ${points.length} points.`,
+        `Generated${combinedChartBuffer ? ' combined chart' : ''}${moodHeatStripBuffer ? `${combinedChartBuffer ? ' and' : ''} mood strip` : ''} for ${points.length} points.`,
       );
       return { combinedChartBuffer, moodHeatStripBuffer };
     }
 
     const sleepChartBuffer = await this.renderSleepChart(points);
     this.logger.log(
-      `Generated combined${moodHeatStripBuffer ? ', mood strip,' : ''} and sleep charts for ${points.length} points.`,
+      `Generated${combinedChartBuffer ? ' combined' : ''}${moodHeatStripBuffer ? `${combinedChartBuffer ? ',' : ''} mood strip` : ''}${sleepChartBuffer ? `${combinedChartBuffer || moodHeatStripBuffer ? ',' : ''} sleep` : ''} charts for ${points.length} points.`,
     );
 
     return {
@@ -52,6 +64,18 @@ export class ChartsService {
 
   renderMoodHeatStrip(points: Parameters<ChartsRenderer['renderMoodHeatStrip']>[0]) {
     return this.chartsRenderer.renderMoodHeatStrip(points);
+  }
+
+  async generateSelectedMetricChart(
+    points: SingleMetricChartPoint[],
+    options: { label: string; color: string },
+  ): Promise<Buffer | undefined> {
+    if (points.length === 0 || !points.some((point) => typeof point.value === 'number')) {
+      this.logger.debug('Skipped selected-metric chart generation because there are no supported points.');
+      return undefined;
+    }
+
+    return this.chartsRenderer.renderSelectedMetricChart(points, options);
   }
 
   cleanupTempFiles(): Promise<void> {

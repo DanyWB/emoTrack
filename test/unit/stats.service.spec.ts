@@ -1,4 +1,4 @@
-import { Prisma, SummaryPeriodType } from '@prisma/client';
+﻿import { Prisma, SummaryPeriodType } from '@prisma/client';
 
 import { StatsService } from '../../src/stats/stats.service';
 import { buildDailyEntry, buildEvent } from '../helpers/in-memory';
@@ -26,6 +26,59 @@ describe('StatsService', () => {
       sleepHours: 7.5,
       sleepQuality: 7,
     });
+  });
+
+  it('calculates compact averages for extra tracked metrics only from saved generic values', () => {
+    const service = new StatsService({} as never, {} as never);
+    const averages = service.calculateExtraMetricAverages([
+      {
+        extraMetricScores: [
+          {
+            key: 'joy',
+            label: 'Радость',
+            value: 7,
+          },
+        ],
+      },
+      {
+        extraMetricScores: [
+          {
+            key: 'joy',
+            label: 'Радость',
+            value: 9,
+          },
+          {
+            key: 'wellbeing',
+            label: 'Самочувствие',
+            value: 6,
+          },
+        ],
+      },
+      {
+        extraMetricScores: [
+          {
+            key: 'wellbeing',
+            label: 'Самочувствие',
+            value: 8,
+          },
+        ],
+      },
+    ]);
+
+    expect(averages).toEqual([
+      {
+        key: 'joy',
+        label: 'Радость',
+        average: 8,
+        observationsCount: 2,
+      },
+      {
+        key: 'wellbeing',
+        label: 'Самочувствие',
+        average: 7,
+        observationsCount: 2,
+      },
+    ]);
   });
 
   it('finds best and worst day deterministically', () => {
@@ -63,6 +116,44 @@ describe('StatsService', () => {
       moodScore: 4,
       energyScore: 6,
       stressScore: 8,
+    });
+  });
+
+  it('finds best and worst day from mood-only entries without requiring full core scores', () => {
+    const service = new StatsService({} as never, {} as never);
+    const entries = [
+      buildDailyEntry({
+        entryDate: new Date('2026-03-09T00:00:00.000Z'),
+        moodScore: 4,
+        energyScore: null,
+        stressScore: null,
+      }),
+      buildDailyEntry({
+        entryDate: new Date('2026-03-10T00:00:00.000Z'),
+        moodScore: 9,
+        energyScore: null,
+        stressScore: null,
+      }),
+      buildDailyEntry({
+        entryDate: new Date('2026-03-11T00:00:00.000Z'),
+        moodScore: 7,
+        energyScore: null,
+        stressScore: null,
+      }),
+    ];
+
+    expect(service.findBestDay(entries)).toEqual({
+      date: '2026-03-10',
+      moodScore: 9,
+      energyScore: null,
+      stressScore: null,
+    });
+
+    expect(service.findWorstDay(entries)).toEqual({
+      date: '2026-03-09',
+      moodScore: 4,
+      energyScore: null,
+      stressScore: null,
     });
   });
 
@@ -224,6 +315,7 @@ describe('StatsService', () => {
     const checkinsService = {
       buildEntryDate: jest.fn().mockReturnValue(new Date('2026-03-11T00:00:00.000Z')),
       getEntriesForPeriod: jest.fn().mockResolvedValue(entries),
+      getExtraMetricAveragesForPeriod: jest.fn().mockResolvedValue([]),
     };
     const eventsService = {
       getEventsForPeriod: jest.fn().mockResolvedValue(events),
@@ -257,3 +349,5 @@ describe('StatsService', () => {
     ]);
   });
 });
+
+

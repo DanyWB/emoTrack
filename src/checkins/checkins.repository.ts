@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import type { DailyEntry, DailyEntryTag, Prisma } from '@prisma/client';
+import type { DailyEntry, DailyEntryMetricValue, DailyEntryTag, Prisma } from '@prisma/client';
 
 import { PrismaService } from '../database/prisma.service';
 
@@ -13,6 +13,13 @@ type RecentDailyEntryWithCounts = Prisma.DailyEntryGetPayload<{
   };
 }>;
 
+export type EntryMetricValueRecord = DailyEntryMetricValue;
+export interface AggregatedMetricAverageRecord {
+  metricDefinitionId: string;
+  average: number;
+  observationsCount: number;
+}
+
 @Injectable()
 export class CheckinsRepository {
   constructor(private readonly prisma: PrismaService) {}
@@ -24,6 +31,15 @@ export class CheckinsRepository {
           userId,
           entryDate,
         },
+      },
+    });
+  }
+
+  findByIdAndUser(userId: string, entryId: string): Promise<DailyEntry | null> {
+    return this.prisma.dailyEntry.findFirst({
+      where: {
+        id: entryId,
+        userId,
       },
     });
   }
@@ -121,5 +137,99 @@ export class CheckinsRepository {
       },
       orderBy: [{ entryDate: 'asc' }],
     });
+  }
+
+  findMetricValuesByEntryIds(entryIds: string[]): Promise<EntryMetricValueRecord[]> {
+    if (entryIds.length === 0) {
+      return Promise.resolve([]);
+    }
+
+    return this.prisma.dailyEntryMetricValue.findMany({
+      where: {
+        dailyEntryId: {
+          in: entryIds,
+        },
+      },
+      orderBy: [{ metricDefinitionId: 'asc' }, { createdAt: 'asc' }],
+    });
+  }
+
+  async aggregateMetricAveragesByUserAndDateRange(
+    userId: string,
+    from: Date,
+    to: Date,
+  ): Promise<AggregatedMetricAverageRecord[]> {
+    const rows = await this.prisma.dailyEntryMetricValue.groupBy({
+      by: ['metricDefinitionId'],
+      where: {
+        dailyEntry: {
+          is: {
+            userId,
+            entryDate: {
+              gte: from,
+              lte: to,
+            },
+          },
+        },
+      },
+      _avg: {
+        value: true,
+      },
+      _count: {
+        value: true,
+      },
+    });
+
+    return rows
+      .filter((row): row is typeof row & { _avg: { value: number } } => typeof row._avg.value === 'number')
+      .map((row) => ({
+        metricDefinitionId: row.metricDefinitionId,
+        average: row._avg.value,
+        observationsCount: row._count.value,
+      }));
+  }
+
+  async findTagIdsByEntryId(entryId: string): Promise<string[]> {
+    const rows = await this.prisma.dailyEntryTag.findMany({
+      where: {
+        dailyEntryId: entryId,
+      },
+      orderBy: [{ tag: { sortOrder: 'asc' } }, { tag: { label: 'asc' } }],
+      select: {
+        tagId: true,
+      },
+    });
+
+    return rows.map((row) => row.tagId);
+  }
+
+  upsertMetricValues(
+    dailyEntryId: string,
+    values: Array<{ metricDefinitionId: string; value: number }>,
+  ) {
+    if (values.length === 0) {
+      return Promise.resolve([]);
+    }
+
+    return this.prisma.$transaction(
+      values.map((metricValue) =>
+        this.prisma.dailyEntryMetricValue.upsert({
+          where: {
+            dailyEntryId_metricDefinitionId: {
+              dailyEntryId,
+              metricDefinitionId: metricValue.metricDefinitionId,
+            },
+          },
+          create: {
+            dailyEntryId,
+            metricDefinitionId: metricValue.metricDefinitionId,
+            value: metricValue.value,
+          },
+          update: {
+            value: metricValue.value,
+          },
+        }),
+      ),
+    );
   }
 }

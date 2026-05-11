@@ -1,7 +1,15 @@
-﻿import { Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { type User } from '@prisma/client';
 
 import { AnalyticsService } from '../analytics/analytics.service';
+import { formatDateKey } from '../common/utils/date.utils';
+import { DailyMetricsService } from '../daily-metrics/daily-metrics.service';
+import { FsmService } from '../fsm/fsm.service';
+import { FSM_STATES, type CheckinDraftPayload, type FsmState } from '../fsm/fsm.types';
+import { TagsService } from '../tags/tags.service';
+import { parseIntegerScore, parseSleepHours } from '../common/utils/validation.utils';
+import { CheckinsService } from './checkins.service';
+import type { DailyMetricValueInput, UpsertDailyEntryDto } from './dto/upsert-daily-entry.dto';
 import {
   buildCoreCheckinStates,
   getNextCoreCheckinState,
@@ -11,13 +19,6 @@ import {
   mapCoreStateToPayloadKey,
   type CoreCheckinState,
 } from './checkins.steps';
-import { formatDateKey } from '../common/utils/date.utils';
-import { parseIntegerScore, parseSleepHours } from '../common/utils/validation.utils';
-import { FsmService } from '../fsm/fsm.service';
-import { FSM_STATES, type CheckinDraftPayload, type FsmState } from '../fsm/fsm.types';
-import { TagsService } from '../tags/tags.service';
-import { CheckinsService } from './checkins.service';
-import type { UpsertDailyEntryDto } from './dto/upsert-daily-entry.dto';
 
 export type CheckinFlowStatus =
   | 'next'
@@ -43,10 +44,16 @@ export interface CheckinFlowResult {
   resumed?: boolean;
 }
 
+interface CheckinStepTarget {
+  state: FsmState;
+  activeMetricKey?: string;
+}
+
 @Injectable()
 export class CheckinsFlowService {
   constructor(
     private readonly checkinsService: CheckinsService,
+    private readonly dailyMetricsService: DailyMetricsService,
     private readonly tagsService: TagsService,
     private readonly fsmService: FsmService,
     private readonly analyticsService: AnalyticsService,
@@ -66,19 +73,23 @@ export class CheckinsFlowService {
       };
     }
 
-    const firstState = this.getFirstCoreState(user);
+    const extraMetricKeys = await this.getEnabledExtraMetricKeys(user);
+    const firstStep = this.getFirstMetricStep(user, extraMetricKeys);
 
-    if (!firstState) {
+    if (!firstStep) {
       await this.fsmService.setIdle(user.id);
       return { status: 'missing_context' };
     }
 
-    await this.fsmService.setState(user.id, firstState, {});
+    await this.fsmService.setState(user.id, firstStep.state, {
+      extraMetricKeys,
+      ...(firstStep.activeMetricKey ? { activeMetricKey: firstStep.activeMetricKey } : {}),
+    });
     await this.analyticsService.track('checkin_started', {}, user.id);
 
     return {
       status: 'next',
-      nextState: firstState,
+      nextState: firstStep.state,
       resumed: false,
     };
   }
@@ -93,6 +104,22 @@ export class CheckinsFlowService {
     const session = await this.fsmService.getSession(user.id);
     const state = (session?.state as FsmState | undefined) ?? FSM_STATES.idle;
     const payload = this.extractPayload(session?.payloadJson);
+
+    if (state === FSM_STATES.checkin_metric_score) {
+      const activeMetricKey = payload.activeMetricKey;
+
+      if (!activeMetricKey) {
+        return { status: 'missing_context' };
+      }
+
+      return this.advanceFromExtraMetricState(user, {
+        ...payload,
+        metricScores: {
+          ...(payload.metricScores ?? {}),
+          [activeMetricKey]: score,
+        },
+      });
+    }
 
     if (
       state !== FSM_STATES.checkin_mood &&
@@ -364,20 +391,35 @@ export class CheckinsFlowService {
       return { status: 'next', nextState: previousState };
     }
 
+    if (state === FSM_STATES.checkin_metric_score) {
+      const previousStep = this.getPreviousExtraMetricStep(user, payload);
+
+      if (!previousStep) {
+        return { status: 'cannot_back' };
+      }
+
+      await this.fsmService.setState(
+        user.id,
+        previousStep.state,
+        this.clearMetricProgressFrom(payload, user, previousStep),
+      );
+
+      return { status: 'next', nextState: previousStep.state };
+    }
+
     switch (state) {
       case FSM_STATES.checkin_note_prompt: {
-        const previousCoreState = this.getLastCoreState(user);
+        const previousMetricStep = this.getLastMetricStep(user, payload);
 
-        if (!previousCoreState) {
+        if (!previousMetricStep) {
           return { status: 'cannot_back' };
         }
 
-        await this.fsmService.setState(
-          user.id,
-          previousCoreState,
-          this.withoutKeys(payload, ['entryId', 'isUpdate']),
-        );
-        return { status: 'next', nextState: previousCoreState };
+        await this.fsmService.setState(user.id, previousMetricStep.state, {
+          ...this.withoutKeys(payload, ['entryId', 'isUpdate']),
+          ...(previousMetricStep.activeMetricKey ? { activeMetricKey: previousMetricStep.activeMetricKey } : {}),
+        });
+        return { status: 'next', nextState: previousMetricStep.state };
       }
       case FSM_STATES.checkin_note: {
         await this.fsmService.setState(user.id, FSM_STATES.checkin_note_prompt, payload);
@@ -408,16 +450,19 @@ export class CheckinsFlowService {
     user: User,
     payload: CheckinDraftPayload,
   ): Promise<CheckinFlowResult> {
-    if (!hasCapturedCoreMetric(payload)) {
-      const firstState = this.getFirstCoreState(user);
+    if (!this.hasCapturedAnyMetric(payload)) {
+      const firstStep = this.getFirstMetricStep(user, payload.extraMetricKeys ?? []);
 
-      if (!firstState) {
+      if (!firstStep) {
         await this.fsmService.setIdle(user.id);
         return { status: 'missing_context' };
       }
 
-      await this.fsmService.setState(user.id, firstState, {});
-      return { status: 'next', nextState: firstState };
+      await this.fsmService.setState(user.id, firstStep.state, {
+        ...this.withoutKeys(payload, ['entryId', 'isUpdate']),
+        ...(firstStep.activeMetricKey ? { activeMetricKey: firstStep.activeMetricKey } : {}),
+      });
+      return { status: 'next', nextState: firstStep.state };
     }
 
     const entryPayload = this.buildEntryPayload(payload);
@@ -446,16 +491,19 @@ export class CheckinsFlowService {
   }
 
   private async finishOptionalFlow(user: User, payload: CheckinDraftPayload): Promise<CheckinFlowResult> {
-    if (!hasCapturedCoreMetric(payload)) {
-      const firstState = this.getFirstCoreState(user);
+    if (!this.hasCapturedAnyMetric(payload)) {
+      const firstStep = this.getFirstMetricStep(user, payload.extraMetricKeys ?? []);
 
-      if (!firstState) {
+      if (!firstStep) {
         await this.fsmService.setIdle(user.id);
         return { status: 'missing_context' };
       }
 
-      await this.fsmService.setState(user.id, firstState, {});
-      return { status: 'next', nextState: firstState };
+      await this.fsmService.setState(user.id, firstStep.state, {
+        ...this.withoutKeys(payload, ['entryId', 'isUpdate']),
+        ...(firstStep.activeMetricKey ? { activeMetricKey: firstStep.activeMetricKey } : {}),
+      });
+      return { status: 'next', nextState: firstStep.state };
     }
 
     const entryPayload: UpsertDailyEntryDto = {
@@ -480,17 +528,41 @@ export class CheckinsFlowService {
     state: CoreCheckinState,
     payload: CheckinDraftPayload,
   ): Promise<CheckinFlowResult> {
-    const nextState = getNextCoreCheckinState(user, state);
+    const nextStep = this.getNextStepFromCoreState(user, state, payload);
 
-    if (!nextState) {
+    if (!nextStep) {
       return this.persistCoreEntryAndMoveToOptional(user, payload);
     }
 
-    await this.fsmService.setState(user.id, nextState, payload);
+    await this.fsmService.setState(user.id, nextStep.state, {
+      ...payload,
+      ...(nextStep.activeMetricKey ? { activeMetricKey: nextStep.activeMetricKey } : {}),
+    });
 
     return {
       status: 'next',
-      nextState,
+      nextState: nextStep.state,
+    };
+  }
+
+  private async advanceFromExtraMetricState(
+    user: User,
+    payload: CheckinDraftPayload,
+  ): Promise<CheckinFlowResult> {
+    const nextMetricKey = this.getNextExtraMetricKey(payload);
+
+    if (!nextMetricKey) {
+      return this.persistCoreEntryAndMoveToOptional(user, payload);
+    }
+
+    await this.fsmService.setState(user.id, FSM_STATES.checkin_metric_score, {
+      ...payload,
+      activeMetricKey: nextMetricKey,
+    });
+
+    return {
+      status: 'next',
+      nextState: FSM_STATES.checkin_metric_score,
     };
   }
 
@@ -499,13 +571,13 @@ export class CheckinsFlowService {
     state: CoreCheckinState,
     payloadAfterSkip: CheckinDraftPayload,
   ): boolean {
-    const nextState = getNextCoreCheckinState(user, state);
+    const nextStep = this.getNextStepFromCoreState(user, state, payloadAfterSkip);
 
-    if (nextState) {
+    if (nextStep) {
       return true;
     }
 
-    return hasCapturedCoreMetric(payloadAfterSkip);
+    return this.hasCapturedAnyMetric(payloadAfterSkip);
   }
 
   private getFirstCoreState(user: User): CoreCheckinState | null {
@@ -515,6 +587,112 @@ export class CheckinsFlowService {
   private getLastCoreState(user: User): CoreCheckinState | null {
     const states = buildCoreCheckinStates(user);
     return states[states.length - 1] ?? null;
+  }
+
+  private getFirstMetricStep(user: User, extraMetricKeys: string[]): CheckinStepTarget | null {
+    const firstCoreState = this.getFirstCoreState(user);
+
+    if (firstCoreState) {
+      return { state: firstCoreState };
+    }
+
+    if (extraMetricKeys.length === 0) {
+      return null;
+    }
+
+    return {
+      state: FSM_STATES.checkin_metric_score,
+      activeMetricKey: extraMetricKeys[0],
+    };
+  }
+
+  private getLastMetricStep(user: User, payload: CheckinDraftPayload): CheckinStepTarget | null {
+    const extraMetricKeys = payload.extraMetricKeys ?? [];
+
+    if (extraMetricKeys.length > 0) {
+      return {
+        state: FSM_STATES.checkin_metric_score,
+        activeMetricKey: extraMetricKeys[extraMetricKeys.length - 1],
+      };
+    }
+
+    const lastCoreState = this.getLastCoreState(user);
+
+    if (!lastCoreState) {
+      return null;
+    }
+
+    return { state: lastCoreState };
+  }
+
+  private getNextStepFromCoreState(
+    user: User,
+    state: CoreCheckinState,
+    payload: CheckinDraftPayload,
+  ): CheckinStepTarget | null {
+    const nextCoreState = getNextCoreCheckinState(user, state);
+
+    if (nextCoreState) {
+      return { state: nextCoreState };
+    }
+
+    const firstExtraMetricKey = payload.extraMetricKeys?.[0];
+
+    if (!firstExtraMetricKey) {
+      return null;
+    }
+
+    return {
+      state: FSM_STATES.checkin_metric_score,
+      activeMetricKey: firstExtraMetricKey,
+    };
+  }
+
+  private getNextExtraMetricKey(payload: CheckinDraftPayload): string | null {
+    const activeMetricKey = payload.activeMetricKey;
+    const extraMetricKeys = payload.extraMetricKeys ?? [];
+
+    if (!activeMetricKey) {
+      return null;
+    }
+
+    const currentIndex = extraMetricKeys.indexOf(activeMetricKey);
+
+    if (currentIndex === -1 || currentIndex >= extraMetricKeys.length - 1) {
+      return null;
+    }
+
+    return extraMetricKeys[currentIndex + 1];
+  }
+
+  private getPreviousExtraMetricStep(user: User, payload: CheckinDraftPayload): CheckinStepTarget | null {
+    const activeMetricKey = payload.activeMetricKey;
+    const extraMetricKeys = payload.extraMetricKeys ?? [];
+
+    if (!activeMetricKey) {
+      return null;
+    }
+
+    const currentIndex = extraMetricKeys.indexOf(activeMetricKey);
+
+    if (currentIndex === -1) {
+      return null;
+    }
+
+    if (currentIndex > 0) {
+      return {
+        state: FSM_STATES.checkin_metric_score,
+        activeMetricKey: extraMetricKeys[currentIndex - 1],
+      };
+    }
+
+    const lastCoreState = this.getLastCoreState(user);
+
+    if (!lastCoreState) {
+      return null;
+    }
+
+    return { state: lastCoreState };
   }
 
   private getCorePayloadKeysFromState(
@@ -533,17 +711,21 @@ export class CheckinsFlowService {
 
   private buildEntryPayload(payload: CheckinDraftPayload): UpsertDailyEntryDto {
     const entryPayload: UpsertDailyEntryDto = {};
+    const metricValues = new Map<string, number>();
 
     if (typeof payload.moodScore === 'number') {
       entryPayload.moodScore = payload.moodScore;
+      metricValues.set('mood', payload.moodScore);
     }
 
     if (typeof payload.energyScore === 'number') {
       entryPayload.energyScore = payload.energyScore;
+      metricValues.set('energy', payload.energyScore);
     }
 
     if (typeof payload.stressScore === 'number') {
       entryPayload.stressScore = payload.stressScore;
+      metricValues.set('stress', payload.stressScore);
     }
 
     if (typeof payload.sleepHours === 'number') {
@@ -552,6 +734,21 @@ export class CheckinsFlowService {
 
     if (typeof payload.sleepQuality === 'number') {
       entryPayload.sleepQuality = payload.sleepQuality;
+    }
+
+    for (const [key, value] of Object.entries(payload.metricScores ?? {})) {
+      if (typeof value === 'number') {
+        metricValues.set(key, value);
+      }
+    }
+
+    if (metricValues.size > 0) {
+      entryPayload.metricValues = [...metricValues.entries()].map(
+        ([key, value]): DailyMetricValueInput => ({
+          key,
+          value,
+        }),
+      );
     }
 
     return entryPayload;
@@ -570,6 +767,7 @@ export class CheckinsFlowService {
       state === FSM_STATES.checkin_mood ||
       state === FSM_STATES.checkin_energy ||
       state === FSM_STATES.checkin_stress ||
+      state === FSM_STATES.checkin_metric_score ||
       state === FSM_STATES.checkin_sleep_hours ||
       state === FSM_STATES.checkin_sleep_quality ||
       state === FSM_STATES.checkin_note_prompt ||
@@ -604,5 +802,47 @@ export class CheckinsFlowService {
     }
 
     return next;
+  }
+
+  private hasCapturedAnyMetric(payload: CheckinDraftPayload): boolean {
+    return hasCapturedCoreMetric(payload) || Object.keys(payload.metricScores ?? {}).length > 0;
+  }
+
+  private clearMetricProgressFrom(
+    payload: CheckinDraftPayload,
+    user: User,
+    previousStep: CheckinStepTarget,
+  ): CheckinDraftPayload {
+    const next = { ...payload };
+
+    if (payload.activeMetricKey) {
+      const extraMetricKeys = payload.extraMetricKeys ?? [];
+      const currentIndex = extraMetricKeys.indexOf(payload.activeMetricKey);
+      const metricScores = { ...(payload.metricScores ?? {}) };
+
+      if (currentIndex !== -1) {
+        for (const key of extraMetricKeys.slice(currentIndex)) {
+          delete metricScores[key];
+        }
+      }
+
+      next.metricScores = metricScores;
+    }
+
+    if (previousStep.state === FSM_STATES.checkin_metric_score) {
+      next.activeMetricKey = previousStep.activeMetricKey;
+      return next;
+    }
+
+    delete next.activeMetricKey;
+    return next;
+  }
+
+  private async getEnabledExtraMetricKeys(user: User): Promise<string[]> {
+    const metrics = await this.dailyMetricsService.getEnabledCheckinMetrics(user);
+
+    return metrics
+      .filter((metric) => !metric.isCore && metric.inputType === 'score')
+      .map((metric) => metric.key);
   }
 }

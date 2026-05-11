@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { ChartJSNodeCanvas } from 'chartjs-node-canvas';
 import type { ChartData, LegendItem } from 'chart.js';
 
-import type { ChartPoint } from './charts.types';
+import type { ChartPoint, SingleMetricChartPoint } from './charts.types';
 import {
   formatChartLabels,
   resolveChartLineTension,
@@ -33,17 +33,33 @@ export class ChartsRenderer {
     const labels = formatChartLabels(points.map((point) => point.date));
     const pointRadius = resolveChartPointRadius(points.length);
     const tension = resolveChartLineTension(points.length);
+    const datasets = [];
+
+    if (points.some((point) => typeof point.mood === 'number')) {
+      datasets.push(this.buildMoodDataset(points, pointRadius, tension));
+    }
+
+    if (points.some((point) => typeof point.energy === 'number')) {
+      datasets.push(
+        this.buildMetricDataset('\u042d\u043d\u0435\u0440\u0433\u0438\u044f', points.map((point) => point.energy ?? null), '#16a34a', pointRadius, tension),
+      );
+    }
+
+    if (points.some((point) => typeof point.stress === 'number')) {
+      datasets.push(
+        this.buildMetricDataset('\u0421\u0442\u0440\u0435\u0441\u0441', points.map((point) => point.stress ?? null), '#dc2626', pointRadius, tension),
+      );
+    }
+
+    if (points.some((point) => point.hasEvent)) {
+      datasets.push(this.buildEventPresenceDataset(points));
+    }
 
     return this.chartCanvas.renderToBuffer({
       type: 'line',
       data: {
         labels,
-        datasets: [
-          this.buildMoodDataset(points, pointRadius, tension),
-          this.buildMetricDataset('Энергия', points.map((point) => point.energy ?? null), '#16a34a', pointRadius, tension),
-          this.buildMetricDataset('Стресс', points.map((point) => point.stress ?? null), '#dc2626', pointRadius, tension),
-          this.buildEventPresenceDataset(points),
-        ],
+        datasets,
       },
       options: {
         responsive: false,
@@ -85,30 +101,43 @@ export class ChartsRenderer {
     const labels = formatChartLabels(points.map((point) => point.date));
     const pointRadius = resolveChartPointRadius(points.length);
     const tension = resolveChartLineTension(points.length);
+    const datasets = [];
+
+    if (points.some((point) => typeof point.sleepHours === 'number')) {
+      datasets.push(
+        this.buildMetricDataset(
+          '\u0421\u043e\u043d (\u0447\u0430\u0441\u044b)',
+          points.map((point) => point.sleepHours ?? null),
+          '#7c3aed',
+          pointRadius,
+          tension,
+          'hours',
+        ),
+      );
+    }
+
+    if (points.some((point) => typeof point.sleepQuality === 'number')) {
+      datasets.push(
+        this.buildMetricDataset(
+          '\u0421\u043e\u043d (\u043a\u0430\u0447\u0435\u0441\u0442\u0432\u043e)',
+          points.map((point) => point.sleepQuality ?? null),
+          '#0ea5e9',
+          pointRadius,
+          tension,
+          'quality',
+        ),
+      );
+    }
+
+    if (points.some((point) => point.isSleepMissing)) {
+      datasets.push(this.buildSleepMissingDataset(points));
+    }
 
     return this.chartCanvas.renderToBuffer({
       type: 'line',
       data: {
         labels,
-        datasets: [
-          this.buildMetricDataset(
-            'Сон (часы)',
-            points.map((point) => point.sleepHours ?? null),
-            '#7c3aed',
-            pointRadius,
-            tension,
-            'hours',
-          ),
-          this.buildMetricDataset(
-            'Сон (качество)',
-            points.map((point) => point.sleepQuality ?? null),
-            '#0ea5e9',
-            pointRadius,
-            tension,
-            'quality',
-          ),
-          this.buildSleepMissingDataset(points),
-        ],
+        datasets,
       },
       options: {
         responsive: false,
@@ -211,6 +240,63 @@ export class ChartsRenderer {
             },
             ticks: {
               display: false,
+            },
+          },
+        },
+      },
+    });
+  }
+
+  async renderSelectedMetricChart(
+    points: SingleMetricChartPoint[],
+    options: { label: string; color: string },
+  ): Promise<Buffer> {
+    const labels = formatChartLabels(points.map((point) => point.date));
+    const pointRadius = resolveChartPointRadius(points.length);
+    const tension = resolveChartLineTension(points.length);
+
+    return this.chartCanvas.renderToBuffer({
+      type: 'line',
+      data: {
+        labels,
+        datasets: [
+          this.buildMetricDataset(
+            options.label,
+            points.map((point) => point.value ?? null),
+            options.color,
+            pointRadius,
+            tension,
+          ),
+        ],
+      },
+      options: {
+        responsive: false,
+        maintainAspectRatio: false,
+        layout: {
+          padding: {
+            top: 20,
+            right: 24,
+            bottom: 12,
+            left: 16,
+          },
+        },
+        plugins: {
+          legend: this.buildLegendOptions(),
+        },
+        scales: {
+          x: this.buildXAxisOptions(points.length),
+          y: {
+            min: 0,
+            max: 10,
+            grid: {
+              color: '#e2e8f0',
+            },
+            ticks: {
+              stepSize: 1,
+              color: '#475569',
+              font: {
+                size: 13,
+              },
             },
           },
         },

@@ -10,6 +10,7 @@ export const FSM_STATES = {
   checkin_mood: 'checkin_mood',
   checkin_energy: 'checkin_energy',
   checkin_stress: 'checkin_stress',
+  checkin_metric_score: 'checkin_metric_score',
   checkin_sleep_hours: 'checkin_sleep_hours',
   checkin_sleep_quality: 'checkin_sleep_quality',
   checkin_note_prompt: 'checkin_note_prompt',
@@ -26,6 +27,7 @@ export const FSM_STATES = {
   event_repeat_count: 'event_repeat_count',
   settings_menu: 'settings_menu',
   stats_period_select: 'stats_period_select',
+  stats_metric_select: 'stats_metric_select',
 } as const;
 
 export type FsmState = (typeof FSM_STATES)[keyof typeof FSM_STATES];
@@ -37,6 +39,9 @@ export interface CheckinDraftPayload extends FsmPayload {
   moodScore?: number;
   energyScore?: number;
   stressScore?: number;
+  metricScores?: Record<string, number>;
+  extraMetricKeys?: string[];
+  activeMetricKey?: string;
   sleepHours?: number;
   sleepQuality?: number;
   entryId?: string;
@@ -56,4 +61,6 @@ export interface CheckinDraftPayload extends FsmPayload {
   eventRepeatCount?: number;
   eventSeriesId?: string;
   settingsAwaiting?: 'reminder_time' | 'sleep_mode';
+  settingsView?: 'main' | 'daily_metrics';
+  statsPeriodType?: 'd7' | 'd30' | 'all';
 }

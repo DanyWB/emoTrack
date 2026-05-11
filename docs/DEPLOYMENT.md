@@ -1,4 +1,4 @@
-# emoTrack Deployment and Release Notes
+﻿# emoTrack Deployment and Release Notes
 
 This document is intentionally practical and conservative.
 
@@ -157,12 +157,12 @@ Database rollback:
   - `daily_entries.energyScore` is now nullable
   - `daily_entries.stressScore` is now nullable
   - existing users keep the current effective behavior because the new tracking flags default to `true`
-- the current daily-metric catalog groundwork migration is also additive:
+- the current daily-metric catalog migration is also additive:
   - `daily_metric_definitions` stores the available catalog of score-based and sleep-block metrics
-  - `user_tracked_metrics` stores per-user metric selection groundwork
-  - `daily_entry_metric_values` stores generic per-entry metric values groundwork
-  - the seeded catalog is idempotent and includes the current core metrics plus additional score-based metrics for future configurable check-in expansion
-  - the current Telegram UX still uses the accepted core-metric toggle flow; these new tables are groundwork and do not yet replace the current user-facing flow
+  - `user_tracked_metrics` stores per-user metric selection
+  - `daily_entry_metric_values` stores generic per-entry metric values
+  - the seeded catalog is idempotent and includes the current core metrics plus additional score-based metrics
+  - the current Telegram UX now uses `user_tracked_metrics` for the configurable daily flow and writes score values into `daily_entry_metric_values` without removing legacy core-field compatibility
 - the current series-metadata schema change is also additive only:
   - `events.seriesId` is nullable
   - `events.seriesPosition` is nullable
@@ -181,3 +181,7 @@ Important:
 - this repository documents recommended staging/production behavior
 - it does not enforce a full deployment policy in code
 - local Windows no-Docker development remains a first-class supported mode
+
+
+
+

@@ -5,7 +5,12 @@ import {
   hasAtLeastOneTrackedDailyMetric,
   type DailyTrackingSelection,
 } from '../common/utils/validation.utils';
-import { DailyMetricsService } from '../daily-metrics/daily-metrics.service';
+import {
+  DailyMetricsService,
+  type TrackedMetricSettingsItem,
+  type EnabledCheckinMetric,
+} from '../daily-metrics/daily-metrics.service';
+import { type DailyMetricCatalogKey, LEGACY_TRACKED_METRIC_MAP } from '../daily-metrics/daily-metrics.catalog';
 import { UpdateUserSettingsDto } from './dto/update-user-settings.dto';
 import { UsersRepository } from './users.repository';
 
@@ -79,6 +84,67 @@ export class UsersService {
 
     const updatedUser = await this.usersRepository.updateSettings(userId, dto);
     await this.dailyMetricsService.ensureUserTrackedMetrics(updatedUser);
+    return updatedUser;
+  }
+
+  async getTrackedMetrics(userId: string): Promise<TrackedMetricSettingsItem[]> {
+    const user = await this.findById(userId);
+
+    if (!user) {
+      throw new Error(`User ${userId} not found`);
+    }
+
+    return this.dailyMetricsService.getUserTrackedMetricsForSettings(user);
+  }
+
+  async getEnabledCheckinMetrics(userId: string): Promise<EnabledCheckinMetric[]> {
+    const user = await this.findById(userId);
+
+    if (!user) {
+      throw new Error(`User ${userId} not found`);
+    }
+
+    return this.dailyMetricsService.getEnabledCheckinMetrics(user);
+  }
+
+  async setTrackedMetric(userId: string, metricKey: DailyMetricCatalogKey, enabled: boolean): Promise<User> {
+    const user = await this.findById(userId);
+
+    if (!user) {
+      throw new Error(`User ${userId} not found`);
+    }
+
+    const metrics = await this.dailyMetricsService.getUserTrackedMetricsForSettings(user);
+    const nextMetrics = metrics.map((metric) =>
+      metric.key === metricKey
+        ? {
+            ...metric,
+            enabled,
+          }
+        : metric,
+    );
+
+    if (!nextMetrics.some((metric) => metric.enabled)) {
+      throw new Error('INVALID_DAILY_TRACKING_CONFIGURATION');
+    }
+
+    const legacyField = LEGACY_TRACKED_METRIC_MAP[metricKey as keyof typeof LEGACY_TRACKED_METRIC_MAP];
+    const updatedUser =
+      legacyField !== undefined
+        ? await this.usersRepository.update(userId, {
+            [legacyField]: enabled,
+          })
+        : user;
+
+    await this.dailyMetricsService.persistTrackedMetricSettings(
+      userId,
+      nextMetrics.map((metric) => ({
+        key: metric.key,
+        enabled: metric.enabled,
+        sortOrder: metric.sortOrder,
+      })),
+    );
+
     return updatedUser;
   }
 

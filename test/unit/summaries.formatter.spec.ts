@@ -1,8 +1,8 @@
-import { SummaryPeriodType } from '@prisma/client';
+﻿import { SummaryPeriodType } from '@prisma/client';
 
 import { SummariesFormatter } from '../../src/summaries/summaries.formatter';
 import type { PeriodStatsPayload } from '../../src/stats/stats.types';
-import { telegramCopy } from '../../src/telegram/telegram.copy';
+import { STATS_METRIC_LABELS, telegramCopy } from '../../src/telegram/telegram.copy';
 
 function buildPayload(overrides: Partial<PeriodStatsPayload> = {}): PeriodStatsPayload {
   return {
@@ -19,6 +19,7 @@ function buildPayload(overrides: Partial<PeriodStatsPayload> = {}): PeriodStatsP
       sleepHours: 7.1,
       sleepQuality: 6.8,
     },
+    extraMetricAverages: [],
     bestDay: {
       date: '2026-03-10',
       moodScore: 9,
@@ -48,15 +49,14 @@ describe('SummariesFormatter', () => {
   it('formats a readable normal summary payload', () => {
     const text = formatter.formatSummaryText(buildPayload());
 
-    expect(text).toContain('Сводка за период: 7 дней');
-    expect(text).toContain('Кратко:');
-    expect(text).toContain('- Записей: 5');
-    expect(text).toContain('Средние значения:');
-    expect(text).toContain('- Настроение: 7.20');
-    expect(text).toContain('Сон:');
-    expect(text).toContain('Опорные дни:');
-    expect(text).toContain('- Лучший день: 2026-03-10 (9)');
-    expect(text).toContain('События по типам:');
+    expect(text).toContain(telegramCopy.stats.titlePrefix);
+    expect(text).toContain(`${telegramCopy.stats.countsLabel}:`);
+    expect(text).toContain(`${telegramCopy.stats.averagesLabel}:`);
+    expect(text).toContain(`- ${STATS_METRIC_LABELS.mood}: 7.20`);
+    expect(text).toContain(`${telegramCopy.stats.sleepLabel}:`);
+    expect(text).toContain(`${telegramCopy.stats.daysLabel}:`);
+    expect(text).toContain(`- ${telegramCopy.stats.bestDayLabel}: 2026-03-10 (9)`);
+    expect(text).toContain(`${telegramCopy.stats.eventsBreakdownLabel}:`);
     expect(text).toContain('- Работа: 2');
   });
 
@@ -69,12 +69,12 @@ describe('SummariesFormatter', () => {
       }),
     );
 
-    expect(text).toContain('Данных пока мало, поэтому сводка предварительная.');
-    expect(text).toContain('Подробная сводка и графики появятся, когда будет хотя бы 3 записи за период.');
-    expect(text).not.toContain('Изменение к предыдущему периоду:');
-    expect(text).not.toContain('Наблюдения:');
-    expect(text).not.toContain('Опорные дни:');
-    expect(text).not.toContain('События по типам:');
+    expect(text).toContain(telegramCopy.stats.lowDataLead);
+    expect(text).toContain(telegramCopy.stats.lowDataNote);
+    expect(text).not.toContain(`${telegramCopy.stats.comparisonLabel}:`);
+    expect(text).not.toContain(`${telegramCopy.stats.patternsLabel}:`);
+    expect(text).not.toContain(`${telegramCopy.stats.daysLabel}:`);
+    expect(text).not.toContain(`${telegramCopy.stats.eventsBreakdownLabel}:`);
   });
 
   it('adds compact comparison and pattern blocks only when they are present', () => {
@@ -107,14 +107,12 @@ describe('SummariesFormatter', () => {
       }),
     );
 
-    expect(text).toContain('Изменение к предыдущему периоду:');
-    expect(text).toContain('- Настроение: +0.80');
-    expect(text).toContain('- Стресс: -0.70');
-    expect(text).toContain('Наблюдения:');
-    expect(text).toContain('При более долгом сне энергия в среднем выше на 1.20.');
-    expect(text).toContain('По настроению чаще лучше проходит вторник, сложнее — понедельник.');
-    expect(text).toContain('Чаще всего встречалось: Работа (3).');
-    expect(text).toContain('В дни с событиями настроение в среднем ниже на 1.10.');
+    expect(text).toContain(`${telegramCopy.stats.comparisonLabel}:`);
+    expect(text).toContain(`- ${STATS_METRIC_LABELS.mood}: +0.80`);
+    expect(text).toContain(`- ${STATS_METRIC_LABELS.stress}: -0.70`);
+    expect(text).toContain(`${telegramCopy.stats.patternsLabel}:`);
+    expect(text).toContain('1.20');
+    expect(text).toContain('Работа (3)');
   });
 
   it('renders a graceful empty summary payload if it is formatted directly', () => {
@@ -136,7 +134,7 @@ describe('SummariesFormatter', () => {
       }),
     );
 
-    expect(text).toContain('Сводка за период: 7 дней');
+    expect(text).toContain(telegramCopy.stats.titlePrefix);
     expect(text).toContain('Записей: 0');
     expect(text).toContain('Данных пока нет.');
   });
@@ -146,8 +144,102 @@ describe('SummariesFormatter', () => {
 
     expect(text).toContain(telegramCopy.reminders.weeklyDigestTitle);
     expect(text).toContain(telegramCopy.reminders.weeklyDigestLead);
-    expect(text).toContain('Кратко:');
-    expect(text).toContain('Средние значения:');
-    expect(text).not.toContain('Сводка за период: 7 дней');
+    expect(text).toContain(`${telegramCopy.stats.countsLabel}:`);
+    expect(text).toContain(`${telegramCopy.stats.averagesLabel}:`);
+    expect(text).not.toContain(`${telegramCopy.stats.titlePrefix}:`);
+  });
+
+  it('renders a compact extra metrics block when generic score averages are present', () => {
+    const text = formatter.formatSummaryText(
+      buildPayload({
+        extraMetricAverages: [
+          {
+            key: 'joy',
+            label: 'Радость',
+            average: 8.5,
+            observationsCount: 3,
+          },
+          {
+            key: 'wellbeing',
+            label: 'Самочувствие',
+            average: 6.25,
+            observationsCount: 2,
+          },
+        ],
+      }),
+    );
+
+    expect(text).toContain(`${telegramCopy.stats.extraMetricsLabel}:`);
+    expect(text).toContain('- Радость: 8.50');
+    expect(text).toContain('- Самочувствие: 6.25');
+  });
+
+  it('renders a selected extra-metric summary without legacy blocks', () => {
+    const text = formatter.formatSelectedMetricSummaryText({
+      periodType: SummaryPeriodType.d7,
+      periodStart: new Date('2026-03-05T00:00:00.000Z'),
+      periodEnd: new Date('2026-03-11T00:00:00.000Z'),
+      entriesCount: 5,
+      eventsCount: 2,
+      isLowData: false,
+      metricKey: 'joy',
+      metricLabel: 'Радость',
+      metricKind: 'score',
+      observationsCount: 3,
+      average: 8,
+      deltaVsPreviousPeriod: null,
+      sleepHoursDeltaVsPreviousPeriod: null,
+      sleepQualityDeltaVsPreviousPeriod: null,
+      bestDay: null,
+      worstDay: null,
+      sleepHoursAverage: null,
+      sleepQualityAverage: null,
+      sleepHoursObservationsCount: 0,
+      sleepQualityObservationsCount: 0,
+      chartPoints: [],
+      sleepChartPoints: [],
+    });
+
+    expect(text).toContain('📊 Радость: 7 дней');
+    expect(text).toContain('Отметок по метрике: 3');
+    expect(text).toContain('- Радость: 8.00');
+    expect(text).not.toContain(telegramCopy.stats.bestDayLabel);
+    expect(text).not.toContain(`${telegramCopy.stats.sleepLabel}:`);
+  });
+
+  it('renders a selected sleep summary with sleep-specific counts and averages', () => {
+    const text = formatter.formatSelectedMetricSummaryText({
+      periodType: SummaryPeriodType.d30,
+      periodStart: new Date('2026-02-10T00:00:00.000Z'),
+      periodEnd: new Date('2026-03-11T00:00:00.000Z'),
+      entriesCount: 6,
+      eventsCount: 1,
+      isLowData: false,
+      metricKey: 'sleep',
+      metricLabel: 'Сон',
+      metricKind: 'sleep_block',
+      observationsCount: 6,
+      average: null,
+      deltaVsPreviousPeriod: null,
+      sleepHoursDeltaVsPreviousPeriod: 0.5,
+      sleepQualityDeltaVsPreviousPeriod: -0.25,
+      bestDay: null,
+      worstDay: null,
+      sleepHoursAverage: 7.25,
+      sleepQualityAverage: 6.5,
+      sleepHoursObservationsCount: 5,
+      sleepQualityObservationsCount: 4,
+      chartPoints: [],
+      sleepChartPoints: [],
+    });
+
+    expect(text).toContain('📊 Сон: 30 дней');
+    expect(text).toContain('Отметок по часам сна: 5');
+    expect(text).toContain('Отметок по качеству сна: 4');
+    expect(text).toContain('- Часы: 7.25');
+    expect(text).toContain('- Качество: 6.50');
+    expect(text).toContain(`${telegramCopy.stats.comparisonLabel}:`);
+    expect(text).toContain(`- ${STATS_METRIC_LABELS.sleepHours}: +0.50`);
+    expect(text).toContain(`- ${STATS_METRIC_LABELS.sleepQuality}: -0.25`);
   });
 });

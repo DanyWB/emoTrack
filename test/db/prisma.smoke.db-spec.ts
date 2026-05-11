@@ -1,0 +1,323 @@
+import { existsSync, readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { EventType, PrismaClient, SleepMode } from '@prisma/client';
+
+import { CheckinsRepository } from '../../src/checkins/checkins.repository';
+import { DailyMetricsRepository } from '../../src/daily-metrics/daily-metrics.repository';
+import { DAILY_METRIC_CATALOG } from '../../src/daily-metrics/daily-metrics.catalog';
+import type { PrismaService } from '../../src/database/prisma.service';
+import { EventsRepository } from '../../src/events/events.repository';
+import { UsersRepository } from '../../src/users/users.repository';
+
+const SAFE_TEST_DATABASE_NAME_PATTERN = /test/i;
+const TELEGRAM_ID_BASE = 900_000_000_000n;
+
+function loadLocalEnvFile(): void {
+  const envPath = resolve(process.cwd(), '.env');
+
+  if (!existsSync(envPath)) {
+    return;
+  }
+
+  const lines = readFileSync(envPath, 'utf8').split(/\r?\n/);
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+
+    if (!line || line.startsWith('#')) {
+      continue;
+    }
+
+    const separatorIndex = line.indexOf('=');
+
+    if (separatorIndex <= 0) {
+      continue;
+    }
+
+    const key = line.slice(0, separatorIndex).trim();
+
+    if (process.env[key] !== undefined) {
+      continue;
+    }
+
+    process.env[key] = normalizeEnvValue(line.slice(separatorIndex + 1).trim());
+  }
+}
+
+function normalizeEnvValue(value: string): string {
+  if (
+    (value.startsWith('"') && value.endsWith('"')) ||
+    (value.startsWith("'") && value.endsWith("'"))
+  ) {
+    return value.slice(1, -1);
+  }
+
+  return value;
+}
+
+function resolveDatabaseUrlTest(): string | null {
+  const value = process.env.DATABASE_URL_TEST?.trim();
+
+  if (!value) {
+    return null;
+  }
+
+  assertSafeDatabaseUrlTest(value);
+  return value;
+}
+
+function assertSafeDatabaseUrlTest(databaseUrl: string): void {
+  let parsed: URL;
+
+  try {
+    parsed = new URL(databaseUrl);
+  } catch {
+    throw new Error('DATABASE_URL_TEST must be a valid PostgreSQL connection URL.');
+  }
+
+  if (!['postgres:', 'postgresql:'].includes(parsed.protocol)) {
+    throw new Error('DATABASE_URL_TEST must use a PostgreSQL protocol.');
+  }
+
+  const databaseName = decodeURIComponent(parsed.pathname.replace(/^\/+/, ''));
+
+  if (!databaseName || !SAFE_TEST_DATABASE_NAME_PATTERN.test(databaseName)) {
+    throw new Error(
+      'Refusing to run DB smoke tests: DATABASE_URL_TEST database name must contain "test".',
+    );
+  }
+}
+
+async function upsertMetricCatalog(prisma: PrismaClient): Promise<void> {
+  for (const metric of DAILY_METRIC_CATALOG) {
+    await prisma.dailyMetricDefinition.upsert({
+      where: { key: metric.key },
+      create: {
+        key: metric.key,
+        label: metric.label,
+        category: metric.category,
+        inputType: metric.inputType,
+        defaultEnabled: metric.defaultEnabled,
+        isActive: true,
+        sortOrder: metric.sortOrder,
+      },
+      update: {
+        label: metric.label,
+        category: metric.category,
+        inputType: metric.inputType,
+        defaultEnabled: metric.defaultEnabled,
+        isActive: true,
+        sortOrder: metric.sortOrder,
+      },
+    });
+  }
+}
+
+loadLocalEnvFile();
+
+const databaseUrlTest = resolveDatabaseUrlTest();
+
+describe('Prisma database smoke', () => {
+  if (!databaseUrlTest) {
+    it.skip('requires DATABASE_URL_TEST pointing to an isolated test database', () => undefined);
+    return;
+  }
+
+  jest.setTimeout(30_000);
+
+  const runId = `db-smoke-${Date.now()}`;
+  let telegramIdCounter = 0n;
+  let prisma: PrismaClient;
+  let usersRepository: UsersRepository;
+  let checkinsRepository: CheckinsRepository;
+  let dailyMetricsRepository: DailyMetricsRepository;
+  let eventsRepository: EventsRepository;
+
+  beforeAll(async () => {
+    prisma = new PrismaClient({
+      datasources: {
+        db: {
+          url: databaseUrlTest,
+        },
+      },
+    });
+
+    await prisma.$connect();
+    await prisma.$executeRaw`SELECT 1`;
+    await upsertMetricCatalog(prisma);
+
+    const prismaService = prisma as unknown as PrismaService;
+    usersRepository = new UsersRepository(prismaService);
+    checkinsRepository = new CheckinsRepository(prismaService);
+    dailyMetricsRepository = new DailyMetricsRepository(prismaService);
+    eventsRepository = new EventsRepository(prismaService);
+  });
+
+  afterEach(async () => {
+    await cleanupRunUsers();
+  });
+
+  afterAll(async () => {
+    if (!prisma) {
+      return;
+    }
+
+    try {
+      await cleanupRunUsers();
+    } finally {
+      await prisma.$disconnect();
+    }
+  });
+
+  async function cleanupRunUsers(): Promise<void> {
+    await prisma.user.deleteMany({
+      where: {
+        username: {
+          startsWith: runId,
+        },
+      },
+    });
+  }
+
+  async function createTestUser(label: string) {
+    telegramIdCounter += 1n;
+
+    return usersRepository.create({
+      telegramId: TELEGRAM_ID_BASE + telegramIdCounter,
+      username: `${runId}-${label}`,
+      firstName: 'DB Smoke',
+      languageCode: 'ru',
+      timezone: 'Europe/Berlin',
+      onboardingCompleted: true,
+      consentGiven: true,
+      remindersEnabled: false,
+      reminderTime: '21:30',
+      sleepMode: SleepMode.both,
+    });
+  }
+
+  it('connects to the guarded test database and creates/reads a user', async () => {
+    const user = await createTestUser('user-read');
+
+    await expect(usersRepository.findByTelegramId(user.telegramId)).resolves.toMatchObject({
+      id: user.id,
+      telegramId: user.telegramId,
+    });
+    await expect(usersRepository.findById(user.id)).resolves.toMatchObject({
+      id: user.id,
+      username: `${runId}-user-read`,
+    });
+  });
+
+  it('preserves the DailyEntry same-day unique upsert contract', async () => {
+    const user = await createTestUser('daily-entry');
+    const entryDate = new Date('2026-03-11T00:00:00.000Z');
+
+    const first = await checkinsRepository.upsertByUserAndDate(user.id, entryDate, {
+      moodScore: 4,
+      energyScore: 5,
+      stressScore: 6,
+    });
+    const second = await checkinsRepository.upsertByUserAndDate(user.id, entryDate, {
+      energyScore: 8,
+      noteText: 'Updated in the DB smoke test',
+    });
+
+    const rows = await prisma.dailyEntry.findMany({
+      where: {
+        userId: user.id,
+        entryDate,
+      },
+    });
+
+    expect(second.id).toBe(first.id);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      id: first.id,
+      moodScore: 4,
+      energyScore: 8,
+      stressScore: 6,
+      noteText: 'Updated in the DB smoke test',
+    });
+  });
+
+  it('reads the seeded metric catalog through the real repository', async () => {
+    const definitions = await dailyMetricsRepository.findActiveDefinitions();
+    const definitionsByKey = new Map(definitions.map((definition) => [definition.key, definition]));
+
+    for (const key of ['mood', 'energy', 'stress', 'sleep', 'joy', 'wellbeing']) {
+      expect(definitionsByKey.has(key)).toBe(true);
+    }
+
+    expect(definitionsByKey.get('mood')).toMatchObject({
+      inputType: 'score',
+      defaultEnabled: true,
+    });
+    expect(definitionsByKey.get('sleep')).toMatchObject({
+      inputType: 'sleep_block',
+      defaultEnabled: true,
+    });
+    expect(definitionsByKey.get('joy')).toMatchObject({
+      inputType: 'score',
+      defaultEnabled: false,
+    });
+  });
+
+  it('keeps event overlap reads inclusive and ignores legacy series rows', async () => {
+    const user = await createTestUser('events');
+    const singleDay = await eventsRepository.create({
+      userId: user.id,
+      eventDate: new Date('2026-03-12T00:00:00.000Z'),
+      eventType: EventType.work,
+      title: 'Single day',
+      eventScore: 6,
+    });
+    const multiDay = await eventsRepository.create({
+      userId: user.id,
+      eventDate: new Date('2026-03-09T00:00:00.000Z'),
+      eventEndDate: new Date('2026-03-11T00:00:00.000Z'),
+      eventType: EventType.travel,
+      title: 'Trip',
+      eventScore: 7,
+    });
+    const seriesBacked = await eventsRepository.create({
+      userId: user.id,
+      eventDate: new Date('2026-03-10T00:00:00.000Z'),
+      eventType: EventType.other,
+      title: 'Legacy series row',
+      eventScore: 5,
+      seriesId: `${runId}-series`,
+      seriesPosition: 1,
+    });
+    const outsidePeriod = await eventsRepository.create({
+      userId: user.id,
+      eventDate: new Date('2026-03-01T00:00:00.000Z'),
+      eventEndDate: new Date('2026-03-02T00:00:00.000Z'),
+      eventType: EventType.rest,
+      title: 'Outside',
+      eventScore: 4,
+    });
+
+    const dayEvents = await eventsRepository.findByUserAndDay(
+      user.id,
+      new Date('2026-03-10T00:00:00.000Z'),
+    );
+    const periodEvents = await eventsRepository.findByUserAndPeriod(
+      user.id,
+      new Date('2026-03-10T00:00:00.000Z'),
+      new Date('2026-03-12T00:00:00.000Z'),
+    );
+
+    const dayEventIds = dayEvents.map((event) => event.id);
+    const periodEventIds = periodEvents.map((event) => event.id);
+
+    expect(dayEventIds).toContain(multiDay.id);
+    expect(dayEventIds).not.toContain(singleDay.id);
+    expect(dayEventIds).not.toContain(seriesBacked.id);
+    expect(dayEventIds).not.toContain(outsidePeriod.id);
+
+    expect(periodEventIds).toEqual(expect.arrayContaining([singleDay.id, multiDay.id]));
+    expect(periodEventIds).not.toContain(seriesBacked.id);
+    expect(periodEventIds).not.toContain(outsidePeriod.id);
+  });
+});

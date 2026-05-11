@@ -1,10 +1,13 @@
-import { Injectable } from '@nestjs/common';
+﻿import { Injectable } from '@nestjs/common';
 import { SummaryPeriodType } from '@prisma/client';
 
 import type {
   PeriodStatsPayload,
+  SelectedMetricStatsPayload,
+  StatsAverages,
   StatsDelta,
   StatsEventCompanionPattern,
+  StatsExtraMetricAverage,
   StatsSleepStatePattern,
   StatsWeekdayMoodPattern,
 } from '../stats/stats.types';
@@ -31,6 +34,79 @@ export class SummariesFormatter {
       telegramCopy.reminders.weeklyDigestTitle,
       telegramCopy.reminders.weeklyDigestLead,
     );
+  }
+
+  formatSelectedMetricSummaryText(payload: SelectedMetricStatsPayload): string {
+    const lines: string[] = [
+      `📊 ${payload.metricLabel}: ${this.periodLabel(payload.periodType)}`,
+      telegramCopy.stats.selectedMetricLead,
+      '',
+    ];
+
+    if (payload.entriesCount === 0) {
+      lines.push('Данных за этот период пока нет.');
+      return lines.join('\n');
+    }
+
+    if (payload.isLowData) {
+      lines.push(telegramCopy.stats.lowDataLead);
+    }
+
+    lines.push(`${telegramCopy.stats.countsLabel}:`);
+    lines.push(`- Записей в периоде: ${payload.entriesCount}`);
+
+    if (payload.metricKind === 'sleep_block') {
+      lines.push(`- Отметок по часам сна: ${payload.sleepHoursObservationsCount}`);
+      lines.push(`- Отметок по качеству сна: ${payload.sleepQualityObservationsCount}`);
+      lines.push('');
+      lines.push(`${telegramCopy.stats.sleepLabel}:`);
+      lines.push(`- Часы: ${this.numberOrDash(payload.sleepHoursAverage)}`);
+      lines.push(`- Качество: ${this.numberOrDash(payload.sleepQualityAverage)}`);
+
+      const sleepComparisonLines = this.buildSleepComparisonLines(payload);
+      if (sleepComparisonLines.length > 0 && !payload.isLowData) {
+        lines.push('');
+        lines.push(`${telegramCopy.stats.comparisonLabel}:`);
+        lines.push(...sleepComparisonLines);
+      }
+    } else {
+      lines.push(`- Отметок по метрике: ${payload.observationsCount}`);
+
+      if (payload.observationsCount === 0 || payload.average === null) {
+        lines.push('');
+        lines.push('За выбранный период по этой метрике пока нет оценок.');
+      } else {
+        lines.push('');
+        lines.push(`${telegramCopy.stats.averagesLabel}:`);
+        lines.push(`- ${payload.metricLabel}: ${this.number(payload.average)}`);
+
+        if (typeof payload.deltaVsPreviousPeriod === 'number' && !payload.isLowData) {
+          lines.push('');
+          lines.push(`${telegramCopy.stats.comparisonLabel}:`);
+          lines.push(`- ${payload.metricLabel}: ${this.formatSignedNumber(payload.deltaVsPreviousPeriod)}`);
+        }
+      }
+    }
+
+    if (!payload.isLowData && payload.metricKey === 'mood' && (payload.bestDay || payload.worstDay)) {
+      lines.push('');
+      lines.push(`${telegramCopy.stats.daysLabel}:`);
+
+      if (payload.bestDay) {
+        lines.push(`- ${telegramCopy.stats.bestDayLabel}: ${payload.bestDay.date} (${payload.bestDay.moodScore})`);
+      }
+
+      if (payload.worstDay) {
+        lines.push(`- ${telegramCopy.stats.worstDayLabel}: ${payload.worstDay.date} (${payload.worstDay.moodScore})`);
+      }
+    }
+
+    if (payload.isLowData) {
+      lines.push('');
+      lines.push(telegramCopy.stats.lowDataNote);
+    }
+
+    return lines.join('\n');
   }
 
   private buildSummaryText(
@@ -61,11 +137,26 @@ export class SummariesFormatter {
     lines.push(`${telegramCopy.stats.countsLabel}:`);
     lines.push(`- Записей: ${payload.entriesCount}`);
     lines.push(`- Событий: ${payload.eventsCount}`);
-    lines.push('');
-    lines.push(`${telegramCopy.stats.averagesLabel}:`);
-    lines.push(`- ${STATS_METRIC_LABELS.mood}: ${this.numberOrDash(payload.averages.mood)}`);
-    lines.push(`- ${STATS_METRIC_LABELS.energy}: ${this.numberOrDash(payload.averages.energy)}`);
-    lines.push(`- ${STATS_METRIC_LABELS.stress}: ${this.numberOrDash(payload.averages.stress)}`);
+
+    const coreAverageLines = this.buildCoreAverageLines(payload.averages);
+    const extraMetricAverageLines = this.buildExtraMetricAverageLines(payload.extraMetricAverages);
+
+    if (coreAverageLines.length > 0 || extraMetricAverageLines.length > 0) {
+      lines.push('');
+      lines.push(`${telegramCopy.stats.averagesLabel}:`);
+      lines.push(...coreAverageLines);
+
+      if (coreAverageLines.length > 0 && extraMetricAverageLines.length > 0) {
+        lines.push('');
+        lines.push(`${telegramCopy.stats.extraMetricsLabel}:`);
+      }
+
+      if (coreAverageLines.length === 0) {
+        lines.push(...extraMetricAverageLines);
+      } else if (extraMetricAverageLines.length > 0) {
+        lines.push(...extraMetricAverageLines);
+      }
+    }
 
     if (payload.averages.sleepHours !== null || payload.averages.sleepQuality !== null) {
       lines.push('');
@@ -120,6 +211,7 @@ export class SummariesFormatter {
         lines.push(`- ${label}: ${count}`);
       }
     }
+
     return lines.join('\n');
   }
 
@@ -147,6 +239,50 @@ export class SummariesFormatter {
     return entries
       .filter(([, value]) => value !== null && Math.abs(value) >= 0.01)
       .map(([key, value]) => `- ${STATS_METRIC_LABELS[key]}: ${this.formatSignedNumber(value as number)}`);
+  }
+
+  private buildSleepComparisonLines(payload: SelectedMetricStatsPayload): string[] {
+    const lines: string[] = [];
+
+    if (
+      typeof payload.sleepHoursDeltaVsPreviousPeriod === 'number' &&
+      Math.abs(payload.sleepHoursDeltaVsPreviousPeriod) >= 0.01
+    ) {
+      lines.push(
+        `- ${STATS_METRIC_LABELS.sleepHours}: ${this.formatSignedNumber(payload.sleepHoursDeltaVsPreviousPeriod)}`,
+      );
+    }
+
+    if (
+      typeof payload.sleepQualityDeltaVsPreviousPeriod === 'number' &&
+      Math.abs(payload.sleepQualityDeltaVsPreviousPeriod) >= 0.01
+    ) {
+      lines.push(
+        `- ${STATS_METRIC_LABELS.sleepQuality}: ${this.formatSignedNumber(payload.sleepQualityDeltaVsPreviousPeriod)}`,
+      );
+    }
+
+    return lines;
+  }
+
+  private buildCoreAverageLines(averages: StatsAverages): string[] {
+    const entries: Array<[keyof Pick<StatsAverages, 'mood' | 'energy' | 'stress'>, number | null]> = [
+      ['mood', averages.mood],
+      ['energy', averages.energy],
+      ['stress', averages.stress],
+    ];
+
+    return entries
+      .filter(([, value]) => value !== null)
+      .map(([key, value]) => `- ${STATS_METRIC_LABELS[key]}: ${this.numberOrDash(value)}`);
+  }
+
+  private buildExtraMetricAverageLines(metrics: StatsExtraMetricAverage[] | undefined): string[] {
+    if (!metrics || metrics.length === 0) {
+      return [];
+    }
+
+    return metrics.map((metric) => `- ${metric.label}: ${metric.average.toFixed(2)}`);
   }
 
   private buildPatternLines(payload: PeriodStatsPayload): string[] {

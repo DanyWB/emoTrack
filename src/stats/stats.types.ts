@@ -1,6 +1,7 @@
 ﻿import type { EventType, SummaryPeriodType } from '@prisma/client';
 
 import type { ChartPoint } from '../charts/charts.types';
+import type { DailyMetricCatalogKey } from '../daily-metrics/daily-metrics.catalog';
 
 export interface StatsAverages {
   mood: number | null;
@@ -10,11 +11,18 @@ export interface StatsAverages {
   sleepQuality: number | null;
 }
 
+export interface StatsExtraMetricAverage {
+  key: string;
+  label: string;
+  average: number;
+  observationsCount: number;
+}
+
 export interface StatsDaySummary {
   date: string;
   moodScore: number;
-  energyScore: number;
-  stressScore: number;
+  energyScore: number | null;
+  stressScore: number | null;
 }
 
 export interface StatsDelta {
@@ -62,6 +70,7 @@ export interface PeriodStatsPayload {
   eventsCount: number;
   isLowData: boolean;
   averages: StatsAverages;
+  extraMetricAverages: StatsExtraMetricAverage[];
   bestDay: StatsDaySummary | null;
   worstDay: StatsDaySummary | null;
   eventBreakdown: Partial<Record<EventType, number>>;
@@ -75,4 +84,36 @@ export interface PeriodRange {
   periodEnd: Date;
   previousPeriodStart?: Date;
   previousPeriodEnd?: Date;
+}
+
+export type StatsSelectedMetricKey = DailyMetricCatalogKey | 'sleep';
+
+export interface SelectedMetricChartPoint {
+  date: string;
+  value?: number;
+}
+
+export interface SelectedMetricStatsPayload {
+  periodType: SummaryPeriodType;
+  periodStart: Date;
+  periodEnd: Date;
+  entriesCount: number;
+  eventsCount: number;
+  isLowData: boolean;
+  metricKey: StatsSelectedMetricKey;
+  metricLabel: string;
+  metricKind: 'score' | 'sleep_block';
+  observationsCount: number;
+  average: number | null;
+  deltaVsPreviousPeriod?: number | null;
+  sleepHoursDeltaVsPreviousPeriod?: number | null;
+  sleepQualityDeltaVsPreviousPeriod?: number | null;
+  bestDay: StatsDaySummary | null;
+  worstDay: StatsDaySummary | null;
+  sleepHoursAverage: number | null;
+  sleepQualityAverage: number | null;
+  sleepHoursObservationsCount: number;
+  sleepQualityObservationsCount: number;
+  chartPoints: SelectedMetricChartPoint[];
+  sleepChartPoints: ChartPoint[];
 }

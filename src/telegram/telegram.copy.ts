@@ -1,4 +1,4 @@
-import type { EventType, SleepMode, SummaryPeriodType } from '@prisma/client';
+﻿import type { EventType, SleepMode, SummaryPeriodType } from '@prisma/client';
 
 import {
   getCoreCheckinStepPosition,
@@ -6,6 +6,7 @@ import {
   type CoreCheckinState,
 } from '../checkins/checkins.steps';
 import { formatDateKey } from '../common/utils/date.utils';
+import { DAILY_METRIC_LABELS_BY_KEY, type DailyMetricCatalogKey } from '../daily-metrics/daily-metrics.catalog';
 
 export const EVENT_TYPE_LABELS: Record<EventType, string> = {
   work: 'Работа',
@@ -42,11 +43,29 @@ export const STATS_METRIC_LABELS = {
   sleepQuality: 'Качество сна',
 } as const;
 
+export const TELEGRAM_COMMANDS = [
+  { command: 'start', description: 'Старт и вход в бота' },
+  { command: 'help', description: 'Краткая помощь' },
+  { command: 'terms', description: 'Пользовательское соглашение' },
+  { command: 'checkin', description: 'Отметить состояние' },
+  { command: 'event', description: 'Добавить событие' },
+  { command: 'history', description: 'Последние записи' },
+  { command: 'stats', description: 'Сводка и графики' },
+  { command: 'settings', description: 'Настройки' },
+] as const;
+
 export const DAILY_TRACKING_LABELS = {
   trackMood: 'Настроение',
   trackEnergy: 'Энергия',
   trackStress: 'Стресс',
   trackSleep: 'Сон',
+} as const;
+
+export const CORE_TRACKED_METRIC_LABELS = {
+  mood: 'Настроение',
+  energy: 'Энергия',
+  stress: 'Стресс',
+  sleep: 'Сон',
 } as const;
 
 export const WEEKDAY_LABELS = {
@@ -61,9 +80,11 @@ export const WEEKDAY_LABELS = {
 
 export const telegramCopy = {
   buttons: {
-    consentAccept: 'Согласен',
+    consentAccept: '✅ Согласен',
     cancel: 'Отмена',
     back: 'Назад',
+    historyOpen: 'Открыть',
+    historyBackToList: 'К списку',
     skip: 'Пропустить',
     firstCheckinStart: 'Начать check-in',
     later: 'Позже',
@@ -79,6 +100,7 @@ export const telegramCopy = {
     settingsToggleRemindersOff: 'Напоминания: выкл',
     settingsEditReminderTime: 'Изменить время',
     settingsSleepMode: 'Режим сна',
+    settingsDailyMetrics: 'Критерии check-in',
     settingsTrackMoodOn: 'Настроение: вкл',
     settingsTrackMoodOff: 'Настроение: выкл',
     settingsTrackEnergyOn: 'Энергия: вкл',
@@ -92,7 +114,7 @@ export const telegramCopy = {
     sleepModeBoth: 'Часы и качество',
   },
   startup: {
-    alreadyReady: 'Профиль уже настроен. Можно отмечать состояние.',
+    alreadyReady: '👋 Профиль уже настроен. Можно отметить состояние или открыть нужный раздел.',
     unknownInput: 'Не понял сообщение. Выбери действие из меню или используй команду.',
   },
   placeholders: {
@@ -106,21 +128,37 @@ export const telegramCopy = {
     unexpectedError: 'Что-то пошло не так. Попробуй еще раз.',
   },
   onboarding: {
-    intro: 'Привет. emoTrack поможет фиксировать состояние по дням.',
-    disclaimer: 'Это трекер самонаблюдения. Это не диагностика и не замена специалиста.',
-    consentPrompt: 'Согласен на хранение записей в боте?',
-    consentAccepted: 'Спасибо. Теперь укажи время напоминания в формате HH:mm.',
-    consentDeclined: 'Без согласия мы не можем сохранять записи.',
-    reminderPrompt: 'Введи время напоминания в формате HH:mm, например 21:30.',
-    reminderSaved: 'Время напоминания сохранено.',
-    completed: 'Онбординг завершен. Можно сделать первую отметку за сегодня.',
-    firstCheckinOffer: 'Начать первый check-in сейчас?',
-    firstCheckinDeferred: 'Хорошо. Запусти /checkin, когда будешь готов.',
-    incompleteRedirect: 'Сначала заверши онбординг. Продолжим с текущего шага.',
+    intro: '👋 Привет! emoTrack помогает замечать, как меняется состояние по дням.',
+    disclaimer: '📝 Это инструмент самонаблюдения. Он не заменяет специалиста и не ставит диагнозы.',
+    consentPrompt:
+      'Чтобы пользоваться ботом, нужно принять пользовательское соглашение. Перед согласием можно открыть /terms.\n\nГотов продолжить?',
+    consentAccepted: '✅ Соглашение принято. Теперь укажи время напоминания в формате HH:mm.',
+    consentDeclined: 'Без принятия соглашения бот не может сохранять записи.',
+    reminderPrompt: '⏰ Введи время напоминания в формате HH:mm, например 21:30.',
+    reminderSaved: '✅ Время напоминания сохранено.',
+    completed: '✅ Базовая настройка завершена.',
+    firstCheckinOffer: 'Хочешь сделать первый check-in прямо сейчас?',
+    firstCheckinDeferred: 'Хорошо. Когда будешь готов, запусти /checkin.',
+    incompleteRedirect: 'Сначала завершим настройку. Продолжим с текущего шага.',
+  },
+  terms: {
+    title: '📄 Пользовательское соглашение',
+    text: [
+      'Это временный текст соглашения для текущего этапа разработки.',
+      '',
+      'Сейчас важно следующее:',
+      '- бот хранит ваши записи, события и настройки, чтобы показывать историю, статистику и напоминания',
+      '- emoTrack не является медицинским инструментом и не заменяет специалиста',
+      '- вы управляете тем, какие данные отмечаете в ежедневном check-in',
+    ].join('\n'),
+    acceptPrompt: 'Если условия подходят, нажми «Согласен».',
+    accessRequired:
+      'Чтобы пользоваться ботом, сначала нужно принять пользовательское соглашение. Открой /terms и нажми «Согласен».',
+    alreadyAccepted: '✅ Соглашение уже принято.',
   },
   checkin: {
-    started: 'Отметь состояние за сегодня.',
-    resumed: 'Продолжим текущий check-in.',
+    started: '🌤 Отметь состояние за сегодня.',
+    resumed: '↩️ Продолжим текущий check-in.',
     interrupted: 'Текущий check-in сбился. Начни заново командой /checkin.',
     notePrompt: 'Если хочешь, можно добавить заметку за день.',
     noteInputPrompt: 'Отправь текст заметки одним сообщением.',
@@ -132,7 +170,7 @@ export const telegramCopy = {
     repeatedStepPrompt: 'Продолжим текущий шаг.',
   },
   event: {
-    startedStandalone: 'Добавим событие.',
+    startedStandalone: '🗂 Добавим событие.',
     typePrompt: 'Выбери тип события.',
     titlePrompt: 'Укажи короткое название события.',
     scorePrompt: 'Оцени событие от 0 до 10, где 0 = ужасно, 10 = прекрасно.',
@@ -142,18 +180,24 @@ export const telegramCopy = {
     savedStandalone: 'Событие сохранено.',
   },
   history: {
-    title: 'Последние записи:',
-    moreTitle: 'Еще записи:',
-    empty: 'Пока нет записей. Начни с /checkin.',
+    title: '📚 Последние записи:',
+    moreTitle: '📚 Еще записи:',
+    detailTitlePrefix: '📝 Запись за',
+    empty: 'Пока записей нет. Начни с /checkin.',
     stale: 'Этот список уже неактуален. Открой /history снова.',
   },
   stats: {
-    periodPrompt: 'Выбери период статистики.',
-    loading: 'Собираю сводку…',
+    periodPrompt: '📊 Выбери период статистики.',
+    metricPromptPrefix: '📊 Выбери метрику для периода',
+    metricPromptHint:
+      'В боте доступна краткая статистика по одной метрике за раз. Расширенная аналитика появится позже в веб-панели.',
+    loading: '📊 Собираю сводку…',
     empty: 'Недостаточно данных для сводки. Сделай несколько отметок и попробуй снова.',
+    selectedMetricLead: 'Краткая статистика по одной метрике.',
     titlePrefix: 'Сводка за период',
     countsLabel: 'Кратко',
     averagesLabel: 'Средние значения',
+    extraMetricsLabel: 'Доп. метрики',
     sleepLabel: 'Сон',
     daysLabel: 'Опорные дни',
     bestDayLabel: 'Лучший день',
@@ -164,6 +208,7 @@ export const telegramCopy = {
     lowDataLead: 'Данных пока мало, поэтому сводка предварительная.',
     lowDataNote: 'Подробная сводка и графики появятся, когда будет хотя бы 3 записи за период.',
     chartCombinedCaption: 'График настроения, энергии и стресса.',
+    chartSelectedMetricPrefix: 'График',
     chartSleepCaption: 'График сна.',
     chartMoodStripCaption: 'Компактная шкала настроения по дням.',
     chartUnavailable: 'Сейчас не удалось построить графики. Текстовая сводка доступна.',
@@ -176,27 +221,38 @@ export const telegramCopy = {
     eventMoodLowerPattern: 'В дни с событиями настроение в среднем ниже на {delta}.',
   },
   settings: {
-    title: 'Настройки:',
+    title: '⚙️ Настройки:',
+    remindersSectionTitle: '⏰ Напоминания',
+    checkinSectionTitle: '🧩 Ежедневный check-in',
     remindersEnabled: 'Напоминания: включены',
     remindersDisabled: 'Напоминания: выключены',
     remindersRuntimeLabel: 'Автонапоминания',
     remindersRuntimeActive: 'Автонапоминания: активны',
     remindersRuntimeDisabled: 'Автонапоминания: выключены',
     remindersRuntimeUnavailable: 'Автонапоминания: недоступны в этой среде',
+    weeklyDigestLabel: 'Еженедельная сводка',
+    weeklyDigestActive: 'по воскресеньям в это же время',
+    weeklyDigestDisabled: 'выключена вместе с напоминаниями',
+    weeklyDigestUnavailable: 'недоступна в этой среде',
     reminderTimeLabel: 'Время напоминания',
     sleepModeLabel: 'Режим сна',
-    dailyTrackingLabel: 'Ежедневный check-in',
-    reminderTimePrompt: 'Введи новое время напоминания в формате HH:mm.',
-    sleepModePrompt: 'Выбери режим сна.',
+    dailyTrackingLabel: 'Критерии',
+    dailyMetricsTitle: 'Критерии check-in:',
+    dailyMetricsHint: 'Выбери, что бот спрашивает в ежедневной отметке. Прошлые записи это не меняет.',
+    dailyMetricsActiveLabel: 'Сейчас активно',
+    dailyMetricsGuard: 'Нужно оставить хотя бы один критерий.',
+    dailyMetricsStale: 'Этот экран уже неактуален. Показываю текущие настройки.',
+    reminderTimePrompt: '⏰ Введи новое время в формате HH:mm.',
+    sleepModePrompt: '😴 Выбери режим сна.',
     reminderTimeUpdated: 'Время напоминания обновлено.',
     reminderTimeSavedWithoutDelivery:
-      'Время напоминания сохранено. В этой среде автонапоминания сейчас не отправляются.',
+      'Время напоминания обновлено. Автонапоминания и еженедельная сводка в этой среде сейчас не отправляются.',
     sleepModeUpdated: 'Режим сна обновлен.',
     remindersEnabledUpdated: 'Напоминания включены.',
     remindersEnabledWithoutDelivery:
-      'Напоминания включены в настройках. В этой среде автонапоминания сейчас не отправляются.',
-    remindersDisabledUpdated: 'Напоминания выключены.',
-    dailyTrackingUpdated: 'Набор ежедневных метрик обновлен.',
+      'Напоминания включены. Время сохранено, но фоновая отправка в этой среде недоступна.',
+    remindersDisabledUpdated: 'Напоминания выключены. Ежедневные и еженедельные отправки остановлены.',
+    dailyTrackingUpdated: 'Критерии check-in обновлены.',
   },
   reminders: {
     dailyPrompt: 'Напоминание: отметь состояние за сегодня командой /checkin.',
@@ -205,9 +261,11 @@ export const telegramCopy = {
   },
   help: {
     text: [
-      'emoTrack помогает отслеживать состояние, сон и события по дням.',
+      '🧭 emoTrack помогает отслеживать состояние, сон и события по дням.',
       '',
       'Команды:',
+      '/start — запуск и возвращение в бота',
+      '/terms — пользовательское соглашение',
       '/checkin — отметить состояние',
       '/event — добавить событие',
       '/history — последние записи',
@@ -231,7 +289,7 @@ export const telegramCopy = {
     invalidEventEndDate:
       'Некорректная дата окончания. Используй формат YYYY-MM-DD, и дата не должна быть раньше даты начала события.',
     invalidDailyTrackingConfiguration:
-      'Нужно оставить хотя бы одну ежедневную метрику: настроение, энергию, стресс или сон.',
+      'Нужно оставить хотя бы одну ежедневную метрику.',
     missingDailyMetricValue: 'Нужно заполнить хотя бы одну ежедневную метрику, прежде чем завершать запись.',
   },
 } as const;
@@ -242,6 +300,11 @@ export interface CheckinConfirmationData {
   stressScore?: number | null;
   sleepHours?: number;
   sleepQuality?: number;
+  extraMetricScores?: Array<{
+    key: DailyMetricCatalogKey;
+    label: string;
+    value: number;
+  }>;
   updated: boolean;
   noteAdded?: boolean;
   tagsCount?: number;
@@ -249,14 +312,49 @@ export interface CheckinConfirmationData {
 }
 
 export interface HistoryEntryData {
+  id?: string;
   entryDate: Date;
   moodScore: number | null;
   energyScore: number | null;
   stressScore: number | null;
   sleepHours?: number;
   sleepQuality?: number;
+  extraMetricScores?: Array<{
+    key: DailyMetricCatalogKey;
+    label: string;
+    value: number;
+  }>;
   hasNote: boolean;
+  tagsCount?: number;
   eventsCount: number;
+}
+
+export interface HistoryEntryDetailData {
+  entryDate: Date;
+  moodScore: number | null;
+  energyScore: number | null;
+  stressScore: number | null;
+  sleepHours?: number;
+  sleepQuality?: number;
+  extraMetricScores?: Array<{
+    key: DailyMetricCatalogKey;
+    label: string;
+    value: number;
+  }>;
+  noteText?: string | null;
+  tags?: Array<{
+    id: string;
+    label: string;
+  }>;
+  events?: Array<{
+    id: string;
+    eventType: EventType;
+    title: string;
+    description?: string | null;
+    eventScore: number;
+    eventDate: Date;
+    eventEndDate?: Date | null;
+  }>;
 }
 
 interface HistoryEntriesFormatOptions {
@@ -268,10 +366,17 @@ export interface SettingsViewData {
   reminderTime?: string | null;
   sleepMode: SleepMode;
   backgroundDeliveryAvailable: boolean;
+  trackedMetricsSummary?: string;
   trackMood: boolean;
   trackEnergy: boolean;
   trackStress: boolean;
   trackSleep: boolean;
+}
+
+export interface SettingsMetricOptionData {
+  key: DailyMetricCatalogKey;
+  label: string;
+  enabled: boolean;
 }
 
 export function formatCheckinConfirmation(data: CheckinConfirmationData): string {
@@ -287,6 +392,10 @@ export function formatCheckinConfirmation(data: CheckinConfirmationData): string
 
   if (typeof data.stressScore === 'number') {
     lines.push(`Стресс: ${data.stressScore}`);
+  }
+
+  for (const metric of data.extraMetricScores ?? []) {
+    lines.push(`${metric.label}: ${metric.value}`);
   }
 
   if (typeof data.sleepHours === 'number' && typeof data.sleepQuality === 'number') {
@@ -340,6 +449,10 @@ export function getCheckinPrompt(
   }
 }
 
+export function getExtraMetricCheckinPrompt(label: string, stepNumber: number, totalSteps: number): string {
+  return `Шаг ${stepNumber}/${totalSteps}. Оцени ${label.toLowerCase()}: 0..10`;
+}
+
 function formatTagsCount(tagsCount: number): string {
   if (tagsCount % 10 === 1 && tagsCount % 100 !== 11) {
     return `${tagsCount} тег`;
@@ -359,13 +472,36 @@ function formatTagsCount(tagsCount: number): string {
 export function formatSettingsText(data: SettingsViewData): string {
   const lines = [
     telegramCopy.settings.title,
-    data.remindersEnabled ? telegramCopy.settings.remindersEnabled : telegramCopy.settings.remindersDisabled,
-    formatReminderRuntimeLine(data),
-    `${telegramCopy.settings.reminderTimeLabel}: ${data.reminderTime ?? '—'}`,
-    `${telegramCopy.settings.sleepModeLabel}: ${SLEEP_MODE_LABELS[data.sleepMode]}`,
-    `${telegramCopy.settings.dailyTrackingLabel}: ${formatTrackedMetricsSummary(data)}`,
+    '',
+    telegramCopy.settings.remindersSectionTitle,
+    `- ${data.remindersEnabled ? telegramCopy.settings.remindersEnabled : telegramCopy.settings.remindersDisabled}`,
+    `- ${formatReminderRuntimeLine(data)}`,
+    `- ${telegramCopy.settings.reminderTimeLabel}: ${data.reminderTime ?? '—'}`,
+    `- ${telegramCopy.settings.weeklyDigestLabel}: ${formatWeeklyDigestRuntimeLine(data)}`,
+    '',
+    telegramCopy.settings.checkinSectionTitle,
+    `- ${telegramCopy.settings.sleepModeLabel}: ${SLEEP_MODE_LABELS[data.sleepMode]}`,
+    `- ${telegramCopy.settings.dailyTrackingLabel}: ${formatTrackedMetricsSummary(data)}`,
   ];
 
+  return lines.join('\n');
+}
+
+export function formatDailyMetricsSettingsText(metrics: SettingsMetricOptionData[]): string {
+  const activeMetrics = metrics.filter((metric) => metric.enabled).map((metric) => metric.label.toLowerCase());
+  const lines = [
+    telegramCopy.settings.dailyMetricsTitle,
+    telegramCopy.settings.dailyMetricsHint,
+    '',
+    `${telegramCopy.settings.dailyMetricsActiveLabel}: ${activeMetrics.length > 0 ? activeMetrics.join(', ') : '—'}`,
+    '',
+  ];
+
+  for (const metric of metrics) {
+    lines.push(`• ${metric.label}: ${metric.enabled ? 'вкл' : 'выкл'}`);
+  }
+
+  lines.push('', telegramCopy.settings.dailyMetricsGuard);
   return lines.join('\n');
 }
 
@@ -425,6 +561,10 @@ export function getTrackedMetricToggleButtonLabel(
   return enabled ? telegramCopy.buttons.settingsTrackSleepOn : telegramCopy.buttons.settingsTrackSleepOff;
 }
 
+export function getSettingsMetricToggleButtonLabel(label: string, enabled: boolean): string {
+  return `${label}: ${enabled ? 'вкл' : 'выкл'}`;
+}
+
 export function formatHistoryEntries(
   entries: HistoryEntryData[],
   options: HistoryEntriesFormatOptions = {},
@@ -434,17 +574,26 @@ export function formatHistoryEntries(
   }
 
   const items = entries.map((entry) => {
-    const lines = [
-      `• ${formatHistoryDate(entry.entryDate)}`,
-      `Настр./Энерг./Стресс: ${formatMetricOrDash(entry.moodScore)}/${formatMetricOrDash(entry.energyScore)}/${formatMetricOrDash(entry.stressScore)}`,
-    ];
+    const lines = [`• ${formatHistoryDate(entry.entryDate)}`];
+    const coreMetricsLine = formatHistoryCoreMetrics(entry);
+    const extraMetricsLine = formatHistoryExtraMetrics(entry);
+
+    if (coreMetricsLine) {
+      lines.push(coreMetricsLine);
+    } else if (extraMetricsLine) {
+      lines.push(extraMetricsLine);
+    }
 
     const sleepLine = formatHistorySleep(entry);
     if (sleepLine) {
       lines.push(sleepLine);
     }
 
-    lines.push(`Заметка: ${entry.hasNote ? 'есть' : '—'} · События: ${entry.eventsCount}`);
+    if (coreMetricsLine && extraMetricsLine) {
+      lines.push(extraMetricsLine);
+    }
+
+    lines.push(formatHistoryEntrySummary(entry.hasNote, entry.tagsCount ?? 0, entry.eventsCount));
 
     return lines.join('\n');
   });
@@ -452,8 +601,75 @@ export function formatHistoryEntries(
   return `${options.title ?? telegramCopy.history.title}\n\n${items.join('\n\n')}`;
 }
 
+export function formatHistoryEntryDetail(entry: HistoryEntryDetailData): string {
+  const lines = [`${telegramCopy.history.detailTitlePrefix} ${formatHistoryDate(entry.entryDate)}`];
+  const coreMetricsLine = formatHistoryCoreMetrics(entry);
+  const extraMetricsLine = formatHistoryExtraMetrics(entry);
+  const sleepLine = formatHistorySleep(entry);
+
+  if (coreMetricsLine) {
+    lines.push('', 'Состояние', coreMetricsLine);
+  } else if (extraMetricsLine) {
+    lines.push('', 'Состояние', extraMetricsLine);
+  }
+
+  if (sleepLine) {
+    lines.push('', 'Сон', formatHistorySleepValue(entry));
+  }
+
+  if (coreMetricsLine && extraMetricsLine) {
+    lines.push(extraMetricsLine);
+  }
+
+  if (entry.noteText?.trim()) {
+    lines.push('', 'Заметка');
+    lines.push(entry.noteText.trim());
+  }
+
+  if (entry.tags && entry.tags.length > 0) {
+    lines.push('', 'Теги');
+    lines.push(...entry.tags.map((tag) => `- ${tag.label}`));
+  }
+
+  if (entry.events && entry.events.length > 0) {
+    lines.push('', 'События');
+
+    for (const event of entry.events) {
+      const eventTypeLabel = EVENT_TYPE_LABELS[event.eventType] ?? event.eventType;
+      const eventRange = formatHistoryEventRange(event.eventDate, event.eventEndDate ?? null);
+      const summaryParts = [`${eventTypeLabel}: ${event.title}`, `оценка ${event.eventScore}`];
+
+      if (eventRange) {
+        summaryParts.push(eventRange);
+      }
+
+      lines.push(`- ${summaryParts.join(' · ')}`);
+
+      if (event.description?.trim()) {
+        lines.push(`  ${event.description.trim()}`);
+      }
+    }
+  }
+
+  return lines.join('\n');
+}
+
 function formatMetricOrDash(value: number | null): string {
   return typeof value === 'number' ? String(value) : '—';
+}
+
+function formatHistoryCoreMetrics(
+  entry: Pick<HistoryEntryData, 'moodScore' | 'energyScore' | 'stressScore'>,
+): string | null {
+  if (
+    typeof entry.moodScore !== 'number' &&
+    typeof entry.energyScore !== 'number' &&
+    typeof entry.stressScore !== 'number'
+  ) {
+    return null;
+  }
+
+  return `Настроение / энергия / стресс: ${formatMetricOrDash(entry.moodScore)} / ${formatMetricOrDash(entry.energyScore)} / ${formatMetricOrDash(entry.stressScore)}`;
 }
 
 function formatHistoryDate(entryDate: Date): string {
@@ -461,7 +677,9 @@ function formatHistoryDate(entryDate: Date): string {
   return `${day}.${month}.${year}`;
 }
 
-function formatHistorySleep(entry: HistoryEntryData): string | null {
+function formatHistorySleep(
+  entry: Pick<HistoryEntryData, 'sleepHours' | 'sleepQuality'>,
+): string | null {
   if (typeof entry.sleepHours === 'number' && typeof entry.sleepQuality === 'number') {
     return `Сон: ${entry.sleepHours} ч, качество ${entry.sleepQuality}`;
   }
@@ -477,6 +695,80 @@ function formatHistorySleep(entry: HistoryEntryData): string | null {
   return null;
 }
 
+function formatHistorySleepValue(
+  entry: Pick<HistoryEntryData, 'sleepHours' | 'sleepQuality'>,
+): string {
+  if (typeof entry.sleepHours === 'number' && typeof entry.sleepQuality === 'number') {
+    return `${entry.sleepHours} ч, качество ${entry.sleepQuality}`;
+  }
+
+  if (typeof entry.sleepHours === 'number') {
+    return `${entry.sleepHours} ч`;
+  }
+
+  if (typeof entry.sleepQuality === 'number') {
+    return `Качество ${entry.sleepQuality}`;
+  }
+
+  return '—';
+}
+
+function formatHistoryExtraMetrics(
+  entry: Pick<HistoryEntryData, 'extraMetricScores'>,
+): string | null {
+  if (!entry.extraMetricScores || entry.extraMetricScores.length === 0) {
+    return null;
+  }
+
+  const summary = entry.extraMetricScores
+    .map((metric) => `${metric.label} ${metric.value}`)
+    .join(', ');
+
+  return `Доп. метрики: ${summary}`;
+}
+
+function formatHistoryEntrySummary(hasNote: boolean, tagsCount: number, eventsCount: number): string {
+  const markers: string[] = [];
+
+  if (hasNote) {
+    markers.push('Есть заметка');
+  }
+
+  if (tagsCount > 0) {
+    markers.push(formatTagsCount(tagsCount));
+  }
+
+  markers.push(formatEventsCount(eventsCount));
+
+  return markers.join(' · ');
+}
+
+function formatEventsCount(eventsCount: number): string {
+  if (eventsCount % 10 === 1 && eventsCount % 100 !== 11) {
+    return `${eventsCount} событие`;
+  }
+
+  if (
+    eventsCount % 10 >= 2 &&
+    eventsCount % 10 <= 4 &&
+    (eventsCount % 100 < 12 || eventsCount % 100 > 14)
+  ) {
+    return `${eventsCount} события`;
+  }
+
+  return `${eventsCount} событий`;
+}
+
+function formatHistoryEventRange(eventDate: Date, eventEndDate: Date | null): string | null {
+  if (!eventEndDate || formatDateKey(eventDate) === formatDateKey(eventEndDate)) {
+    return null;
+  }
+
+  const start = formatHistoryDate(eventDate);
+  const end = formatHistoryDate(eventEndDate);
+  return `${start}–${end}`;
+}
+
 function formatReminderRuntimeLine(data: SettingsViewData): string {
   if (!data.remindersEnabled) {
     return telegramCopy.settings.remindersRuntimeDisabled;
@@ -489,9 +781,28 @@ function formatReminderRuntimeLine(data: SettingsViewData): string {
   return telegramCopy.settings.remindersRuntimeActive;
 }
 
+function formatWeeklyDigestRuntimeLine(data: SettingsViewData): string {
+  if (!data.remindersEnabled) {
+    return telegramCopy.settings.weeklyDigestDisabled;
+  }
+
+  if (!data.backgroundDeliveryAvailable) {
+    return telegramCopy.settings.weeklyDigestUnavailable;
+  }
+
+  return telegramCopy.settings.weeklyDigestActive;
+}
+
 function formatTrackedMetricsSummary(
-  data: Pick<SettingsViewData, 'trackMood' | 'trackEnergy' | 'trackStress' | 'trackSleep'>,
+  data: Pick<
+    SettingsViewData,
+    'trackedMetricsSummary' | 'trackMood' | 'trackEnergy' | 'trackStress' | 'trackSleep'
+  >,
 ): string {
+  if (data.trackedMetricsSummary) {
+    return data.trackedMetricsSummary;
+  }
+
   const enabledMetrics = (
     Object.entries(DAILY_TRACKING_LABELS) as Array<
       [keyof typeof DAILY_TRACKING_LABELS, (typeof DAILY_TRACKING_LABELS)[keyof typeof DAILY_TRACKING_LABELS]]
@@ -506,3 +817,27 @@ function formatTrackedMetricsSummary(
 
   return enabledMetrics.join(', ');
 }
+
+export function getDailyMetricLabel(key: DailyMetricCatalogKey): string {
+  return DAILY_METRIC_LABELS_BY_KEY[key];
+}
+
+export function formatStatsMetricPrompt(periodType: SummaryPeriodType): string {
+  return [
+    `${telegramCopy.stats.metricPromptPrefix}: ${STATS_PERIOD_LABELS[periodType]}.`,
+    telegramCopy.stats.metricPromptHint,
+  ].join('\n');
+}
+
+export function formatStatsSelectedMetricChartCaption(
+  metricLabel: string,
+  periodType: SummaryPeriodType,
+): string {
+  return `${telegramCopy.stats.chartSelectedMetricPrefix}: ${metricLabel}, ${STATS_PERIOD_LABELS[periodType].toLowerCase()}.`;
+}
+
+export function formatStatsSleepChartCaption(periodType: SummaryPeriodType): string {
+  return `${telegramCopy.stats.chartSelectedMetricPrefix}: Сон, ${STATS_PERIOD_LABELS[periodType].toLowerCase()}.`;
+}
+
+

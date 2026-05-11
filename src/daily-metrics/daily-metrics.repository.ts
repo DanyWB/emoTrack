@@ -37,6 +37,21 @@ export class DailyMetricsRepository {
     });
   }
 
+  findDefinitionsByIds(ids: string[]): Promise<DailyMetricDefinition[]> {
+    if (ids.length === 0) {
+      return Promise.resolve([]);
+    }
+
+    return this.prisma.dailyMetricDefinition.findMany({
+      where: {
+        id: {
+          in: ids,
+        },
+      },
+      orderBy: [{ sortOrder: 'asc' }, { key: 'asc' }],
+    });
+  }
+
   findUserTrackedMetrics(userId: string): Promise<UserTrackedMetricWithDefinition[]> {
     return this.prisma.userTrackedMetric.findMany({
       where: { userId },

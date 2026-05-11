@@ -11,6 +11,11 @@ export interface ChartPoint {
   isSleepMissing?: boolean;
 }
 
+export interface SingleMetricChartPoint {
+  date: string;
+  value?: number;
+}
+
 export interface GeneratedCharts {
   combinedChartBuffer?: Buffer;
   sleepChartBuffer?: Buffer;
