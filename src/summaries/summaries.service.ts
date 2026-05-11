@@ -1,6 +1,7 @@
 ﻿import { Injectable, Logger } from '@nestjs/common';
 import { type Prisma } from '@prisma/client';
 
+import { formatErrorLogEvent } from '../common/utils/logging.utils';
 import { StatsService } from '../stats/stats.service';
 import { type PeriodStatsPayload, type SelectedMetricStatsPayload, type StatsSelectedMetricKey } from '../stats/stats.types';
 import { SummariesFormatter } from './summaries.formatter';
@@ -30,7 +31,12 @@ export class SummariesService {
       try {
         await this.persistSummary(userId, payload);
       } catch (error) {
-        this.logger.warn(`Failed to persist summary: ${(error as Error).message}`);
+        this.logger.warn(formatErrorLogEvent('summary_persist_failed', error, {
+          userId,
+          periodType,
+          periodStart: payload.periodStart,
+          periodEnd: payload.periodEnd,
+        }));
       }
     }
 

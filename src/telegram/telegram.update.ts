@@ -2,6 +2,7 @@ import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nest
 import { ConfigService } from '@nestjs/config';
 import { Telegraf, type Context } from 'telegraf';
 
+import { formatErrorLogEvent, formatLogEvent, toLogErrorDetails } from '../common/utils/logging.utils';
 import type { TelegramMode } from '../config/telegram.config';
 import { TELEGRAM_COMMANDS } from './telegram.copy';
 import { TelegramRouter } from './telegram.router';
@@ -30,7 +31,11 @@ export class TelegramUpdate implements OnModuleInit, OnModuleDestroy {
     const nodeEnv = this.configService.get<string>('app.nodeEnv');
 
     if (!token || token.startsWith('replace_with_') || nodeEnv === 'test') {
-      this.logger.warn('Telegram launch skipped (token placeholder or test environment).');
+      this.logger.warn(formatLogEvent('telegram_launch_skipped', {
+        reason: !token || token.startsWith('replace_with_') ? 'token_placeholder' : 'test_environment',
+        mode: this.mode,
+        nodeEnv,
+      }));
       return;
     }
 
@@ -42,7 +47,9 @@ export class TelegramUpdate implements OnModuleInit, OnModuleDestroy {
         const webhookSecret = this.configService.get<string>('telegram.webhookSecret', { infer: true });
 
         if (!webhookUrl) {
-          this.logger.warn('Webhook mode selected, but TELEGRAM_WEBHOOK_URL is missing.');
+          this.logger.warn(formatLogEvent('telegram_webhook_url_missing', {
+            mode: this.mode,
+          }));
           return;
         }
 
@@ -58,8 +65,8 @@ export class TelegramUpdate implements OnModuleInit, OnModuleDestroy {
       this.isLaunched = true;
       this.logger.log('Telegram bot launched in polling mode.');
     } catch (error) {
-      const err = error as Error;
-      this.logger.error(`Failed to launch Telegram bot: ${err.message}`, err.stack);
+      const err = toLogErrorDetails(error);
+      this.logger.error(formatErrorLogEvent('telegram_launch_failed', error, { mode: this.mode }), err.stack);
     }
   }
 
@@ -75,8 +82,9 @@ export class TelegramUpdate implements OnModuleInit, OnModuleDestroy {
       await this.bot.telegram.setMyCommands([...TELEGRAM_COMMANDS]);
       this.logger.log('Telegram commands registered.');
     } catch (error) {
-      const err = error as Error;
-      this.logger.warn(`Failed to register Telegram commands: ${err.message}`);
+      this.logger.warn(formatErrorLogEvent('telegram_commands_sync_failed', error, {
+        commandsCount: TELEGRAM_COMMANDS.length,
+      }));
     }
   }
 }

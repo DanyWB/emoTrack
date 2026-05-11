@@ -117,6 +117,38 @@ Run these steps before and during a manual release.
 10. Run one minimal product smoke path:
    - `/start` or `/help`
 
+## Operational Log Search
+
+Important warning and error paths use stable `event=...` fields so incidents can be searched without relying on translated text.
+
+Useful event keys:
+
+- `event=telegram_route_failed`
+- `event=telegram_fallback_reply_failed`
+- `event=telegram_fsm_reset_after_error`
+- `event=stats_chart_generation_failed`
+- `event=history_callback_stale`
+- `event=http_unhandled_exception`
+- `event=readiness_database_check_failed`
+- `event=readiness_redis_check_failed`
+- `event=summary_persist_failed`
+- `event=analytics_track_failed`
+- `event=daily_reminder_send_failed`
+- `event=weekly_digest_send_failed`
+- `event=postgres_connection_failed`
+- `event=redis_connection_failed`
+- `event=telegram_launch_failed`
+- `event=telegram_commands_sync_failed`
+- `event=daily_metric_catalog_empty`
+- `event=invalid_reminder_time_skipped`
+
+During incident review, start with:
+
+1. search by `event=...`
+2. narrow by `userId=...` when available
+3. narrow Telegram issues by `routeKey=...` and `fsmState=...`
+4. check readiness events before investigating product-flow errors
+
 ## Post-Deploy Smoke Checks
 
 Recommended minimum checks:

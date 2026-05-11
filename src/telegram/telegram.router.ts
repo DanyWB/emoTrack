@@ -12,6 +12,7 @@ import {
   isCoreCheckinState,
 } from '../checkins/checkins.steps';
 import { TELEGRAM_CALLBACKS, TELEGRAM_MAIN_MENU_BUTTONS } from '../common/constants/app.constants';
+import { formatErrorLogEvent, formatLogEvent, toLogErrorDetails } from '../common/utils/logging.utils';
 import { isValidTimeFormat } from '../common/utils/validation.utils';
 import { type DailyMetricCatalogKey } from '../daily-metrics/daily-metrics.catalog';
 import { EventsFlowService, type EventFlowResult } from '../events/events.flow';
@@ -692,8 +693,14 @@ export class TelegramRouter {
         );
       }
     } catch (error) {
-      this.logger.warn(`Chart generation failed: ${(error as Error).message}`);
-      await this.analyticsService.track('chart_generation_failed', { reason: (error as Error).message }, user.id);
+      const err = toLogErrorDetails(error);
+      this.logger.warn(formatErrorLogEvent('stats_chart_generation_failed', error, {
+        userId: user.id,
+        periodType: payload.periodType,
+        entriesCount: payload.entriesCount,
+        chartPointsCount: payload.chartPoints.length,
+      }));
+      await this.analyticsService.track('chart_generation_failed', { reason: err.message }, user.id);
       await ctx.reply(telegramCopy.stats.chartUnavailable);
     }
   }
@@ -770,8 +777,16 @@ export class TelegramRouter {
       );
       await this.analyticsService.track('chart_generated', { metricKey: payload.metricKey, combined: true }, user.id);
     } catch (error) {
-      this.logger.warn(`Selected metric chart generation failed: ${(error as Error).message}`);
-      await this.analyticsService.track('chart_generation_failed', { reason: (error as Error).message, metricKey: payload.metricKey }, user.id);
+      const err = toLogErrorDetails(error);
+      this.logger.warn(formatErrorLogEvent('stats_selected_metric_chart_generation_failed', error, {
+        userId: user.id,
+        periodType: payload.periodType,
+        metricKey: payload.metricKey,
+        metricKind: payload.metricKind,
+        chartPointsCount: payload.chartPoints.length,
+        sleepChartPointsCount: payload.sleepChartPoints.length,
+      }));
+      await this.analyticsService.track('chart_generation_failed', { reason: err.message, metricKey: payload.metricKey }, user.id);
       await ctx.reply(telegramCopy.stats.chartUnavailable);
     }
   }
@@ -1294,6 +1309,11 @@ export class TelegramRouter {
         throw error;
       }
 
+      this.logger.warn(formatErrorLogEvent('history_callback_stale', error, {
+        action: 'more',
+        userId,
+        cursor,
+      }));
       await ctx.editMessageReplyMarkup(undefined).catch(() => undefined);
       await ctx.reply(telegramCopy.history.stale, telegramKeyboards.mainMenu());
     }
@@ -1332,6 +1352,12 @@ export class TelegramRouter {
         throw error;
       }
 
+      this.logger.warn(formatErrorLogEvent('history_callback_stale', error, {
+        action: 'open',
+        userId,
+        entryId,
+        pageCursorToken,
+      }));
       await ctx.editMessageReplyMarkup(undefined).catch(() => undefined);
       await ctx.reply(telegramCopy.history.stale, telegramKeyboards.mainMenu());
     }
@@ -1350,6 +1376,11 @@ export class TelegramRouter {
         throw error;
       }
 
+      this.logger.warn(formatErrorLogEvent('history_callback_stale', error, {
+        action: 'back',
+        userId,
+        pageCursorToken,
+      }));
       await ctx.editMessageReplyMarkup(undefined).catch(() => undefined);
       await ctx.reply(telegramCopy.history.stale, telegramKeyboards.mainMenu());
     }
@@ -1588,14 +1619,15 @@ export class TelegramRouter {
     try {
       await handler();
     } catch (error) {
-      const err = error as Error;
-      this.logger.error(`Telegram route failed: ${routeKey}: ${err.message}`, err.stack);
+      const err = toLogErrorDetails(error);
+      const routeContext = await this.buildRouteLogContext(ctx, routeKey);
+      this.logger.error(formatErrorLogEvent('telegram_route_failed', error, routeContext), err.stack);
       await this.recoverFromUnexpectedFlow(ctx);
 
       try {
         await ctx.reply(telegramCopy.common.unexpectedError, telegramKeyboards.mainMenu());
       } catch (replyError) {
-        this.logger.warn(`Failed to send fallback reply for ${routeKey}: ${(replyError as Error).message}`);
+        this.logger.warn(formatErrorLogEvent('telegram_fallback_reply_failed', replyError, routeContext));
       }
     }
   }
@@ -1617,7 +1649,10 @@ export class TelegramRouter {
 
     if (state !== FSM_STATES.idle) {
       await this.fsmService.setIdle(user.id);
-      this.logger.warn(`FSM session reset after unexpected error for user ${user.id}`);
+      this.logger.warn(formatLogEvent('telegram_fsm_reset_after_error', {
+        userId: user.id,
+        previousState: state,
+      }));
     }
   }
 
@@ -1625,15 +1660,62 @@ export class TelegramRouter {
     const profile = extractTelegramProfile(ctx);
 
     if (!profile) {
-      this.logger.warn('Telegram update without user profile.');
+      this.logger.warn(formatLogEvent('telegram_missing_user_profile'));
       return null;
     }
 
     return this.usersService.getOrCreateTelegramUser(profile);
   }
 
+  private async buildRouteLogContext(ctx: Context, routeKey: string): Promise<Record<string, unknown>> {
+    const callbackData = getCallbackData(ctx);
+    const profile = extractTelegramProfile(ctx);
+    const context: Record<string, unknown> = {
+      routeKey,
+      updateType: callbackData ? 'callback_query' : 'message',
+      callbackKey: this.resolveCallbackLogKey(callbackData),
+      telegramUserId: profile?.telegramId.toString(),
+    };
+
+    if (!profile) {
+      return context;
+    }
+
+    try {
+      const user = await this.usersService.findByTelegramId(profile.telegramId);
+
+      if (!user) {
+        return context;
+      }
+
+      context.userId = user.id;
+      context.fsmState = await this.fsmService.getState(user.id);
+    } catch (error) {
+      this.logger.warn(formatErrorLogEvent('telegram_route_context_failed', error, { routeKey }));
+    }
+
+    return context;
+  }
+
   private isAllowedPreConsentCallback(callbackData: string): boolean {
     return callbackData === TELEGRAM_CALLBACKS.consentAccept || callbackData === TELEGRAM_CALLBACKS.actionCancel;
+  }
+
+  private resolveCallbackLogKey(callbackData: string | null): string | undefined {
+    if (!callbackData) {
+      return undefined;
+    }
+
+    const prefixMatch = Object.entries(TELEGRAM_CALLBACKS).find(([key, value]) => (
+      key.endsWith('Prefix') && callbackData.startsWith(value)
+    ));
+
+    if (prefixMatch) {
+      return prefixMatch[0];
+    }
+
+    const exactMatch = Object.entries(TELEGRAM_CALLBACKS).find(([, value]) => value === callbackData);
+    return exactMatch?.[0] ?? 'unknown';
   }
 
   private isStaleHistoryEditError(error: unknown): boolean {

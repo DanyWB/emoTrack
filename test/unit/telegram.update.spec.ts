@@ -1,4 +1,6 @@
-﻿import { TelegramUpdate } from '../../src/telegram/telegram.update';
+import { Logger } from '@nestjs/common';
+
+import { TelegramUpdate } from '../../src/telegram/telegram.update';
 import { TELEGRAM_COMMANDS } from '../../src/telegram/telegram.copy';
 
 describe('TelegramUpdate', () => {
@@ -38,6 +40,7 @@ describe('TelegramUpdate', () => {
   });
 
   it('keeps startup alive when Telegram command sync fails', async () => {
+    const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
     const bot = {
       telegram: {
         setMyCommands: jest.fn().mockRejectedValue(new Error('set commands failed')),
@@ -50,9 +53,14 @@ describe('TelegramUpdate', () => {
     };
     const update = new TelegramUpdate(bot as never, router as never, createConfigService() as never);
 
-    await update.onModuleInit();
+    try {
+      await update.onModuleInit();
 
-    expect(bot.telegram.setMyCommands).toHaveBeenCalledWith([...TELEGRAM_COMMANDS]);
-    expect(bot.launch).toHaveBeenCalledTimes(1);
+      expect(bot.telegram.setMyCommands).toHaveBeenCalledWith([...TELEGRAM_COMMANDS]);
+      expect(bot.launch).toHaveBeenCalledTimes(1);
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('event=telegram_commands_sync_failed'));
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 });

@@ -329,6 +329,8 @@ Test design notes:
 - tests do not require Docker
 - tests do not require Redis
 - tests use in-memory repositories and Nest testing utilities for critical flow wiring
+- Jest setup mutes routine Nest `Logger.log`, `Logger.debug`, and `Logger.verbose` output so test runs stay readable
+- warnings and errors remain visible by default, and tests may spy on them when checking failure paths
 - `npm run test:unit` runs the deterministic unit suite only
 - `npm run test:integration` runs the current in-memory/Nest integration suite only
 - `npm run test:db` runs opt-in PostgreSQL smoke tests against `DATABASE_URL_TEST`
@@ -602,6 +604,36 @@ Operational logging is added around:
 - stats generation
 - chart generation
 - reminder scheduling and cancellation
+
+Error and warning logs now use stable searchable key-value events where practical:
+
+- `event=telegram_route_failed`
+- `event=telegram_fallback_reply_failed`
+- `event=telegram_fsm_reset_after_error`
+- `event=stats_chart_generation_failed`
+- `event=stats_selected_metric_chart_generation_failed`
+- `event=history_callback_stale`
+- `event=http_unhandled_exception`
+- `event=readiness_database_check_failed`
+- `event=readiness_redis_check_failed`
+- `event=summary_persist_failed`
+- `event=analytics_track_failed`
+- `event=daily_reminder_send_failed`
+- `event=weekly_digest_send_failed`
+- `event=postgres_connection_failed`
+- `event=redis_connection_failed`
+- `event=telegram_launch_failed`
+- `event=telegram_commands_sync_failed`
+- `event=daily_metric_catalog_empty`
+- `event=invalid_reminder_time_skipped`
+
+Useful search examples:
+
+```powershell
+Select-String -Path .\logs\*.log -Pattern "event=telegram_route_failed"
+Select-String -Path .\logs\*.log -Pattern "userId=<user-id>"
+Select-String -Path .\logs\*.log -Pattern "routeKey=checkin"
+```
 
 Safety behavior:
 

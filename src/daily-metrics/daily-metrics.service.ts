@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import type { DailyMetricDefinition, User } from '@prisma/client';
 
+import { formatLogEvent } from '../common/utils/logging.utils';
 import { type DailyTrackingSelection } from '../common/utils/validation.utils';
 import {
   DAILY_METRIC_CATALOG,
@@ -66,7 +67,9 @@ export class DailyMetricsService {
     ]);
 
     if (definitions.length === 0) {
-      this.logger.warn(`Daily metric catalog is empty while syncing user ${user.id}.`);
+      this.logger.warn(formatLogEvent('daily_metric_catalog_empty', {
+        userId: user.id,
+      }));
       return;
     }
 

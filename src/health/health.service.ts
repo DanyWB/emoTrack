@@ -1,6 +1,7 @@
 import { Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
+import { formatErrorLogEvent, formatLogEvent } from '../common/utils/logging.utils';
 import { PrismaService } from '../database/prisma.service';
 import { RedisService } from '../database/redis.service';
 
@@ -64,7 +65,7 @@ export class HealthService {
         status: 'down',
         message: err.message,
       };
-      this.logger.warn(`Readiness database check failed: ${err.message}`);
+      this.logger.warn(formatErrorLogEvent('readiness_database_check_failed', error));
     }
 
     if (mode.redisRequired) {
@@ -75,7 +76,9 @@ export class HealthService {
           status: 'down',
           message: 'Redis client is unavailable.',
         };
-        this.logger.warn('Readiness Redis check failed: Redis client is unavailable.');
+        this.logger.warn(formatLogEvent('readiness_redis_check_failed', {
+          reason: 'redis_client_unavailable',
+        }));
       } else {
         try {
           await redisClient.ping();
@@ -86,7 +89,7 @@ export class HealthService {
             status: 'down',
             message: err.message,
           };
-          this.logger.warn(`Readiness Redis check failed: ${err.message}`);
+          this.logger.warn(formatErrorLogEvent('readiness_redis_check_failed', error));
         }
       }
     }

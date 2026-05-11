@@ -1,6 +1,8 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
 
+import { formatErrorLogEvent } from '../common/utils/logging.utils';
+
 @Injectable()
 export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(PrismaService.name);
@@ -11,7 +13,7 @@ export class PrismaService extends PrismaClient implements OnModuleInit, OnModul
       this.logger.log('PostgreSQL connection established.');
     } catch (error) {
       const err = error as Error;
-      this.logger.error(`Failed to connect to PostgreSQL: ${err.message}`, err.stack);
+      this.logger.error(formatErrorLogEvent('postgres_connection_failed', error), err.stack);
       throw error;
     }
   }

@@ -122,10 +122,14 @@ describe('Telegram router contract integration', () => {
       expect(Object.keys(handlers.events).sort()).toEqual(['callback_query', 'text']);
       expect(checkinsFlow.start).toHaveBeenCalledTimes(1);
       expect(errorSpy).toHaveBeenCalledWith(
-        expect.stringContaining('Telegram route failed: checkin'),
+        expect.stringContaining('event=telegram_route_failed routeKey=checkin updateType=message'),
         expect.any(String),
       );
-      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('FSM session reset after unexpected error'));
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('userId=user-router-contract-1 fsmState=checkin_mood'),
+        expect.any(String),
+      );
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('event=telegram_fsm_reset_after_error'));
       expect(await ctx.fsmService.getState(user.id)).toBe(FSM_STATES.idle);
       expect(telegramCtx.reply).toHaveBeenCalledWith(telegramCopy.common.unexpectedError, expect.any(Object));
     } finally {

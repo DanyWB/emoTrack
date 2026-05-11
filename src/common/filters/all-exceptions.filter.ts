@@ -8,6 +8,8 @@ import {
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
 
+import { formatErrorLogEvent } from '../utils/logging.utils';
+
 @Catch()
 export class AllExceptionsFilter implements ExceptionFilter {
   private readonly logger = new Logger(AllExceptionsFilter.name);
@@ -16,7 +18,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
     const err = exception instanceof Error ? exception : new Error(String(exception));
 
     if (host.getType() !== 'http') {
-      this.logger.error(`Unhandled non-HTTP exception: ${err.message}`, err.stack);
+      this.logger.error(formatErrorLogEvent('non_http_unhandled_exception', exception), err.stack);
       return;
     }
 
@@ -32,7 +34,11 @@ export class AllExceptionsFilter implements ExceptionFilter {
         : 'Внутренняя ошибка сервиса. Попробуйте позже.';
 
     if (!(exception instanceof HttpException)) {
-      this.logger.error(`Unhandled exception: ${err.message}`, err.stack);
+      this.logger.error(formatErrorLogEvent('http_unhandled_exception', exception, {
+        method: request.method,
+        path: request.url,
+        status,
+      }), err.stack);
     }
 
     response.status(status).json({

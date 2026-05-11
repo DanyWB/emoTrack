@@ -6,6 +6,7 @@ import type { Queue, RepeatableJob } from 'bullmq';
 import { Telegram } from 'telegraf';
 
 import { APP_QUEUES } from '../common/constants/app.constants';
+import { formatErrorLogEvent, formatLogEvent } from '../common/utils/logging.utils';
 import { isValidTimeFormat } from '../common/utils/validation.utils';
 import { CheckinsService } from '../checkins/checkins.service';
 import { AnalyticsService } from '../analytics/analytics.service';
@@ -56,7 +57,10 @@ export class RemindersService {
     }
 
     if (!isValidTimeFormat(user.reminderTime)) {
-      this.logger.warn(`Skipping invalid reminder time for user ${userId}`);
+      this.logger.warn(formatLogEvent('invalid_reminder_time_skipped', {
+        userId,
+        reminderTime: user.reminderTime,
+      }));
       return;
     }
 
@@ -159,7 +163,9 @@ export class RemindersService {
       await this.analyticsService.track('reminder_sent', {}, userId);
       this.logger.log(`Sent daily reminder to user ${userId}`);
     } catch (error) {
-      this.logger.warn(`Failed to send reminder to user ${userId}: ${(error as Error).message}`);
+      this.logger.warn(formatErrorLogEvent('daily_reminder_send_failed', error, {
+        userId,
+      }));
     }
   }
 
@@ -190,7 +196,9 @@ export class RemindersService {
       );
       this.logger.log(`Sent weekly digest to user ${userId}`);
     } catch (error) {
-      this.logger.warn(`Failed to send weekly digest to user ${userId}: ${(error as Error).message}`);
+      this.logger.warn(formatErrorLogEvent('weekly_digest_send_failed', error, {
+        userId,
+      }));
     }
   }
 
@@ -214,7 +222,9 @@ export class RemindersService {
       const payload = await this.buildWeeklyDigest(userId);
       return payload !== null;
     } catch (error) {
-      this.logger.warn(`Failed to check weekly digest eligibility for user ${userId}: ${(error as Error).message}`);
+      this.logger.warn(formatErrorLogEvent('weekly_digest_eligibility_check_failed', error, {
+        userId,
+      }));
       return false;
     }
   }

@@ -8,6 +8,7 @@ import { NestFactory } from '@nestjs/core';
 
 import { AppModule } from './app.module';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
+import { formatErrorLogEvent } from './common/utils/logging.utils';
 
 async function bootstrap(): Promise<void> {
   const bootstrapLogger = new Logger('Bootstrap');
@@ -34,7 +35,9 @@ async function bootstrap(): Promise<void> {
   try {
     await mkdir(resolve(chartTempDir), { recursive: true });
   } catch (error) {
-    bootstrapLogger.warn(`Failed to prepare chart temp dir: ${chartTempDir}`, (error as Error).stack);
+    bootstrapLogger.warn(formatErrorLogEvent('chart_temp_dir_prepare_failed', error, {
+      chartTempDir,
+    }));
   }
 
   const port = configService.get<number>('app.port', { infer: true }) ?? Number(process.env.PORT ?? 3000);

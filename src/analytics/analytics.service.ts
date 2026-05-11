@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 
+import { formatErrorLogEvent } from '../common/utils/logging.utils';
 import { AnalyticsRepository } from './analytics.repository';
 
 @Injectable()
@@ -12,7 +13,10 @@ export class AnalyticsService {
     try {
       await this.analyticsRepository.create(eventName, payload, userId);
     } catch (error) {
-      this.logger.warn(`Failed to track event ${eventName}: ${(error as Error).message}`);
+      this.logger.warn(formatErrorLogEvent('analytics_track_failed', error, {
+        eventName,
+        userId,
+      }));
     }
   }
 }

@@ -250,6 +250,15 @@ Run this section only when an isolated local PostgreSQL test database is availab
 - with no `DATABASE_URL_TEST`, `npm run test:db` skips the DB smoke suite instead of requiring Docker or PostgreSQL setup
 - the DB smoke suite verifies repository connectivity, same-day `DailyEntry` uniqueness, metric catalog reads, and inclusive event overlap queries
 
+## Logging Checks
+
+- error and warning logs use searchable `event=...` keys for critical failure paths
+- Telegram route failures include `event=telegram_route_failed`, `routeKey`, `userId` when known, and `fsmState` when available
+- chart failures include stats/chart context and still return a text summary to the user
+- readiness failures include `event=readiness_database_check_failed` or `event=readiness_redis_check_failed`
+- user-facing Telegram errors stay generic and do not expose raw stack traces
+- Jest mutes routine `Logger.log`, `Logger.debug`, and `Logger.verbose` output, while warnings and errors remain visible unless a test explicitly spies on them
+
 ## Final Verification
 
 - `npm run lint` passes

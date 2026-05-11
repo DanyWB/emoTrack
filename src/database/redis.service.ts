@@ -1,6 +1,8 @@
 import { Inject, Injectable, Logger, OnModuleDestroy, OnModuleInit, Optional } from '@nestjs/common';
 import type Redis from 'ioredis';
 
+import { formatErrorLogEvent, toLogErrorDetails } from '../common/utils/logging.utils';
+
 export const REDIS_CLIENT = 'REDIS_CLIENT';
 
 @Injectable()
@@ -15,8 +17,14 @@ export class RedisService implements OnModuleInit, OnModuleDestroy {
       return;
     }
 
-    const pingResult = await this.redisClient.ping();
-    this.logger.log(`Redis connection established (${pingResult})`);
+    try {
+      const pingResult = await this.redisClient.ping();
+      this.logger.log(`Redis connection established (${pingResult})`);
+    } catch (error) {
+      const err = toLogErrorDetails(error);
+      this.logger.error(formatErrorLogEvent('redis_connection_failed', error), err.stack);
+      throw error;
+    }
   }
 
   async onModuleDestroy(): Promise<void> {
