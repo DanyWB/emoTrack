@@ -140,6 +140,7 @@ TELEGRAM_BOT_TOKEN=replace_with_real_token
 TELEGRAM_MODE=polling
 TELEGRAM_WEBHOOK_URL=
 TELEGRAM_WEBHOOK_SECRET=
+TELEGRAM_STARTUP_TIMEOUT_MS=10000
 
 DEFAULT_TIMEZONE=Europe/Berlin
 CHART_TEMP_DIR=./tmp/charts
@@ -406,6 +407,7 @@ Runtime note:
 
 - command registration is best-effort
 - if Telegram command sync fails, startup continues and the bot still launches in the current mode
+- Telegram command sync, webhook registration, and polling launch are bounded by `TELEGRAM_STARTUP_TIMEOUT_MS`; if Telegram API hangs, HTTP startup continues and readiness reports Telegram as failed
 - local polling mode behavior is unchanged
 
 ## Telegram Navigation UX

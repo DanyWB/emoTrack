@@ -9,7 +9,7 @@
     "start:dev": "ts-node-dev --respawn --transpile-only src/main.ts",
     "build": "tsc -p tsconfig.build.json",
     "start": "npm run start:dev",
-    "start:prod": "node dist/main.js",
+    "start:prod": "node dist/src/main.js",
     "lint": "eslint \"{src,test,prisma}/**/*.ts\"",
     "lint:fix": "eslint \"{src,test,prisma}/**/*.ts\" --fix",
     "format": "prettier --write \"{src,test,prisma}/**/*.ts\"",

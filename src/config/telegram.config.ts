@@ -7,6 +7,7 @@ export interface TelegramConfig {
   mode: TelegramMode;
   webhookUrl?: string;
   webhookSecret?: string;
+  startupTimeoutMs: number;
 }
 
 export default registerAs(
@@ -16,5 +17,6 @@ export default registerAs(
     mode: (process.env.TELEGRAM_MODE as TelegramMode | undefined) ?? 'polling',
     webhookUrl: process.env.TELEGRAM_WEBHOOK_URL || undefined,
     webhookSecret: process.env.TELEGRAM_WEBHOOK_SECRET || undefined,
+    startupTimeoutMs: Number(process.env.TELEGRAM_STARTUP_TIMEOUT_MS ?? 10000),
   }),
 );

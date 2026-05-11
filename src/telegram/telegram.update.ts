@@ -3,11 +3,13 @@ import { ConfigService } from '@nestjs/config';
 import { Telegraf, type Context } from 'telegraf';
 
 import { formatErrorLogEvent, formatLogEvent, toLogErrorDetails } from '../common/utils/logging.utils';
-import type { TelegramMode } from '../config/telegram.config';
+import type { TelegramConfig, TelegramMode } from '../config/telegram.config';
 import { TELEGRAM_COMMANDS } from './telegram.copy';
 import { TelegramRouter } from './telegram.router';
 import { TelegramRuntimeStatusService } from './telegram.runtime-status';
 import { TELEGRAM_BOT } from './telegram.tokens';
+
+const DEFAULT_TELEGRAM_STARTUP_TIMEOUT_MS = 10000;
 
 @Injectable()
 export class TelegramUpdate implements OnModuleInit, OnModuleDestroy {
@@ -60,9 +62,12 @@ export class TelegramUpdate implements OnModuleInit, OnModuleDestroy {
           return;
         }
 
-        await this.bot.telegram.setWebhook(
-          webhookUrl,
-          webhookSecret ? { secret_token: webhookSecret } : undefined,
+        await this.withStartupTimeout(
+          this.bot.telegram.setWebhook(
+            webhookUrl,
+            webhookSecret ? { secret_token: webhookSecret } : undefined,
+          ),
+          'setWebhook',
         );
 
         this.logger.log(`Telegram bot configured for webhook mode: ${webhookUrl}`);
@@ -70,7 +75,7 @@ export class TelegramUpdate implements OnModuleInit, OnModuleDestroy {
         return;
       }
 
-      await this.bot.launch();
+      await this.withStartupTimeout(this.bot.launch(), 'launch');
       this.isLaunched = true;
       this.telegramRuntimeStatus.markReady(this.mode);
       this.logger.log('Telegram bot launched in polling mode.');
@@ -90,7 +95,7 @@ export class TelegramUpdate implements OnModuleInit, OnModuleDestroy {
 
   private async syncCommands(): Promise<void> {
     try {
-      await this.bot.telegram.setMyCommands([...TELEGRAM_COMMANDS]);
+      await this.withStartupTimeout(this.bot.telegram.setMyCommands([...TELEGRAM_COMMANDS]), 'setMyCommands');
       this.logger.log('Telegram commands registered.');
     } catch (error) {
       this.logger.warn(formatErrorLogEvent('telegram_commands_sync_failed', error, {
@@ -109,5 +114,35 @@ export class TelegramUpdate implements OnModuleInit, OnModuleDestroy {
     }
 
     return null;
+  }
+
+  private async withStartupTimeout<T>(operation: Promise<T>, operationName: string): Promise<T> {
+    const timeoutMs = this.resolveStartupTimeoutMs();
+    let timeout: NodeJS.Timeout | undefined;
+
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeout = setTimeout(() => {
+        reject(new Error(`Telegram startup operation timed out: ${operationName} after ${timeoutMs}ms.`));
+      }, timeoutMs);
+    });
+
+    try {
+      return await Promise.race([operation, timeoutPromise]);
+    } finally {
+      if (timeout) {
+        clearTimeout(timeout);
+      }
+    }
+  }
+
+  private resolveStartupTimeoutMs(): number {
+    const telegram = this.configService.get<TelegramConfig>('telegram', { infer: true });
+    const timeoutMs = telegram?.startupTimeoutMs ?? DEFAULT_TELEGRAM_STARTUP_TIMEOUT_MS;
+
+    if (!Number.isFinite(timeoutMs) || timeoutMs < 1000) {
+      return DEFAULT_TELEGRAM_STARTUP_TIMEOUT_MS;
+    }
+
+    return timeoutMs;
   }
 }

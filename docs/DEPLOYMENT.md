@@ -167,6 +167,7 @@ TELEGRAM_BOT_TOKEN=<real_bot_token_from_BotFather>
 TELEGRAM_MODE=polling
 TELEGRAM_WEBHOOK_URL=
 TELEGRAM_WEBHOOK_SECRET=
+TELEGRAM_STARTUP_TIMEOUT_MS=10000
 
 DEFAULT_TIMEZONE=Europe/Moscow
 CHART_TEMP_DIR=/opt/emotrack/tmp/charts
@@ -177,6 +178,7 @@ Notes:
 - if the database password contains special URL characters, URL-encode it; the generated hex password above avoids that problem
 - `TELEGRAM_BOT_TOKEN` must be real, not the placeholder from `.env.example`
 - `DEFAULT_TIMEZONE` should match the intended default audience; keep another value if needed
+- `TELEGRAM_STARTUP_TIMEOUT_MS` prevents Telegram API startup calls from blocking the HTTP server forever; if Telegram hangs, `/health/ready` reports Telegram as failed
 - polling mode requires outbound HTTPS access to Telegram, but no inbound public port for Telegram
 
 ### 7. Install dependencies, generate Prisma client, build, migrate, seed
@@ -257,6 +259,8 @@ Expected startup signals:
 - Telegram bot launched in polling mode
 - backend running on the configured port
 - health endpoints available
+
+If the app starts but Telegram API hangs during command sync, webhook registration, or polling launch, startup continues after `TELEGRAM_STARTUP_TIMEOUT_MS`. In that case `/health/live` should still return `200`, while `/health/ready` reports Telegram as failed until the bot runtime is fixed.
 
 ### 9. Smoke check the deployment
 

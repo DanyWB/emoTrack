@@ -19,6 +19,9 @@ describe('TelegramUpdate', () => {
         const values: Record<string, unknown> = {
           'telegram.botToken': 'test-bot-token',
           'telegram.mode': 'polling',
+          telegram: {
+            startupTimeoutMs: 10000,
+          },
           'app.nodeEnv': 'development',
           ...overrides,
         };
@@ -114,6 +117,48 @@ describe('TelegramUpdate', () => {
     }
   });
 
+  it('keeps startup alive when Telegram command sync times out', async () => {
+    jest.useFakeTimers();
+    const warnSpy = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const bot = {
+      telegram: {
+        setMyCommands: jest.fn().mockReturnValue(new Promise(() => undefined)),
+      },
+      launch: jest.fn().mockResolvedValue(undefined),
+      stop: jest.fn().mockResolvedValue(undefined),
+    };
+    const router = {
+      register: jest.fn(),
+    };
+    const runtimeStatus = createRuntimeStatus();
+    const update = new TelegramUpdate(
+      bot as never,
+      router as never,
+      createConfigService({
+        telegram: {
+          startupTimeoutMs: 1000,
+        },
+      }) as never,
+      runtimeStatus as never,
+    );
+
+    try {
+      const initPromise = update.onModuleInit();
+
+      await jest.advanceTimersByTimeAsync(1000);
+      await initPromise;
+
+      expect(bot.telegram.setMyCommands).toHaveBeenCalledWith([...TELEGRAM_COMMANDS]);
+      expect(bot.launch).toHaveBeenCalledTimes(1);
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('event=telegram_commands_sync_failed'));
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('setMyCommands'));
+      expect(runtimeStatus.markReady).toHaveBeenCalledWith('polling');
+    } finally {
+      warnSpy.mockRestore();
+      jest.useRealTimers();
+    }
+  });
+
   it('marks Telegram runtime failed when bot launch fails', async () => {
     const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
     const bot = {
@@ -140,6 +185,53 @@ describe('TelegramUpdate', () => {
       );
     } finally {
       errorSpy.mockRestore();
+    }
+  });
+
+  it('marks Telegram runtime failed when bot launch times out', async () => {
+    jest.useFakeTimers();
+    const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const bot = {
+      telegram: {
+        setMyCommands: jest.fn().mockResolvedValue(undefined),
+      },
+      launch: jest.fn().mockReturnValue(new Promise(() => undefined)),
+      stop: jest.fn().mockResolvedValue(undefined),
+    };
+    const router = {
+      register: jest.fn(),
+    };
+    const runtimeStatus = createRuntimeStatus();
+    const update = new TelegramUpdate(
+      bot as never,
+      router as never,
+      createConfigService({
+        telegram: {
+          startupTimeoutMs: 1000,
+        },
+      }) as never,
+      runtimeStatus as never,
+    );
+
+    try {
+      const initPromise = update.onModuleInit();
+
+      await jest.advanceTimersByTimeAsync(1000);
+      await initPromise;
+
+      expect(bot.launch).toHaveBeenCalledTimes(1);
+      expect(runtimeStatus.markFailed).toHaveBeenCalledWith('polling', expect.any(Error));
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('event=telegram_launch_failed'),
+        expect.any(String),
+      );
+      expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining('launch after 1000ms'),
+        expect.any(String),
+      );
+    } finally {
+      errorSpy.mockRestore();
+      jest.useRealTimers();
     }
   });
 

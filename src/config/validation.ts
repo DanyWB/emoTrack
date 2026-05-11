@@ -86,6 +86,12 @@ class EnvironmentVariables {
   @IsString()
   TELEGRAM_WEBHOOK_SECRET?: string;
 
+  @Transform(({ value }) => (value === undefined || value === '' ? 10000 : Number(value)))
+  @IsInt()
+  @Min(1000)
+  @Max(60000)
+  TELEGRAM_STARTUP_TIMEOUT_MS!: number;
+
   @IsString()
   @IsNotEmpty()
   DEFAULT_TIMEZONE!: string;
