@@ -43,6 +43,7 @@ describe('Stats metric selection integration', () => {
       ctx.tagsService,
       ctx.fsmService,
       ctx.analyticsService,
+      ctx.adminService,
     );
   }
 

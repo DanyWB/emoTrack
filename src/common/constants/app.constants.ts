@@ -25,6 +25,15 @@ export const TELEGRAM_CALLBACKS = {
   menuHelp: 'menu:help',
   menuTerms: 'menu:terms',
 
+  adminMenu: 'admin:menu',
+  adminOverview: 'admin:overview',
+  adminActiveUsersPrefix: 'admin:active:',
+  adminUserPrefix: 'admin:user:',
+  adminUserStatsPrefix: 'admin:ustats:',
+  adminUserHistoryPrefix: 'admin:uhist:',
+  adminEntryOpenPrefix: 'admin:entry:',
+  adminHistoryBackPrefix: 'admin:hback:',
+
   historyMorePrefix: 'history:more:',
   historyOpenPrefix: 'history:open:',
   historyBackPrefix: 'history:back:',

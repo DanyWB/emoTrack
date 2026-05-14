@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Telegraf, type Context } from 'telegraf';
 
+import { AdminModule } from '../admin/admin.module';
 import { AnalyticsModule } from '../analytics/analytics.module';
 import { ChartsModule } from '../charts/charts.module';
 import { CheckinsModule } from '../checkins/checkins.module';
@@ -21,6 +22,7 @@ import { TelegramWebhookController } from './telegram.webhook.controller';
 
 @Module({
   imports: [
+    AdminModule,
     UsersModule,
     OnboardingModule,
     FsmModule,

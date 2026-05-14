@@ -65,6 +65,7 @@ Core modules:
 - `charts`: server-side PNG chart rendering
 - `reminders`: reminder scheduling/sending with graceful no-op behavior when jobs are disabled
 - `analytics`: internal product event tracking
+- `admin`: hidden Telegram admin panel, env-based access control, and bot/user activity aggregates
 - `health`: liveness and readiness endpoints for operational checks
 - `database`: Prisma and optional Redis wiring
 
@@ -141,6 +142,7 @@ TELEGRAM_MODE=polling
 TELEGRAM_WEBHOOK_URL=
 TELEGRAM_WEBHOOK_SECRET=
 TELEGRAM_STARTUP_TIMEOUT_MS=10000
+ADMIN_TELEGRAM_IDS=
 
 DEFAULT_TIMEZONE=Europe/Berlin
 CHART_TEMP_DIR=./tmp/charts
@@ -254,6 +256,8 @@ Main variables used by the app:
 - `TELEGRAM_MODE`
 - `TELEGRAM_WEBHOOK_URL`
 - `TELEGRAM_WEBHOOK_SECRET`
+- `TELEGRAM_STARTUP_TIMEOUT_MS`
+- `ADMIN_TELEGRAM_IDS`
 - `DEFAULT_TIMEZONE`
 - `CHART_TEMP_DIR`
 
@@ -262,6 +266,7 @@ Validation rules are mode-aware:
 - `REDIS_URL` is required only when Redis/jobs are enabled
 - `JOBS_ENABLED=true` requires Redis to be enabled
 - webhook URL is required only in webhook mode
+- `ADMIN_TELEGRAM_IDS` is optional and accepts comma-separated Telegram numeric user ids for the hidden `/admin` panel
 
 ## Commands
 
@@ -405,6 +410,10 @@ Current command list:
 - `/stats`
 - `/settings`
 
+Hidden operational command:
+
+- `/admin` is registered in the router but is not published through `setMyCommands`; access is allowed only for Telegram ids listed in `ADMIN_TELEGRAM_IDS`
+
 Runtime note:
 
 - command registration is best-effort
@@ -427,6 +436,17 @@ Current navigation is split by frequency:
 - cancel actions return the user to navigation instead of leaving a bare `Действие отменено` message
 - active check-in/event prompts keep the last bot prompt `message_id` in the existing FSM payload, so text-input steps can best-effort delete the previous prompt and the user's input before showing the next prompt
 - inline rows do not show `Отмена` next to `Назад`; when back navigation is available, the user sees the narrower back/continue path
+
+## Telegram Admin Panel
+
+The hidden `/admin` panel is intended for early operational monitoring without changing the public user flow.
+
+- access is configured through `ADMIN_TELEGRAM_IDS`, for example `ADMIN_TELEGRAM_IDS=123456789,987654321`
+- a non-admin user receives an access-denied message and cannot open admin callbacks
+- the admin menu shows total users, consented/onboarded users, active users, total check-ins/events, 7-day activity, and reminder-enabled users
+- active users are users with at least one saved `DailyEntry`
+- an admin can open an active user, inspect account/data counters, request 7-day/30-day/all-time stats, receive the existing chart flow when enough data is available, and open history details with notes, tags, and events
+- admin-generated user stats use the existing summary pipeline with `persist=false`, so opening admin stats does not create stored summary rows
 
 ## Onboarding UX Notes
 
@@ -786,7 +806,7 @@ See the detailed plan in:
 - no advanced reminder UI beyond current settings
 - weekly digest uses the same d7 summary engine and does not yet have separate user-facing controls
 - no AI insights layer
-- no admin interface
+- admin interface is intentionally basic and read-only
 - no production-grade observability stack yet
 
 ## Extension Points

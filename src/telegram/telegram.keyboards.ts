@@ -82,6 +82,123 @@ export const telegramKeyboards = {
       [Markup.button.callback(telegramCopy.buttons.menuTerms, TELEGRAM_CALLBACKS.menuTerms)],
     ]),
 
+  adminMenu: () =>
+    Markup.inlineKeyboard([
+      [Markup.button.callback(telegramCopy.buttons.adminOverview, TELEGRAM_CALLBACKS.adminOverview)],
+      [Markup.button.callback(telegramCopy.buttons.adminActiveUsers, `${TELEGRAM_CALLBACKS.adminActiveUsersPrefix}0`)],
+    ]),
+
+  adminOverview: () =>
+    Markup.inlineKeyboard([
+      [Markup.button.callback(telegramCopy.buttons.adminActiveUsers, `${TELEGRAM_CALLBACKS.adminActiveUsersPrefix}0`)],
+      [Markup.button.callback(telegramCopy.buttons.adminBackToPanel, TELEGRAM_CALLBACKS.adminMenu)],
+    ]),
+
+  adminActiveUsers: (
+    users: Array<{ userId: string; label: string }>,
+    options: { offset: number; limit: number; hasPrevious: boolean; hasNext: boolean },
+  ) => {
+    const rows: CallbackButton[][] = users.map((user) => [
+      Markup.button.callback(user.label, `${TELEGRAM_CALLBACKS.adminUserPrefix}${user.userId}`),
+    ]);
+    const paginationRow: CallbackButton[] = [];
+
+    if (options.hasPrevious) {
+      paginationRow.push(
+        Markup.button.callback(
+          telegramCopy.buttons.back,
+          `${TELEGRAM_CALLBACKS.adminActiveUsersPrefix}${Math.max(0, options.offset - options.limit)}`,
+        ),
+      );
+    }
+
+    if (options.hasNext) {
+      paginationRow.push(
+        Markup.button.callback(
+          telegramCopy.buttons.historyMore,
+          `${TELEGRAM_CALLBACKS.adminActiveUsersPrefix}${options.offset + options.limit}`,
+        ),
+      );
+    }
+
+    if (paginationRow.length > 0) {
+      rows.push(paginationRow);
+    }
+
+    rows.push([Markup.button.callback(telegramCopy.buttons.adminBackToPanel, TELEGRAM_CALLBACKS.adminMenu)]);
+
+    return Markup.inlineKeyboard(rows);
+  },
+
+  adminUserDetail: (userId: string) =>
+    Markup.inlineKeyboard([
+      [
+        Markup.button.callback(
+          telegramCopy.buttons.adminUserStats7d,
+          `${TELEGRAM_CALLBACKS.adminUserStatsPrefix}${userId}:d7`,
+        ),
+      ],
+      [
+        Markup.button.callback(
+          telegramCopy.buttons.adminUserStats30d,
+          `${TELEGRAM_CALLBACKS.adminUserStatsPrefix}${userId}:d30`,
+        ),
+      ],
+      [
+        Markup.button.callback(
+          telegramCopy.buttons.adminUserStatsAll,
+          `${TELEGRAM_CALLBACKS.adminUserStatsPrefix}${userId}:all`,
+        ),
+      ],
+      [
+        Markup.button.callback(
+          telegramCopy.buttons.adminUserHistory,
+          `${TELEGRAM_CALLBACKS.adminUserHistoryPrefix}${userId}:root`,
+        ),
+      ],
+      [
+        Markup.button.callback(telegramCopy.buttons.adminActiveUsers, `${TELEGRAM_CALLBACKS.adminActiveUsersPrefix}0`),
+        Markup.button.callback(telegramCopy.buttons.adminBackToPanel, TELEGRAM_CALLBACKS.adminMenu),
+      ],
+    ]),
+
+  adminHistoryPage: (
+    entries: Array<{ id: string; entryDate: Date }>,
+    userId: string,
+    pageCursorToken: string,
+    nextCursor?: string,
+  ) => {
+    const rows: CallbackButton[][] = entries.map((entry) => [
+      Markup.button.callback(
+        `${telegramCopy.buttons.historyOpen} ${formatHistoryButtonDate(entry.entryDate)}`,
+        `${TELEGRAM_CALLBACKS.adminEntryOpenPrefix}${entry.id}:${pageCursorToken}`,
+      ),
+    ]);
+
+    if (nextCursor) {
+      rows.push([
+        Markup.button.callback(
+          telegramCopy.buttons.historyMore,
+          `${TELEGRAM_CALLBACKS.adminUserHistoryPrefix}${userId}:${nextCursor}`,
+        ),
+      ]);
+    }
+
+    rows.push([Markup.button.callback(telegramCopy.buttons.adminBackToUser, `${TELEGRAM_CALLBACKS.adminUserPrefix}${userId}`)]);
+    return Markup.inlineKeyboard(rows);
+  },
+
+  adminHistoryDetail: (userId: string, pageCursorToken: string) =>
+    Markup.inlineKeyboard([
+      [
+        Markup.button.callback(
+          telegramCopy.buttons.historyBackToList,
+          `${TELEGRAM_CALLBACKS.adminHistoryBackPrefix}${userId}:${pageCursorToken}`,
+        ),
+      ],
+      [Markup.button.callback(telegramCopy.buttons.adminBackToUser, `${TELEGRAM_CALLBACKS.adminUserPrefix}${userId}`)],
+    ]),
+
   consent: () =>
     Markup.inlineKeyboard([
       [

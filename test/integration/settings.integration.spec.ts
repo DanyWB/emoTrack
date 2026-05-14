@@ -33,6 +33,7 @@ describe('Settings integration', () => {
       ctx.tagsService,
       ctx.fsmService,
       ctx.analyticsService,
+      ctx.adminService,
     );
   }
 

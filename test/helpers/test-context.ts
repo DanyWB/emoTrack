@@ -1,6 +1,9 @@
 import { ConfigService } from '@nestjs/config';
 import { Test, type TestingModule } from '@nestjs/testing';
 
+import { AdminRepository } from '../../src/admin/admin.repository';
+import { AdminService } from '../../src/admin/admin.service';
+import type { AdminOverview } from '../../src/admin/admin.types';
 import { AnalyticsRepository } from '../../src/analytics/analytics.repository';
 import { AnalyticsService } from '../../src/analytics/analytics.service';
 import { CheckinsFlowService } from '../../src/checkins/checkins.flow';
@@ -62,6 +65,8 @@ export interface IntegrationTestContext {
   statsService: StatsService;
   summariesService: SummariesService;
   summariesFormatter: SummariesFormatter;
+  adminRepository: jest.Mocked<Pick<AdminRepository, 'getOverview' | 'listActiveUsers' | 'getUserDetail' | 'findEntryOwnerUserId'>>;
+  adminService: AdminService;
 }
 
 export async function createIntegrationTestContext(
@@ -76,10 +81,35 @@ export async function createIntegrationTestContext(
   const analyticsRepository = new InMemoryAnalyticsRepository();
   const summariesRepository = new InMemorySummariesRepository();
   const dailyMetricsRepository = new InMemoryDailyMetricsRepository();
+  const adminOverview: AdminOverview = {
+    totalUsers: 0,
+    consentedUsers: 0,
+    onboardedUsers: 0,
+    activeUsers: 0,
+    totalCheckins: 0,
+    totalEvents: 0,
+    checkinsLast7Days: 0,
+    eventsLast7Days: 0,
+    remindersEnabledUsers: 0,
+  };
+  const adminRepository = {
+    getOverview: jest.fn().mockResolvedValue(adminOverview),
+    listActiveUsers: jest.fn().mockResolvedValue({
+      items: [],
+      total: 0,
+      offset: 0,
+      limit: 5,
+      hasPrevious: false,
+      hasNext: false,
+    }),
+    getUserDetail: jest.fn().mockResolvedValue(null),
+    findEntryOwnerUserId: jest.fn().mockResolvedValue(null),
+  };
 
   const moduleRef = await Test.createTestingModule({
     providers: [
       { provide: ConfigService, useValue: configService },
+      { provide: AdminRepository, useValue: adminRepository },
       { provide: UsersRepository, useValue: usersRepository },
       { provide: DailyMetricsRepository, useValue: dailyMetricsRepository },
       { provide: FsmRepository, useValue: fsmRepository },
@@ -88,6 +118,7 @@ export async function createIntegrationTestContext(
       { provide: TagsRepository, useValue: tagsRepository },
       { provide: AnalyticsRepository, useValue: analyticsRepository },
       { provide: SummariesRepository, useValue: summariesRepository },
+      AdminService,
       UsersService,
       DailyMetricsService,
       FsmService,
@@ -132,5 +163,7 @@ export async function createIntegrationTestContext(
     statsService: moduleRef.get(StatsService),
     summariesService: moduleRef.get(SummariesService),
     summariesFormatter: moduleRef.get(SummariesFormatter),
+    adminRepository,
+    adminService: moduleRef.get(AdminService),
   };
 }

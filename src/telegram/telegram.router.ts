@@ -2,6 +2,7 @@
 import { SleepMode, SummaryPeriodType, type User } from '@prisma/client';
 import type { Context, Telegraf } from 'telegraf';
 
+import { AdminService } from '../admin/admin.service';
 import { AnalyticsService } from '../analytics/analytics.service';
 import { ChartsService } from '../charts/charts.service';
 import { CheckinsFlowService, type CheckinFlowResult } from '../checkins/checkins.flow';
@@ -27,6 +28,12 @@ import { UsersService } from '../users/users.service';
 import {
   formatCheckinConfirmation,
   formatCheckinTagsSelectionPrompt,
+  formatAdminActiveUsersPage,
+  formatAdminOverview,
+  formatAdminUserButtonLabel,
+  formatAdminUserDetail,
+  formatAdminUserHistoryTitle,
+  formatAdminUserStatsTitle,
   formatDailyMetricsSettingsText,
   formatHistoryEntryDetail,
   formatHistoryEntries,
@@ -61,11 +68,27 @@ import {
 
 const HISTORY_PAGE_SIZE = 5;
 const HISTORY_ROOT_CURSOR_TOKEN = 'root';
+const ADMIN_ACTIVE_USERS_PAGE_SIZE = 5;
 
 interface MessageRenderOptions {
   preferEdit?: boolean;
   cleanupFlowMessages?: boolean;
   trackFlowPromptForUserId?: string;
+}
+
+interface AdminUserPeriodCallback {
+  userId: string;
+  periodType: SummaryPeriodType;
+}
+
+interface AdminUserCursorCallback {
+  userId: string;
+  pageCursorToken: string;
+}
+
+interface AdminEntryCallback {
+  entryId: string;
+  pageCursorToken: string;
 }
 
 @Injectable()
@@ -84,10 +107,12 @@ export class TelegramRouter {
     private readonly tagsService: TagsService,
     private readonly fsmService: FsmService,
     private readonly analyticsService: AnalyticsService,
+    private readonly adminService: AdminService,
   ) {}
 
   register(bot: Telegraf<Context>): void {
     bot.start((ctx) => this.runSafely(ctx, () => this.handleStartCommand(ctx), 'start'));
+    bot.command('admin', (ctx) => this.runSafely(ctx, () => this.handleAdminCommand(ctx), 'admin'));
     bot.command('menu', (ctx) => this.runSafely(ctx, () => this.handleMenuCommand(ctx), 'menu'));
     bot.command('terms', (ctx) => this.runSafely(ctx, () => this.handleTermsCommand(ctx), 'terms'));
     bot.command('checkin', (ctx) => this.runSafely(ctx, () => this.handleCheckinCommand(ctx), 'checkin'));
@@ -112,6 +137,14 @@ export class TelegramRouter {
 
     await this.analyticsService.track('bot_started', {}, user.id);
     await this.replyOnboardingProgress(ctx, user, true);
+  }
+
+  private async handleAdminCommand(ctx: Context): Promise<void> {
+    if (!(await this.ensureAdminAccess(ctx))) {
+      return;
+    }
+
+    await replyHtml(ctx, telegramCopy.admin.menu, telegramKeyboards.adminMenu());
   }
 
   private async handleMenuCommand(ctx: Context): Promise<void> {
@@ -314,9 +347,238 @@ export class TelegramRouter {
     await replyHtml(ctx, telegramCopy.help.text, telegramKeyboards.mainMenu());
   }
 
+  private async handleAdminCallback(ctx: Context, callbackData: string): Promise<void> {
+    if (!(await this.ensureAdminAccess(ctx))) {
+      return;
+    }
+
+    if (callbackData === TELEGRAM_CALLBACKS.adminMenu) {
+      await editOrReplyHtml(ctx, telegramCopy.admin.menu, telegramKeyboards.adminMenu());
+      return;
+    }
+
+    if (callbackData === TELEGRAM_CALLBACKS.adminOverview) {
+      await this.replyAdminOverview(ctx);
+      return;
+    }
+
+    if (callbackData.startsWith(TELEGRAM_CALLBACKS.adminActiveUsersPrefix)) {
+      const offset = this.parseAdminOffset(callbackData.slice(TELEGRAM_CALLBACKS.adminActiveUsersPrefix.length));
+      await this.replyAdminActiveUsers(ctx, offset);
+      return;
+    }
+
+    const adminStatsPayload = this.parseAdminUserStatsCallback(callbackData);
+
+    if (adminStatsPayload) {
+      await this.replyAdminUserStats(ctx, adminStatsPayload.userId, adminStatsPayload.periodType);
+      return;
+    }
+
+    const adminHistoryPayload = this.parseAdminUserHistoryCallback(callbackData);
+
+    if (adminHistoryPayload) {
+      await this.replyAdminUserHistory(ctx, adminHistoryPayload.userId, adminHistoryPayload.pageCursorToken);
+      return;
+    }
+
+    const adminEntryPayload = this.parseAdminEntryCallback(callbackData);
+
+    if (adminEntryPayload) {
+      await this.replyAdminHistoryDetail(ctx, adminEntryPayload.entryId, adminEntryPayload.pageCursorToken);
+      return;
+    }
+
+    const adminHistoryBackPayload = this.parseAdminHistoryBackCallback(callbackData);
+
+    if (adminHistoryBackPayload) {
+      await this.replyAdminUserHistory(
+        ctx,
+        adminHistoryBackPayload.userId,
+        adminHistoryBackPayload.pageCursorToken,
+      );
+      return;
+    }
+
+    if (callbackData.startsWith(TELEGRAM_CALLBACKS.adminUserPrefix)) {
+      const userId = callbackData.slice(TELEGRAM_CALLBACKS.adminUserPrefix.length);
+      await this.replyAdminUserDetail(ctx, userId);
+    }
+  }
+
+  private async ensureAdminAccess(ctx: Context): Promise<boolean> {
+    if (this.adminService.isAdminTelegramId(ctx.from?.id)) {
+      return true;
+    }
+
+    await replyHtml(ctx, telegramCopy.admin.accessDenied, telegramKeyboards.mainMenu());
+    return false;
+  }
+
+  private isAdminCallback(callbackData: string): boolean {
+    return (
+      callbackData === TELEGRAM_CALLBACKS.adminMenu ||
+      callbackData === TELEGRAM_CALLBACKS.adminOverview ||
+      callbackData.startsWith(TELEGRAM_CALLBACKS.adminActiveUsersPrefix) ||
+      callbackData.startsWith(TELEGRAM_CALLBACKS.adminUserPrefix) ||
+      callbackData.startsWith(TELEGRAM_CALLBACKS.adminUserStatsPrefix) ||
+      callbackData.startsWith(TELEGRAM_CALLBACKS.adminUserHistoryPrefix) ||
+      callbackData.startsWith(TELEGRAM_CALLBACKS.adminEntryOpenPrefix) ||
+      callbackData.startsWith(TELEGRAM_CALLBACKS.adminHistoryBackPrefix)
+    );
+  }
+
+  private async replyAdminOverview(ctx: Context): Promise<void> {
+    const overview = await this.adminService.getOverview();
+    await editOrReplyHtml(ctx, formatAdminOverview(overview), telegramKeyboards.adminOverview());
+  }
+
+  private async replyAdminActiveUsers(ctx: Context, offset: number): Promise<void> {
+    const page = await this.adminService.listActiveUsers({
+      offset,
+      limit: ADMIN_ACTIVE_USERS_PAGE_SIZE,
+    });
+
+    await editOrReplyHtml(
+      ctx,
+      formatAdminActiveUsersPage(page),
+      telegramKeyboards.adminActiveUsers(
+        page.items.map((item) => ({
+          userId: item.user.id,
+          label: formatAdminUserButtonLabel(item),
+        })),
+        {
+          offset: page.offset,
+          limit: page.limit,
+          hasPrevious: page.hasPrevious,
+          hasNext: page.hasNext,
+        },
+      ),
+    );
+  }
+
+  private async replyAdminUserDetail(ctx: Context, userId: string): Promise<void> {
+    const detail = await this.adminService.getUserDetail(userId);
+
+    if (!detail) {
+      await editOrReplyHtml(ctx, telegramCopy.admin.userNotFound, telegramKeyboards.adminMenu());
+      return;
+    }
+
+    await editOrReplyHtml(ctx, formatAdminUserDetail(detail), telegramKeyboards.adminUserDetail(userId));
+  }
+
+  private async replyAdminUserStats(
+    ctx: Context,
+    userId: string,
+    periodType: SummaryPeriodType,
+  ): Promise<void> {
+    const detail = await this.adminService.getUserDetail(userId);
+
+    if (!detail) {
+      await editOrReplyHtml(ctx, telegramCopy.admin.userNotFound, telegramKeyboards.adminMenu());
+      return;
+    }
+
+    await editOrReplyHtml(ctx, telegramCopy.admin.statsLoading, telegramKeyboards.adminUserDetail(userId));
+
+    const payload = await this.summariesService.generateSummary(userId, periodType, {
+      timezone: detail.user.timezone,
+      persist: false,
+    });
+    const text = `${formatAdminUserStatsTitle(detail.user, periodType)}\n\n${this.summariesService.formatSummaryText(payload)}`;
+
+    await editOrReplyHtml(ctx, text, telegramKeyboards.adminUserDetail(userId));
+
+    if (payload.entriesCount === 0 || payload.isLowData) {
+      return;
+    }
+
+    await this.sendStatsCharts(ctx, detail.user, payload);
+  }
+
+  private async replyAdminUserHistory(
+    ctx: Context,
+    userId: string,
+    pageCursorToken: string,
+  ): Promise<void> {
+    const detail = await this.adminService.getUserDetail(userId);
+
+    if (!detail) {
+      await editOrReplyHtml(ctx, telegramCopy.admin.userNotFound, telegramKeyboards.adminMenu());
+      return;
+    }
+
+    const cursor = this.decodeHistoryPageCursor(pageCursorToken);
+    const page = await this.checkinsService.getRecentEntriesPage(userId, HISTORY_PAGE_SIZE, cursor);
+
+    if (page.staleCursor) {
+      await editOrReplyHtml(ctx, telegramCopy.history.stale, telegramKeyboards.adminUserDetail(userId));
+      return;
+    }
+
+    if (page.entries.length === 0) {
+      await editOrReplyHtml(ctx, telegramCopy.admin.historyEmpty, telegramKeyboards.adminUserDetail(userId));
+      return;
+    }
+
+    const text = [
+      formatAdminUserHistoryTitle(detail.user),
+      '',
+      formatHistoryEntries(page.entries, { title: telegramCopy.history.title }),
+    ].join('\n');
+
+    await editOrReplyHtml(
+      ctx,
+      text,
+      telegramKeyboards.adminHistoryPage(
+        page.entries.map((entry) => ({
+          id: entry.id,
+          entryDate: entry.entryDate,
+        })),
+        userId,
+        this.encodeHistoryPageCursor(cursor),
+        page.nextCursor,
+      ),
+    );
+  }
+
+  private async replyAdminHistoryDetail(
+    ctx: Context,
+    entryId: string,
+    pageCursorToken: string,
+  ): Promise<void> {
+    const userId = await this.adminService.findEntryOwnerUserId(entryId);
+
+    if (!userId) {
+      await editOrReplyHtml(ctx, telegramCopy.admin.userNotFound, telegramKeyboards.adminMenu());
+      return;
+    }
+
+    const detail = await this.checkinsService.getHistoryEntryDetail(userId, entryId);
+
+    if (!detail) {
+      await editOrReplyHtml(ctx, telegramCopy.admin.userNotFound, telegramKeyboards.adminUserDetail(userId));
+      return;
+    }
+
+    await editOrReplyHtml(
+      ctx,
+      formatHistoryEntryDetail(detail),
+      telegramKeyboards.adminHistoryDetail(userId, pageCursorToken),
+    );
+  }
+
   private async handleCallbackQuery(ctx: Context): Promise<void> {
     const callbackData = getCallbackData(ctx);
     if (!callbackData) {
+      return;
+    }
+
+    await ctx.answerCbQuery().catch(() => undefined);
+
+    if (this.isAdminCallback(callbackData)) {
+      await this.handleAdminCallback(ctx, callbackData);
       return;
     }
 
@@ -325,7 +587,6 @@ export class TelegramRouter {
       return;
     }
 
-    await ctx.answerCbQuery().catch(() => undefined);
     const state = await this.fsmService.getState(user.id);
 
     if (!user.consentGiven && !this.isAllowedPreConsentCallback(callbackData)) {
@@ -1922,6 +2183,76 @@ export class TelegramRouter {
     }
 
     return null;
+  }
+
+  private parseAdminOffset(value: string): number {
+    const offset = Number(value);
+    return Number.isInteger(offset) && offset >= 0 ? offset : 0;
+  }
+
+  private parseAdminUserStatsCallback(callbackData: string): AdminUserPeriodCallback | null {
+    if (!callbackData.startsWith(TELEGRAM_CALLBACKS.adminUserStatsPrefix)) {
+      return null;
+    }
+
+    const [userId, periodRaw] = callbackData
+      .slice(TELEGRAM_CALLBACKS.adminUserStatsPrefix.length)
+      .split(':');
+    const periodType = this.parseSummaryPeriod(periodRaw ?? '');
+
+    if (!userId || !periodType) {
+      return null;
+    }
+
+    return { userId, periodType };
+  }
+
+  private parseAdminUserHistoryCallback(callbackData: string): AdminUserCursorCallback | null {
+    if (!callbackData.startsWith(TELEGRAM_CALLBACKS.adminUserHistoryPrefix)) {
+      return null;
+    }
+
+    const [userId, pageCursorToken] = callbackData
+      .slice(TELEGRAM_CALLBACKS.adminUserHistoryPrefix.length)
+      .split(':');
+
+    if (!userId || !pageCursorToken) {
+      return null;
+    }
+
+    return { userId, pageCursorToken };
+  }
+
+  private parseAdminEntryCallback(callbackData: string): AdminEntryCallback | null {
+    if (!callbackData.startsWith(TELEGRAM_CALLBACKS.adminEntryOpenPrefix)) {
+      return null;
+    }
+
+    const [entryId, pageCursorToken] = callbackData
+      .slice(TELEGRAM_CALLBACKS.adminEntryOpenPrefix.length)
+      .split(':');
+
+    if (!entryId || !pageCursorToken) {
+      return null;
+    }
+
+    return { entryId, pageCursorToken };
+  }
+
+  private parseAdminHistoryBackCallback(callbackData: string): AdminUserCursorCallback | null {
+    if (!callbackData.startsWith(TELEGRAM_CALLBACKS.adminHistoryBackPrefix)) {
+      return null;
+    }
+
+    const [userId, pageCursorToken] = callbackData
+      .slice(TELEGRAM_CALLBACKS.adminHistoryBackPrefix.length)
+      .split(':');
+
+    if (!userId || !pageCursorToken) {
+      return null;
+    }
+
+    return { userId, pageCursorToken };
   }
 
   private async getStatsPeriodFromSession(userId: string): Promise<SummaryPeriodType | null> {

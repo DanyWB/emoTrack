@@ -10,6 +10,7 @@ Use this checklist before a local handoff or release candidate review.
 - `npm run prisma:migrate` completed
 - `npm run prisma:seed` completed
 - app starts with `npm run start:dev`
+- if admin checks are needed, `ADMIN_TELEGRAM_IDS` contains the tester's numeric Telegram id
 
 ## Local Dev Safety
 
@@ -258,6 +259,20 @@ Use this checklist before a local handoff or release candidate review.
 - help text points users to `/menu` for navigation
 - help text includes `/terms`
 - help text states that the bot is not a diagnostic or medical tool
+
+## Admin Panel
+
+- `/admin` is not listed in the public Telegram command hints, but the router accepts it
+- a Telegram id not present in `ADMIN_TELEGRAM_IDS` receives the access-denied message
+- a configured admin id opens the admin menu
+- `Общая статистика` shows total users, consented users, onboarded users, active users, check-ins, events, recent 7-day activity, and reminder-enabled users
+- `Активные пользователи` lists only users with at least one saved check-in
+- active users list pagination works when there are more than 5 active users
+- opening an active user shows Telegram identity, timezone, onboarding/consent state, reminder state, first/last check-in dates, check-in count, event count, and summary count
+- user stats buttons for 7 days, 30 days, and all time generate the existing summary text for that target user
+- when the target user has enough data, admin stats also send the existing chart images
+- history opens for the target user and entry details show full notes, tags, extra metrics, and day events
+- admin callbacks work even if the admin account has not completed normal onboarding
 
 ## Telegram Commands
 

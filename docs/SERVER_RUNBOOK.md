@@ -1,27 +1,27 @@
-# emoTrack Server Runbook
+# emoTrack: инструкция по работе с сервером
 
 Этот файл описывает практическую работу с текущим сервером emoTrack после первого деплоя.
 
 ## 1. Текущая схема сервера
 
-Текущий production-like сервер:
+Текущий сервер:
 
-- Ubuntu server
-- app path: `/opt/emotrack/app`
-- app user: `emotrack`
-- systemd service: `emotrack`
-- runtime command: `npm run start:prod`
+- ОС: Ubuntu
+- путь проекта: `/opt/emotrack/app`
+- пользователь приложения: `emotrack`
+- systemd-сервис: `emotrack`
+- команда запуска: `npm run start:prod`
 - Node entrypoint: `dist/src/main.js`
-- database: local PostgreSQL, database `emotrack`
-- Redis: local Redis, enabled
-- jobs: enabled
+- база данных: локальный PostgreSQL, база `emotrack`
+- Redis: локальный Redis, включен
+- фоновые jobs: включены
 - Telegram mode: polling
-- app port: `3000`, only local checks expected
+- порт приложения: `3000`, проверяется локально с сервера
 - health endpoints:
   - `http://127.0.0.1:3000/health/live`
   - `http://127.0.0.1:3000/health/ready`
 
-Important server env expectations:
+Ожидаемые важные настройки в `/opt/emotrack/app/.env`:
 
 ```env
 NODE_ENV=production
@@ -31,23 +31,24 @@ REDIS_ENABLED=true
 JOBS_ENABLED=true
 TELEGRAM_MODE=polling
 TELEGRAM_STARTUP_TIMEOUT_MS=10000
+ADMIN_TELEGRAM_IDS=
 DEFAULT_TIMEZONE=Europe/Moscow
 CHART_TEMP_DIR=/opt/emotrack/tmp/charts
 NODE_OPTIONS=--dns-result-order=ipv4first
 ```
 
-Secrets are stored only in `/opt/emotrack/app/.env`.
+Секреты хранятся только в `/opt/emotrack/app/.env`.
 
-## 2. Command Ownership Rules
+## 2. Правило владельца команд
 
-Run service and OS commands as `root`:
+Команды сервиса и ОС выполняются от `root`:
 
 ```bash
 systemctl status emotrack --no-pager -l
 journalctl -u emotrack -f
 ```
 
-Run project commands as `emotrack`:
+Команды проекта выполняются от пользователя `emotrack`:
 
 ```bash
 sudo -u emotrack git status --short
@@ -58,16 +59,16 @@ sudo -u emotrack npx prisma migrate deploy
 sudo -u emotrack npm run prisma:seed
 ```
 
-Do not run `git`, `npm`, or `npx prisma` as root inside `/opt/emotrack/app`. If that happens, file permissions can break.
+Не запускай `git`, `npm` и `npx prisma` от `root` внутри `/opt/emotrack/app`. Иначе можно сломать права на `node_modules` и Prisma client.
 
-Permission repair:
+Если права сломались:
 
 ```bash
 chown -R emotrack:emotrack /opt/emotrack/app
 chown -R emotrack:emotrack /opt/emotrack/.npm
 ```
 
-## 3. Quick Health Check
+## 3. Быстрая проверка состояния
 
 ```bash
 cd /opt/emotrack/app
@@ -77,23 +78,23 @@ curl -i --max-time 5 http://127.0.0.1:3000/health/live
 curl -i --max-time 5 http://127.0.0.1:3000/health/ready
 ```
 
-Expected:
+Ожидаемый результат:
 
-- service is `active (running)`
-- `/health/live` returns `200`
-- `/health/ready` returns `200`
-- database is `up`
-- redis is `up`
-- telegram is `up`
+- service находится в состоянии `active (running)`
+- `/health/live` возвращает `200`
+- `/health/ready` возвращает `200`
+- database: `up`
+- redis: `up`
+- telegram: `up`
 
-Logs:
+Логи:
 
 ```bash
 journalctl -u emotrack -n 120 --no-pager -l
 journalctl -u emotrack -f
 ```
 
-Useful successful startup lines:
+Нормальные строки успешного запуска:
 
 ```text
 PostgreSQL connection established.
@@ -104,9 +105,9 @@ Telegram bot launched in polling mode.
 emoTrack backend is running on port 3000
 ```
 
-## 4. Normal Update Flow
+## 4. Обычное обновление сервера
 
-Use this after new commits are pushed to GitHub.
+Используй этот сценарий после того, как новые коммиты запушены в GitHub.
 
 ```bash
 cd /opt/emotrack/app
@@ -132,29 +133,29 @@ curl -i --max-time 5 http://127.0.0.1:3000/health/live
 curl -i --max-time 5 http://127.0.0.1:3000/health/ready
 ```
 
-If `git pull --ff-only` complains about local changes, inspect first:
+Если `git pull --ff-only` ругается на локальные изменения, сначала посмотри diff:
 
 ```bash
 sudo -u emotrack git diff
 ```
 
-If the local change is only an old emergency server edit already present in GitHub, restore that file:
+Если локальное изменение было временной серверной правкой и уже есть в GitHub, можно восстановить файл:
 
 ```bash
 sudo -u emotrack git restore <file>
 sudo -u emotrack git pull --ff-only
 ```
 
-## 5. Env Change Flow
+## 5. Изменение `.env`
 
-Edit env:
+Открыть env:
 
 ```bash
 cd /opt/emotrack/app
 nano .env
 ```
 
-Restart:
+Перезапустить приложение:
 
 ```bash
 systemctl restart emotrack
@@ -163,39 +164,71 @@ journalctl -u emotrack -n 120 --no-pager -l
 curl -i --max-time 5 http://127.0.0.1:3000/health/ready
 ```
 
-Check env without printing secrets:
+Проверить env без вывода токена:
 
 ```bash
-grep -nE '^(NODE_ENV|PORT|REDIS_URL|REDIS_ENABLED|JOBS_ENABLED|TELEGRAM_MODE|TELEGRAM_STARTUP_TIMEOUT_MS|DEFAULT_TIMEZONE|NODE_OPTIONS)=' .env
+grep -nE '^(NODE_ENV|PORT|REDIS_URL|REDIS_ENABLED|JOBS_ENABLED|TELEGRAM_MODE|TELEGRAM_STARTUP_TIMEOUT_MS|ADMIN_TELEGRAM_IDS|DEFAULT_TIMEZONE|NODE_OPTIONS)=' .env
 grep -n '^TELEGRAM_BOT_TOKEN=' .env | sed -E 's/(TELEGRAM_BOT_TOKEN=.{8}).+/\1[REDACTED]/'
 ```
 
-## 6. Reminder Operations
+`ADMIN_TELEGRAM_IDS` — это список Telegram id администраторов через запятую. Команда `/admin` скрыта из публичного списка команд, но работает для этих id.
 
-Reminder prerequisites:
+### Включить доступ к админке
+
+1. Узнай свой numeric Telegram id.
+2. Добавь его в env:
+
+```bash
+cd /opt/emotrack/app
+nano .env
+```
+
+```env
+ADMIN_TELEGRAM_IDS=123456789
+```
+
+Если администраторов несколько:
+
+```env
+ADMIN_TELEGRAM_IDS=123456789,987654321
+```
+
+3. Перезапусти сервис и проверь health:
+
+```bash
+systemctl restart emotrack
+sleep 20
+curl -i --max-time 5 http://127.0.0.1:3000/health/ready
+```
+
+4. В Telegram отправь `/admin`. Ожидается админ-меню с общей статистикой и активными пользователями.
+
+## 6. Напоминания
+
+Условия работы напоминаний:
 
 - `REDIS_ENABLED=true`
 - `JOBS_ENABLED=true`
-- Redis responds with `PONG`
-- user has completed onboarding
-- user has `remindersEnabled=true`
-- user has non-empty `reminderTime`
-- user timezone is correct
+- Redis отвечает `PONG`
+- пользователь прошел onboarding
+- у пользователя `remindersEnabled=true`
+- у пользователя заполнен `reminderTime`
+- timezone пользователя корректный
 
-Check Redis:
+Проверить Redis:
 
 ```bash
 redis-cli ping
 ```
 
-Check users:
+Проверить пользователей:
 
 ```bash
 sudo -u postgres psql -d emotrack -c \
 "select \"telegramId\", timezone, \"onboardingCompleted\", \"remindersEnabled\", \"reminderTime\" from users order by \"createdAt\" desc;"
 ```
 
-After changing timezone or reminder settings directly in DB, restart the service so repeatable jobs are reconciled:
+После ручного изменения timezone или reminder-настроек в БД перезапусти сервис, чтобы repeatable jobs пересобрались:
 
 ```bash
 systemctl restart emotrack
@@ -203,44 +236,44 @@ sleep 20
 journalctl -u emotrack -n 120 --no-pager -l | grep -E 'reminder_jobs_reconciled|Scheduled daily reminder|daily_reminder_send_failed|Sent daily reminder'
 ```
 
-Manual functional check:
+Ручная проверка напоминаний:
 
-1. In Telegram open `/settings`.
-2. Enable reminders.
-3. Set reminder time to 2-3 minutes ahead in `Europe/Moscow`.
-4. Watch logs:
+1. В Telegram открой `/settings`.
+2. Включи напоминания.
+3. Поставь время на 2-3 минуты вперед по `Europe/Moscow`.
+4. Смотри логи:
 
 ```bash
 journalctl -u emotrack -f
 ```
 
-Expected when a reminder is delivered:
+Ожидаемая строка при отправке:
 
 ```text
 Sent daily reminder to user <userId>
 ```
 
-If the user already has today's check-in, daily reminder is skipped.
+Если у пользователя уже есть check-in за сегодня, ежедневное напоминание не отправляется.
 
-## 7. Timezone Fixes
+## 7. Timezone
 
-`DEFAULT_TIMEZONE` affects newly created users. Existing users keep `users.timezone` from the database.
+`DEFAULT_TIMEZONE` применяется к новым пользователям. Уже созданные пользователи хранят timezone в таблице `users`.
 
-Show current timezones:
+Показать текущие timezone:
 
 ```bash
 sudo -u postgres psql -d emotrack -c \
 "select \"telegramId\", timezone, \"reminderTime\", \"remindersEnabled\" from users;"
 ```
 
-Move early Berlin users to Moscow:
+Перевести ранних пользователей с Berlin на Moscow:
 
 ```bash
 sudo -u postgres psql -d emotrack -c \
 "update users set timezone = 'Europe/Moscow' where timezone = 'Europe/Berlin';"
 ```
 
-Then restart to reconcile jobs:
+После этого перезапустить сервис, чтобы jobs пересобрались:
 
 ```bash
 systemctl restart emotrack
@@ -248,9 +281,9 @@ sleep 20
 journalctl -u emotrack -n 120 --no-pager -l | grep -E 'Scheduled daily reminder|reminder_jobs_reconciled'
 ```
 
-## 8. Telegram Checks
+## 8. Telegram
 
-Check token validity without exposing it:
+Проверить валидность токена, не выводя его в чат:
 
 ```bash
 cd /opt/emotrack/app
@@ -260,19 +293,19 @@ curl -i --connect-timeout 10 --max-time 20 "https://api.telegram.org/bot${TOKEN}
 unset TOKEN
 ```
 
-Expected:
+Ожидается:
 
 ```json
 {"ok":true}
 ```
 
-If `curl` works but app startup has Telegram problems, check:
+Если `curl` работает, но у приложения есть проблемы с Telegram, смотреть так:
 
 ```bash
 journalctl -u emotrack -n 160 --no-pager -l | grep -E 'Telegram|telegram_'
 ```
 
-Expected healthy line:
+Здоровая строка:
 
 ```text
 Telegram bot launched in polling mode.
@@ -280,7 +313,7 @@ Telegram bot launched in polling mode.
 
 ## 9. Rollback
 
-Application rollback:
+Rollback приложения:
 
 ```bash
 cd /opt/emotrack/app
@@ -297,7 +330,7 @@ sleep 20
 curl -i --max-time 5 http://127.0.0.1:3000/health/ready
 ```
 
-Database restore is destructive. Use it only if the exact backup and rollback target are known:
+Восстановление БД из backup разрушает текущую БД. Делать только если точно выбран правильный backup и commit:
 
 ```bash
 systemctl stop emotrack
@@ -309,23 +342,23 @@ sudo -u postgres pg_restore -d emotrack /var/backups/emotrack/<backup_file>.dump
 systemctl start emotrack
 ```
 
-## 10. Known Troubleshooting
+## 10. Частые проблемы
 
 ### Git dubious ownership
 
-Cause: running Git as root in a repo owned by `emotrack`.
+Причина: Git запущен от `root` в repo, которым владеет `emotrack`.
 
-Use:
+Правильно:
 
 ```bash
 sudo -u emotrack git status --short
 ```
 
-### EACCES in `node_modules`
+### EACCES в `node_modules`
 
-Cause: `npm` or `npx prisma` was run as root.
+Причина: `npm` или `npx prisma` запускались от `root`.
 
-Fix:
+Исправить:
 
 ```bash
 systemctl stop emotrack
@@ -336,28 +369,28 @@ sudo -u emotrack npm ci
 
 ### `Cannot find module dist/main.js`
 
-Correct production entrypoint is:
+Правильный production entrypoint:
 
 ```json
 "start:prod": "node dist/src/main.js"
 ```
 
-After pulling a fixed version:
+После обновления версии:
 
 ```bash
 sudo -u emotrack npm run build
 systemctl restart emotrack
 ```
 
-### Redis env validation error
+### Ошибка Redis env validation
 
-Error:
+Ошибка:
 
 ```text
 REDIS_URL is required when REDIS_ENABLED=true or JOBS_ENABLED=true
 ```
 
-Fix `.env` either to enabled:
+Вариант с включенным Redis:
 
 ```env
 REDIS_URL=redis://127.0.0.1:6379
@@ -365,7 +398,7 @@ REDIS_ENABLED=true
 JOBS_ENABLED=true
 ```
 
-or disabled:
+Вариант с выключенным Redis:
 
 ```env
 REDIS_URL=
@@ -373,24 +406,24 @@ REDIS_ENABLED=false
 JOBS_ENABLED=false
 ```
 
-### `/health/live` is 200, `/health/ready` is 503
+### `/health/live` = 200, а `/health/ready` = 503
 
-Readiness means a required dependency is down. Check body and logs:
+Readiness означает, что обязательная зависимость недоступна. Проверить body и логи:
 
 ```bash
 curl -s http://127.0.0.1:3000/health/ready
 journalctl -u emotrack -n 120 --no-pager -l
 ```
 
-Common causes:
+Частые причины:
 
-- database down
-- Redis down while Redis/jobs are enabled
+- база данных недоступна
+- Redis недоступен при включенных Redis/jobs
 - Telegram runtime failed
 
-### SSH session closes during build
+### SSH-сессия закрылась во время build
 
-Check memory and disk:
+Проверить память, диск и системные ошибки:
 
 ```bash
 free -h
@@ -398,5 +431,4 @@ df -h
 journalctl -p err -n 80 --no-pager -l
 ```
 
-Then rerun update commands after reconnecting.
-
+После повторного подключения можно заново выполнить команды обновления.

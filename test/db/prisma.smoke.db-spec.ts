@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { EventType, PrismaClient, SleepMode } from '@prisma/client';
 
+import { AdminRepository } from '../../src/admin/admin.repository';
 import { CheckinsRepository } from '../../src/checkins/checkins.repository';
 import { DailyMetricsRepository } from '../../src/daily-metrics/daily-metrics.repository';
 import { DAILY_METRIC_CATALOG } from '../../src/daily-metrics/daily-metrics.catalog';
@@ -132,6 +133,7 @@ describe('Prisma database smoke', () => {
   let checkinsRepository: CheckinsRepository;
   let dailyMetricsRepository: DailyMetricsRepository;
   let eventsRepository: EventsRepository;
+  let adminRepository: AdminRepository;
 
   beforeAll(async () => {
     prisma = new PrismaClient({
@@ -151,6 +153,7 @@ describe('Prisma database smoke', () => {
     checkinsRepository = new CheckinsRepository(prismaService);
     dailyMetricsRepository = new DailyMetricsRepository(prismaService);
     eventsRepository = new EventsRepository(prismaService);
+    adminRepository = new AdminRepository(prismaService);
   });
 
   afterEach(async () => {
@@ -293,6 +296,55 @@ describe('Prisma database smoke', () => {
     expect(eligibleIds).not.toContain(disabled.id);
     expect(eligibleIds).not.toContain(missingTime.id);
     expect(eligibleIds).not.toContain(notOnboarded.id);
+  });
+
+  it('reads admin overview, active users, user detail, and entry owner through real Prisma queries', async () => {
+    const before = await adminRepository.getOverview();
+    const user = await createTestUser('admin-active');
+    const firstEntry = await checkinsRepository.upsertByUserAndDate(
+      user.id,
+      new Date('2026-03-13T00:00:00.000Z'),
+      {
+        moodScore: 7,
+        energyScore: 6,
+        stressScore: 3,
+      },
+    );
+    await checkinsRepository.upsertByUserAndDate(user.id, new Date('2026-03-14T00:00:00.000Z'), {
+      moodScore: 8,
+      energyScore: 7,
+      stressScore: 2,
+    });
+    await eventsRepository.create({
+      userId: user.id,
+      eventDate: new Date('2026-03-14T00:00:00.000Z'),
+      eventType: EventType.work,
+      title: 'Admin smoke event',
+      eventScore: 6,
+    });
+
+    const [after, page, detail, ownerUserId] = await Promise.all([
+      adminRepository.getOverview(),
+      adminRepository.listActiveUsers({ offset: 0, limit: 20 }),
+      adminRepository.getUserDetail(user.id),
+      adminRepository.findEntryOwnerUserId(firstEntry.id),
+    ]);
+    const activeItem = page.items.find((item) => item.user.id === user.id);
+
+    expect(after.totalUsers).toBeGreaterThanOrEqual(before.totalUsers + 1);
+    expect(after.activeUsers).toBeGreaterThanOrEqual(before.activeUsers + 1);
+    expect(after.totalCheckins).toBeGreaterThanOrEqual(before.totalCheckins + 2);
+    expect(after.totalEvents).toBeGreaterThanOrEqual(before.totalEvents + 1);
+    expect(activeItem).toMatchObject({
+      entriesCount: 2,
+      eventsCount: 1,
+    });
+    expect(detail).toMatchObject({
+      entriesCount: 2,
+      eventsCount: 1,
+      summariesCount: 0,
+    });
+    expect(ownerUserId).toBe(user.id);
   });
 
   it('keeps event overlap reads inclusive and ignores legacy series rows', async () => {

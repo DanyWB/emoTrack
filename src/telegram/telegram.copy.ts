@@ -124,6 +124,14 @@ export const telegramCopy = {
     menuSettings: '⚙️ Настройки',
     menuHelp: '❔ Помощь',
     menuTerms: '📄 Соглашение',
+    adminOverview: '📊 Общая статистика',
+    adminActiveUsers: '👥 Активные пользователи',
+    adminBackToPanel: 'К админке',
+    adminBackToUser: 'К пользователю',
+    adminUserStats7d: 'Статистика 7 дней',
+    adminUserStats30d: 'Статистика 30 дней',
+    adminUserStatsAll: 'Статистика вся',
+    adminUserHistory: 'История и заметки',
   },
   startup: {
     alreadyReady:
@@ -309,6 +317,19 @@ export const telegramCopy = {
     eventMoodHigherPattern: 'В дни с событиями настроение в среднем выше на {delta}.',
     eventMoodLowerPattern: 'В дни с событиями настроение в среднем ниже на {delta}.',
   },
+  admin: {
+    menu:
+      '<b>🛡 Админ-панель emoTrack</b>\n━━━━━━━━━━━━\nСлужебная навигация для просмотра общей нагрузки и активности пользователей.',
+    accessDenied: 'Этот раздел доступен только администратору.',
+    overviewTitle: '🛡 Админ-сводка',
+    activeUsersTitle: '👥 Активные пользователи',
+    activeUsersEmpty: 'Пока нет пользователей хотя бы с одной записью check-in.',
+    userNotFound: 'Пользователь не найден или запись уже недоступна.',
+    userTitle: '👤 Пользователь',
+    statsLoading: '📊 Собираю статистику пользователя…',
+    historyTitle: '📚 История пользователя',
+    historyEmpty: 'У этого пользователя пока нет записей истории.',
+  },
   settings: {
     title: '⚙️ Настройки:',
     remindersSectionTitle: '⏰ Напоминания',
@@ -486,6 +507,50 @@ export interface SettingsMetricOptionData {
   enabled: boolean;
 }
 
+export interface AdminOverviewData {
+  totalUsers: number;
+  consentedUsers: number;
+  onboardedUsers: number;
+  activeUsers: number;
+  totalCheckins: number;
+  totalEvents: number;
+  checkinsLast7Days: number;
+  eventsLast7Days: number;
+  remindersEnabledUsers: number;
+}
+
+export interface AdminUserIdentityData {
+  id: string;
+  telegramId: bigint | number | string;
+  username?: string | null;
+  firstName?: string | null;
+  timezone?: string | null;
+  onboardingCompleted?: boolean;
+  consentGiven?: boolean;
+  remindersEnabled?: boolean;
+  reminderTime?: string | null;
+  createdAt?: Date;
+}
+
+export interface AdminActiveUserItemData {
+  user: AdminUserIdentityData;
+  entriesCount: number;
+  eventsCount: number;
+  lastEntryDate: Date | null;
+}
+
+export interface AdminActiveUsersPageData {
+  items: AdminActiveUserItemData[];
+  total: number;
+  offset: number;
+  limit: number;
+}
+
+export interface AdminUserDetailData extends AdminActiveUserItemData {
+  firstEntryDate: Date | null;
+  summariesCount: number;
+}
+
 export function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (char) => {
     switch (char) {
@@ -503,6 +568,145 @@ export function escapeHtml(value: string): string {
         return char;
     }
   });
+}
+
+export function formatAdminOverview(data: AdminOverviewData): string {
+  return [
+    `<b>${telegramCopy.admin.overviewTitle}</b>`,
+    '━━━━━━━━━━━━',
+    `• Пользователей всего: <b>${data.totalUsers}</b>`,
+    `• Приняли соглашение: <b>${data.consentedUsers}</b>`,
+    `• Завершили первый маршрут: <b>${data.onboardedUsers}</b>`,
+    `• Активных с check-in: <b>${data.activeUsers}</b>`,
+    '',
+    '<b>Активность</b>',
+    `• Check-in всего: <b>${data.totalCheckins}</b>`,
+    `• Событий всего: <b>${data.totalEvents}</b>`,
+    `• Check-in за 7 дней: <b>${data.checkinsLast7Days}</b>`,
+    `• Событий за 7 дней: <b>${data.eventsLast7Days}</b>`,
+    '',
+    '<b>Напоминания</b>',
+    `• Включены и задано время: <b>${data.remindersEnabledUsers}</b>`,
+  ].join('\n');
+}
+
+export function formatAdminActiveUsersPage(data: AdminActiveUsersPageData): string {
+  if (data.items.length === 0) {
+    return [
+      `<b>${telegramCopy.admin.activeUsersTitle}</b>`,
+      '━━━━━━━━━━━━',
+      telegramCopy.admin.activeUsersEmpty,
+    ].join('\n');
+  }
+
+  const from = data.offset + 1;
+  const to = data.offset + data.items.length;
+  const lines = [
+    `<b>${telegramCopy.admin.activeUsersTitle}</b>`,
+    '━━━━━━━━━━━━',
+    `Показаны <b>${from}-${to}</b> из <b>${data.total}</b>.`,
+    '',
+  ];
+
+  for (const item of data.items) {
+    lines.push(
+      `• ${formatAdminUserIdentity(item.user)} — check-in: <b>${item.entriesCount}</b>, события: <b>${item.eventsCount}</b>, последняя запись: ${formatAdminDate(item.lastEntryDate)}`,
+    );
+  }
+
+  return lines.join('\n');
+}
+
+export function formatAdminUserDetail(data: AdminUserDetailData): string {
+  const user = data.user;
+
+  return [
+    `<b>${telegramCopy.admin.userTitle}</b>`,
+    '━━━━━━━━━━━━',
+    `• Имя: ${formatAdminUserIdentity(user)}`,
+    `• Telegram ID: <code>${escapeHtml(String(user.telegramId))}</code>`,
+    `• Внутренний ID: <code>${escapeHtml(user.id)}</code>`,
+    `• Таймзона: ${escapeHtml(user.timezone ?? '—')}`,
+    `• Создан: ${formatAdminDate(user.createdAt ?? null)}`,
+    '',
+    '<b>Статус</b>',
+    `• Соглашение: ${user.consentGiven ? 'да' : 'нет'}`,
+    `• Первый маршрут: ${user.onboardingCompleted ? 'завершен' : 'не завершен'}`,
+    `• Напоминания: ${formatAdminReminderStatus(user)}`,
+    '',
+    '<b>Данные</b>',
+    `• Check-in: <b>${data.entriesCount}</b>`,
+    `• События: <b>${data.eventsCount}</b>`,
+    `• Сводки: <b>${data.summariesCount}</b>`,
+    `• Первая запись: ${formatAdminDate(data.firstEntryDate)}`,
+    `• Последняя запись: ${formatAdminDate(data.lastEntryDate)}`,
+  ].join('\n');
+}
+
+export function formatAdminUserButtonLabel(item: AdminActiveUserItemData): string {
+  const primary = getAdminUserPrimaryLabel(item.user);
+  return `${primary} • ${item.entriesCount}`;
+}
+
+export function formatAdminUserStatsTitle(user: AdminUserIdentityData, periodType: SummaryPeriodType): string {
+  return [
+    `<b>📊 Статистика пользователя</b>`,
+    '━━━━━━━━━━━━',
+    `• Пользователь: ${formatAdminUserIdentity(user)}`,
+    `• Период: <b>${STATS_PERIOD_LABELS[periodType]}</b>`,
+  ].join('\n');
+}
+
+export function formatAdminUserHistoryTitle(user: AdminUserIdentityData): string {
+  return [
+    `<b>${telegramCopy.admin.historyTitle}</b>`,
+    '━━━━━━━━━━━━',
+    `• Пользователь: ${formatAdminUserIdentity(user)}`,
+  ].join('\n');
+}
+
+function formatAdminUserIdentity(user: AdminUserIdentityData): string {
+  const primaryLabel = getAdminUserPrimaryLabel(user);
+  const primary = escapeHtml(primaryLabel);
+  const username = user.username?.trim();
+
+  if (username && primaryLabel !== `@${username}`) {
+    return `${primary} <i>@${escapeHtml(username)}</i>`;
+  }
+
+  return primary;
+}
+
+function getAdminUserPrimaryLabel(user: AdminUserIdentityData): string {
+  const firstName = user.firstName?.trim();
+
+  if (firstName) {
+    return firstName;
+  }
+
+  const username = user.username?.trim();
+
+  if (username) {
+    return `@${username}`;
+  }
+
+  return `user:${user.id.slice(0, 8)}`;
+}
+
+function formatAdminReminderStatus(user: AdminUserIdentityData): string {
+  if (!user.remindersEnabled) {
+    return 'выключены';
+  }
+
+  return user.reminderTime ? `включены на ${escapeHtml(user.reminderTime)}` : 'включены, время не задано';
+}
+
+function formatAdminDate(date: Date | null): string {
+  if (!date) {
+    return '—';
+  }
+
+  return escapeHtml(formatDateKey(date));
 }
 
 export function formatCheckinConfirmation(data: CheckinConfirmationData): string {

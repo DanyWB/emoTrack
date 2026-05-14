@@ -57,6 +57,10 @@ export function createConfigService(overrides: PlainObject = {}): ConfigService 
       mode: 'polling',
       ...((overrides.telegram as PlainObject | undefined) ?? {}),
     },
+    admin: {
+      telegramIds: [],
+      ...((overrides.admin as PlainObject | undefined) ?? {}),
+    },
     ...overrides,
   };
 

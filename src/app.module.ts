@@ -4,6 +4,8 @@ import { Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 
+import { AdminModule } from './admin/admin.module';
+import adminConfig from './config/admin.config';
 import appConfig from './config/app.config';
 import { parseBooleanEnv } from './config/config.utils';
 import databaseConfig from './config/database.config';
@@ -33,7 +35,7 @@ const jobsEnabled = parseBooleanEnv(process.env.JOBS_ENABLED, false);
     ConfigModule.forRoot({
       isGlobal: true,
       cache: true,
-      load: [appConfig, databaseConfig, redisConfig, telegramConfig],
+      load: [appConfig, databaseConfig, redisConfig, telegramConfig, adminConfig],
       validate: validateEnv,
     }),
     ...(jobsEnabled
@@ -61,6 +63,7 @@ const jobsEnabled = parseBooleanEnv(process.env.JOBS_ENABLED, false);
         ]
       : []),
     PrismaModule,
+    AdminModule,
     RedisModule,
     TelegramModule,
     UsersModule,

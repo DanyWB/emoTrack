@@ -35,6 +35,7 @@ describe('Telegram router contract integration', () => {
       ctx.tagsService,
       ctx.fsmService,
       ctx.analyticsService,
+      ctx.adminService,
     );
   }
 
@@ -110,6 +111,7 @@ describe('Telegram router contract integration', () => {
 
       expect(bot.start).toHaveBeenCalledTimes(1);
       expect(Object.keys(handlers.commands).sort()).toEqual([
+        'admin',
         'checkin',
         'event',
         'help',
@@ -177,6 +179,173 @@ describe('Telegram router contract integration', () => {
       TELEGRAM_CALLBACKS.menuHelp,
       TELEGRAM_CALLBACKS.menuTerms,
     ]);
+  });
+
+  it('keeps the admin menu private and renders it for configured Telegram ids', async () => {
+    const routerWithoutAdmin = createRouter();
+    const deniedCtx = {
+      ...buildBaseContext(8998),
+      reply: jest.fn().mockResolvedValue(undefined),
+    };
+
+    await (routerWithoutAdmin as any).handleAdminCommand(deniedCtx);
+
+    expect(deniedCtx.reply).toHaveBeenCalledWith(
+      telegramCopy.admin.accessDenied,
+      expect.objectContaining({ parse_mode: 'HTML' }),
+    );
+
+    await ctx.moduleRef.close();
+    ctx = await createIntegrationTestContext({ admin: { telegramIds: [BigInt(8999)] } });
+
+    const router = createRouter();
+    const adminCtx = {
+      ...buildBaseContext(8999),
+      reply: jest.fn().mockResolvedValue(undefined),
+    };
+
+    await (router as any).handleAdminCommand(adminCtx);
+
+    const [message, extra] = adminCtx.reply.mock.calls[0] as [
+      string,
+      { parse_mode?: string; reply_markup?: { inline_keyboard?: Array<Array<{ callback_data: string }>> } },
+    ];
+    const callbacks = extra.reply_markup?.inline_keyboard?.flat().map((button) => button.callback_data) ?? [];
+
+    expect(message).toBe(telegramCopy.admin.menu);
+    expect(extra.parse_mode).toBe('HTML');
+    expect(callbacks).toEqual([
+      TELEGRAM_CALLBACKS.adminOverview,
+      `${TELEGRAM_CALLBACKS.adminActiveUsersPrefix}0`,
+    ]);
+  });
+
+  it('opens admin overview and active users through callbacks', async () => {
+    await ctx.moduleRef.close();
+    ctx = await createIntegrationTestContext({ admin: { telegramIds: [BigInt(9000)] } });
+
+    const activeUser = await ctx.usersRepository.create(
+      buildUser({
+        id: 'admin-active-user-1',
+        telegramId: BigInt(9001),
+        firstName: 'Active',
+        username: 'active_user',
+        onboardingCompleted: true,
+        consentGiven: true,
+      }),
+    );
+    ctx.adminRepository.getOverview.mockResolvedValue({
+      totalUsers: 3,
+      consentedUsers: 2,
+      onboardedUsers: 2,
+      activeUsers: 1,
+      totalCheckins: 4,
+      totalEvents: 2,
+      checkinsLast7Days: 3,
+      eventsLast7Days: 1,
+      remindersEnabledUsers: 1,
+    });
+    ctx.adminRepository.listActiveUsers.mockResolvedValue({
+      items: [
+        {
+          user: activeUser,
+          entriesCount: 4,
+          eventsCount: 2,
+          lastEntryDate: new Date('2026-03-12T00:00:00.000Z'),
+        },
+      ],
+      total: 1,
+      offset: 0,
+      limit: 5,
+      hasPrevious: false,
+      hasNext: false,
+    });
+
+    const router = createRouter();
+    const overviewCtx = {
+      ...buildBaseContext(9000),
+      callbackQuery: { data: TELEGRAM_CALLBACKS.adminOverview },
+      answerCbQuery: jest.fn().mockResolvedValue(undefined),
+      editMessageText: jest.fn().mockResolvedValue(undefined),
+      reply: jest.fn().mockResolvedValue(undefined),
+    };
+
+    await (router as any).handleCallbackQuery(overviewCtx);
+
+    expect(overviewCtx.editMessageText).toHaveBeenCalledWith(
+      expect.stringContaining(telegramCopy.admin.overviewTitle),
+      expect.objectContaining({ parse_mode: 'HTML' }),
+    );
+
+    const activeUsersCtx = {
+      ...buildBaseContext(9000),
+      callbackQuery: { data: `${TELEGRAM_CALLBACKS.adminActiveUsersPrefix}0` },
+      answerCbQuery: jest.fn().mockResolvedValue(undefined),
+      editMessageText: jest.fn().mockResolvedValue(undefined),
+      reply: jest.fn().mockResolvedValue(undefined),
+    };
+
+    await (router as any).handleCallbackQuery(activeUsersCtx);
+
+    const [message, extra] = activeUsersCtx.editMessageText.mock.calls[0] as [
+      string,
+      { reply_markup?: { inline_keyboard?: Array<Array<{ callback_data: string }>> } },
+    ];
+    const callbacks = extra.reply_markup?.inline_keyboard?.flat().map((button) => button.callback_data) ?? [];
+
+    expect(message).toContain('Active');
+    expect(message).toContain('check-in: <b>4</b>');
+    expect(callbacks).toContain(`${TELEGRAM_CALLBACKS.adminUserPrefix}${activeUser.id}`);
+  });
+
+  it('lets admin open a target user stats summary without target-user FSM state', async () => {
+    await ctx.moduleRef.close();
+    ctx = await createIntegrationTestContext({ admin: { telegramIds: [BigInt(9002)] } });
+
+    const targetUser = await ctx.usersRepository.create(
+      buildUser({
+        id: 'admin-stats-target-1',
+        telegramId: BigInt(9003),
+        firstName: 'Stats Target',
+        onboardingCompleted: true,
+        consentGiven: true,
+        timezone: 'Europe/Moscow',
+      }),
+    );
+    await ctx.checkinsRepository.upsertByUserAndDate(targetUser.id, new Date('2026-03-12T00:00:00.000Z'), {
+      moodScore: 7,
+      energyScore: 6,
+      stressScore: 3,
+    });
+    ctx.adminRepository.getUserDetail.mockResolvedValue({
+      user: targetUser,
+      entriesCount: 1,
+      eventsCount: 0,
+      summariesCount: 0,
+      firstEntryDate: new Date('2026-03-12T00:00:00.000Z'),
+      lastEntryDate: new Date('2026-03-12T00:00:00.000Z'),
+    });
+
+    const router = createRouter();
+    const telegramCtx = {
+      ...buildBaseContext(9002),
+      callbackQuery: { data: `${TELEGRAM_CALLBACKS.adminUserStatsPrefix}${targetUser.id}:all` },
+      answerCbQuery: jest.fn().mockResolvedValue(undefined),
+      editMessageText: jest.fn().mockResolvedValue(undefined),
+      reply: jest.fn().mockResolvedValue(undefined),
+      replyWithPhoto: jest.fn().mockResolvedValue(undefined),
+    };
+
+    await (router as any).handleCallbackQuery(telegramCtx);
+
+    expect(telegramCtx.editMessageText).toHaveBeenNthCalledWith(
+      1,
+      telegramCopy.admin.statsLoading,
+      expect.objectContaining({ parse_mode: 'HTML' }),
+    );
+    expect((telegramCtx.editMessageText.mock.calls[1] as [string])[0]).toContain('Stats Target');
+    expect((telegramCtx.editMessageText.mock.calls[1] as [string])[0]).toContain('Записей: 1');
+    expect(await ctx.fsmService.getState(targetUser.id)).toBe(FSM_STATES.idle);
   });
 
   it('opens menu callback sections by editing the current inline message', async () => {

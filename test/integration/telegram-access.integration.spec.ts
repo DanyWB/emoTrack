@@ -31,6 +31,7 @@ describe('Telegram access integration', () => {
       ctx.tagsService,
       ctx.fsmService,
       ctx.analyticsService,
+      ctx.adminService,
     );
   }
 

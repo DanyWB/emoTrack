@@ -99,6 +99,11 @@ class EnvironmentVariables {
   @IsString()
   @IsNotEmpty()
   CHART_TEMP_DIR!: string;
+
+  @Transform(({ value }) => toOptionalString(value))
+  @IsOptional()
+  @IsString()
+  ADMIN_TELEGRAM_IDS?: string;
 }
 
 function validateConditionalRules(env: EnvironmentVariables): string[] {

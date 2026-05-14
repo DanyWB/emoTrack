@@ -482,6 +482,7 @@ describe('Summaries integration', () => {
       ctx.tagsService,
       ctx.fsmService,
       ctx.analyticsService,
+      ctx.adminService,
     );
 
     const telegramCtx = {
@@ -553,6 +554,7 @@ describe('Summaries integration', () => {
       ctx.tagsService,
       ctx.fsmService,
       ctx.analyticsService,
+      ctx.adminService,
     );
 
     const telegramCtx = {
@@ -623,6 +625,7 @@ describe('Summaries integration', () => {
       ctx.tagsService,
       ctx.fsmService,
       ctx.analyticsService,
+      ctx.adminService,
     );
 
     const telegramCtx = {
