@@ -14,10 +14,21 @@ type RecentDailyEntryWithCounts = Prisma.DailyEntryGetPayload<{
 }>;
 
 export type EntryMetricValueRecord = DailyEntryMetricValue;
+export type EntryV2MetricValueRecord = Prisma.DailyEntryV2MetricValueGetPayload<{
+  include: {
+    tags: true;
+  };
+}>;
 export interface AggregatedMetricAverageRecord {
   metricDefinitionId: string;
   average: number;
   observationsCount: number;
+}
+
+export interface V2MetricValueInput {
+  metricKey: string;
+  ordinalValue: number;
+  tagKeys?: string[];
 }
 
 @Injectable()
@@ -154,6 +165,24 @@ export class CheckinsRepository {
     });
   }
 
+  findV2MetricValuesByEntryIds(entryIds: string[]): Promise<EntryV2MetricValueRecord[]> {
+    if (entryIds.length === 0) {
+      return Promise.resolve([]);
+    }
+
+    return this.prisma.dailyEntryV2MetricValue.findMany({
+      where: {
+        dailyEntryId: {
+          in: entryIds,
+        },
+      },
+      include: {
+        tags: true,
+      },
+      orderBy: [{ metricKey: 'asc' }, { createdAt: 'asc' }],
+    });
+  }
+
   async aggregateMetricAveragesByUserAndDateRange(
     userId: string,
     from: Date,
@@ -231,5 +260,122 @@ export class CheckinsRepository {
         }),
       ),
     );
+  }
+
+  upsertV2MetricValues(dailyEntryId: string, values: V2MetricValueInput[]) {
+    if (values.length === 0) {
+      return Promise.resolve([]);
+    }
+
+    return this.prisma.$transaction(async (tx) => {
+      const results = [];
+
+      for (const metricValue of values) {
+        const persisted = await tx.dailyEntryV2MetricValue.upsert({
+          where: {
+            dailyEntryId_metricKey: {
+              dailyEntryId,
+              metricKey: metricValue.metricKey,
+            },
+          },
+          create: {
+            dailyEntryId,
+            metricKey: metricValue.metricKey,
+            ordinalValue: metricValue.ordinalValue,
+          },
+          update: {
+            ordinalValue: metricValue.ordinalValue,
+          },
+        });
+
+        await tx.dailyEntryV2MetricTag.deleteMany({
+          where: {
+            dailyEntryMetricValueId: persisted.id,
+          },
+        });
+
+        const tagKeys = [...new Set(metricValue.tagKeys ?? [])];
+
+        if (tagKeys.length > 0) {
+          await tx.dailyEntryV2MetricTag.createMany({
+            data: tagKeys.map((tagKey) => ({
+              dailyEntryMetricValueId: persisted.id,
+              tagKey,
+            })),
+            skipDuplicates: true,
+          });
+        }
+
+        results.push(persisted);
+      }
+
+      return results;
+    });
+  }
+
+  replaceV2MetricValues(dailyEntryId: string, values: V2MetricValueInput[]) {
+    return this.prisma.$transaction(async (tx) => {
+      const metricKeys = [...new Set(values.map((metricValue) => metricValue.metricKey))];
+
+      await tx.dailyEntryV2MetricValue.deleteMany({
+        where: {
+          dailyEntryId,
+          ...(metricKeys.length > 0
+            ? {
+                metricKey: {
+                  notIn: metricKeys,
+                },
+              }
+            : {}),
+        },
+      });
+
+      if (values.length === 0) {
+        return [];
+      }
+
+      const results = [];
+
+      for (const metricValue of values) {
+        const persisted = await tx.dailyEntryV2MetricValue.upsert({
+          where: {
+            dailyEntryId_metricKey: {
+              dailyEntryId,
+              metricKey: metricValue.metricKey,
+            },
+          },
+          create: {
+            dailyEntryId,
+            metricKey: metricValue.metricKey,
+            ordinalValue: metricValue.ordinalValue,
+          },
+          update: {
+            ordinalValue: metricValue.ordinalValue,
+          },
+        });
+
+        await tx.dailyEntryV2MetricTag.deleteMany({
+          where: {
+            dailyEntryMetricValueId: persisted.id,
+          },
+        });
+
+        const tagKeys = [...new Set(metricValue.tagKeys ?? [])];
+
+        if (tagKeys.length > 0) {
+          await tx.dailyEntryV2MetricTag.createMany({
+            data: tagKeys.map((tagKey) => ({
+              dailyEntryMetricValueId: persisted.id,
+              tagKey,
+            })),
+            skipDuplicates: true,
+          });
+        }
+
+        results.push(persisted);
+      }
+
+      return results;
+    });
   }
 }

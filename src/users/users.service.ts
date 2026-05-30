@@ -3,15 +3,16 @@ import { ConfigService } from '@nestjs/config';
 import { SleepMode, type User } from '@prisma/client';
 
 import {
-  hasAtLeastOneTrackedDailyMetric,
-  type DailyTrackingSelection,
-} from '../common/utils/validation.utils';
-import {
   DailyMetricsService,
   type TrackedMetricSettingsItem,
   type EnabledCheckinMetric,
 } from '../daily-metrics/daily-metrics.service';
-import { type DailyMetricCatalogKey, LEGACY_TRACKED_METRIC_MAP } from '../daily-metrics/daily-metrics.catalog';
+import { type DailyMetricCatalogKey } from '../daily-metrics/daily-metrics.catalog';
+import {
+  CHECKIN_V2_MAX_OPTIONAL_METRICS,
+  isCheckinV2CoreMetricKey,
+  isCheckinV2OptionalMetricKey,
+} from '../checkins/checkins-v2.catalog';
 import { UpdateUserSettingsDto } from './dto/update-user-settings.dto';
 import { UsersRepository } from './users.repository';
 
@@ -78,18 +79,12 @@ export class UsersService {
       throw new Error(`User ${userId} not found`);
     }
 
-    const trackingSelection: DailyTrackingSelection = {
-      trackMood: dto.trackMood ?? user.trackMood,
-      trackEnergy: dto.trackEnergy ?? user.trackEnergy,
-      trackStress: dto.trackStress ?? user.trackStress,
-      trackSleep: dto.trackSleep ?? user.trackSleep,
-    };
-
-    if (!hasAtLeastOneTrackedDailyMetric(trackingSelection)) {
-      throw new Error('INVALID_DAILY_TRACKING_CONFIGURATION');
-    }
-
-    const updatedUser = await this.usersRepository.updateSettings(userId, dto);
+    const updatedUser = await this.usersRepository.updateSettings(userId, {
+      ...dto,
+      trackMood: true,
+      trackEnergy: true,
+      trackStress: true,
+    });
     await this.dailyMetricsService.ensureUserTrackedMetrics(updatedUser);
     return updatedUser;
   }
@@ -121,6 +116,26 @@ export class UsersService {
       throw new Error(`User ${userId} not found`);
     }
 
+    if (metricKey === 'sleep') {
+      const updatedUser = await this.usersRepository.update(userId, {
+        trackSleep: enabled,
+      });
+      await this.dailyMetricsService.ensureUserTrackedMetrics(updatedUser);
+      return updatedUser;
+    }
+
+    if (isCheckinV2CoreMetricKey(metricKey)) {
+      if (!enabled) {
+        throw new Error('CORE_CHECKIN_METRIC_IMMUTABLE');
+      }
+
+      return user;
+    }
+
+    if (!isCheckinV2OptionalMetricKey(metricKey)) {
+      throw new Error('UNKNOWN_CHECKIN_METRIC');
+    }
+
     const metrics = await this.dailyMetricsService.getUserTrackedMetricsForSettings(user);
     const nextMetrics = metrics.map((metric) =>
       metric.key === metricKey
@@ -131,17 +146,13 @@ export class UsersService {
         : metric,
     );
 
-    if (!nextMetrics.some((metric) => metric.enabled)) {
-      throw new Error('INVALID_DAILY_TRACKING_CONFIGURATION');
-    }
+    const enabledOptionalCount = nextMetrics.filter(
+      (metric) => isCheckinV2OptionalMetricKey(metric.key) && metric.enabled,
+    ).length;
 
-    const legacyField = LEGACY_TRACKED_METRIC_MAP[metricKey as keyof typeof LEGACY_TRACKED_METRIC_MAP];
-    const updatedUser =
-      legacyField !== undefined
-        ? await this.usersRepository.update(userId, {
-            [legacyField]: enabled,
-          })
-        : user;
+    if (enabledOptionalCount > CHECKIN_V2_MAX_OPTIONAL_METRICS) {
+      throw new Error('TOO_MANY_OPTIONAL_CHECKIN_METRICS');
+    }
 
     await this.dailyMetricsService.persistTrackedMetricSettings(
       userId,
@@ -152,7 +163,7 @@ export class UsersService {
       })),
     );
 
-    return updatedUser;
+    return user;
   }
 
   setReminderTime(userId: string, time: string): Promise<User> {
@@ -165,6 +176,10 @@ export class UsersService {
 
   setConsentGiven(userId: string, consentGiven: boolean): Promise<User> {
     return this.usersRepository.setConsentGiven(userId, consentGiven);
+  }
+
+  setCheckinV2OnboardingCompleted(userId: string, completed: boolean): Promise<User> {
+    return this.usersRepository.setCheckinV2OnboardingCompleted(userId, completed);
   }
 
   setSleepMode(userId: string, mode: SleepMode): Promise<User> {

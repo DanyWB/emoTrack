@@ -30,7 +30,6 @@ describe('Settings integration', () => {
         generatePeriodCharts: jest.fn(),
       } as never,
       ctx.remindersService,
-      ctx.tagsService,
       ctx.fsmService,
       ctx.analyticsService,
       ctx.adminService,
@@ -46,6 +45,7 @@ describe('Settings integration', () => {
         consentGiven: true,
         reminderTime: overrides.reminderTime ?? '21:30',
         remindersEnabled: overrides.remindersEnabled,
+        checkinV2OnboardingCompleted: true,
         sleepMode: overrides.sleepMode,
         trackMood: overrides.trackMood,
         trackEnergy: overrides.trackEnergy,
@@ -94,7 +94,9 @@ describe('Settings integration', () => {
       `${telegramCopy.settings.weeklyDigestLabel}: ${telegramCopy.settings.weeklyDigestUnavailable}`,
     );
     expect(message).toContain(`${telegramCopy.settings.sleepModeLabel}: ${SLEEP_MODE_LABELS.both}`);
-    expect(message).toContain(`${telegramCopy.settings.dailyTrackingLabel}: настроение, энергия, стресс, сон`);
+    expect(message).toContain(
+      `${telegramCopy.settings.dailyTrackingLabel}: настроение, энергия, спокойствие, мотивация, общее состояние, сон`,
+    );
     expect(await ctx.fsmService.getState(user.id)).toBe(FSM_STATES.settings_menu);
     expect(ctx.analyticsRepository.events.map((event) => event.eventName)).toContain('settings_opened');
   });
@@ -127,13 +129,13 @@ describe('Settings integration', () => {
     expect(telegramCtx.reply).toHaveBeenCalledTimes(1);
     expect(submenuText).toContain(telegramCopy.settings.dailyMetricsTitle);
     expect(submenuText).toContain(telegramCopy.settings.dailyMetricsHint);
-    expect(submenuText).toContain(`${telegramCopy.settings.dailyMetricsActiveLabel}: настроение, энергия, стресс, сон`);
-    expect(submenuText).toContain('• Настроение: вкл');
-    expect(submenuText).toContain('• Энергия: вкл');
-    expect(submenuText).toContain('• Стресс: вкл');
+    expect(submenuText).toContain(`${telegramCopy.settings.dailyMetricsActiveLabel}: мотивация, общее состояние`);
+    expect(submenuText).toContain('• Настроение: всегда вкл');
+    expect(submenuText).toContain('• Энергия: всегда вкл');
+    expect(submenuText).toContain('• Спокойствие: всегда вкл');
     expect(submenuText).toContain('• Сон: вкл');
-    expect(submenuText).toContain('Радость');
-    expect(trackedMetrics).toHaveLength(11);
+    expect(submenuText).toContain('Ясность головы');
+    expect(trackedMetrics).toHaveLength(9);
     expect(session?.payloadJson).toEqual({ settingsView: 'daily_metrics' });
   });
 
@@ -220,7 +222,7 @@ describe('Settings integration', () => {
     expect((backCtx.editMessageText.mock.calls[0] as [string])[0]).toContain(telegramCopy.settings.title);
   });
 
-  it('updates a core metric from the dedicated submenu and syncs legacy flags', async () => {
+  it('rejects disabling a core metric from the dedicated submenu', async () => {
     const user = await createReadyUser({
       id: 'user-settings-2b',
       telegramId: BigInt(7293),
@@ -250,13 +252,14 @@ describe('Settings integration', () => {
     const trackedMetrics = ctx.dailyMetricsRepository.listUserTrackedMetrics(user.id);
     const moodMetric = trackedMetrics.find((metric) => metric.metricDefinition.key === 'mood');
 
-    expect(updatedUser?.trackMood).toBe(false);
-    expect(moodMetric?.isEnabled).toBe(false);
-    expect(telegramCtx.reply).toHaveBeenCalledTimes(1);
-    expect((telegramCtx.reply.mock.calls[0] as [string])[0]).toContain('• Настроение: выкл');
+    expect(updatedUser?.trackMood).toBe(true);
+    expect(moodMetric?.isEnabled).toBe(true);
+    expect(telegramCtx.reply).toHaveBeenCalledTimes(2);
+    expect((telegramCtx.reply.mock.calls[0] as [string])[0]).toBe('Основные метрики check-in нельзя выключить.');
+    expect((telegramCtx.reply.mock.calls[1] as [string])[0]).toContain('• Настроение: всегда вкл');
   });
 
-  it('enables an extra score metric from the dedicated submenu', async () => {
+  it('enables an optional score metric from the dedicated submenu', async () => {
     const user = await createReadyUser({
       id: 'user-settings-2bx',
       telegramId: BigInt(7296),
@@ -270,7 +273,7 @@ describe('Settings integration', () => {
     const telegramCtx = {
       ...buildBaseContext(7296),
       callbackQuery: {
-        data: `${TELEGRAM_CALLBACKS.settingsDailyMetricTogglePrefix}joy`,
+        data: `${TELEGRAM_CALLBACKS.settingsDailyMetricTogglePrefix}clarity`,
       },
       answerCbQuery: jest.fn().mockResolvedValue(undefined),
       reply: jest.fn().mockResolvedValue(undefined),
@@ -279,47 +282,62 @@ describe('Settings integration', () => {
     await (router as any).handleCallbackQuery(telegramCtx);
 
     const trackedMetrics = ctx.dailyMetricsRepository.listUserTrackedMetrics(user.id);
-    const joyMetric = trackedMetrics.find((metric) => metric.metricDefinition.key === 'joy');
+    const clarityMetric = trackedMetrics.find((metric) => metric.metricDefinition.key === 'clarity');
+    const preferences = await ctx.dailyMetricsRepository.findUserMetricPreferences(user.id);
+    const clarityPreference = preferences.find((preference) => preference.metricKey === 'clarity');
 
-    expect(joyMetric?.isEnabled).toBe(true);
+    expect(clarityMetric?.isEnabled).toBe(true);
+    expect(clarityPreference?.enabled).toBe(true);
     expect(telegramCtx.reply).toHaveBeenCalledTimes(1);
-    expect((telegramCtx.reply.mock.calls[0] as [string])[0]).toContain('Радость');
+    expect((telegramCtx.reply.mock.calls[0] as [string])[0]).toContain('• Ясность головы: вкл');
   });
 
-  it('rejects disabling the last tracked daily metric from the submenu', async () => {
+  it('rejects enabling more than three optional metrics from the submenu', async () => {
     const user = await createReadyUser({
       id: 'user-settings-2c',
       telegramId: BigInt(7294),
       remindersEnabled: true,
-      trackMood: true,
-      trackEnergy: false,
-      trackStress: false,
-      trackSleep: false,
     });
     const router = createRouter();
     await ctx.fsmService.setState(user.id, FSM_STATES.settings_menu, {
       settingsView: 'daily_metrics',
     });
 
-    const telegramCtx = {
+    const firstCtx = {
       ...buildBaseContext(7294),
       callbackQuery: {
-        data: `${TELEGRAM_CALLBACKS.settingsDailyMetricTogglePrefix}mood`,
+        data: `${TELEGRAM_CALLBACKS.settingsDailyMetricTogglePrefix}clarity`,
       },
       answerCbQuery: jest.fn().mockResolvedValue(undefined),
       reply: jest.fn().mockResolvedValue(undefined),
     };
 
-    await (router as any).handleCallbackQuery(telegramCtx);
+    await (router as any).handleCallbackQuery(firstCtx);
 
-    const updatedUser = await ctx.usersService.findById(user.id);
+    const secondCtx = {
+      ...buildBaseContext(7294),
+      callbackQuery: {
+        data: `${TELEGRAM_CALLBACKS.settingsDailyMetricTogglePrefix}social`,
+      },
+      answerCbQuery: jest.fn().mockResolvedValue(undefined),
+      reply: jest.fn().mockResolvedValue(undefined),
+    };
 
-    expect(updatedUser?.trackMood).toBe(true);
-    expect(telegramCtx.reply).toHaveBeenCalledTimes(2);
-    expect((telegramCtx.reply.mock.calls[0] as [string])[0]).toBe(
-      'Нужно оставить хотя бы одну ежедневную метрику.',
+    await (router as any).handleCallbackQuery(secondCtx);
+
+    const preferences = await ctx.dailyMetricsRepository.findUserMetricPreferences(user.id);
+    const byKey = new Map(preferences.map((preference) => [preference.metricKey, preference.enabled] as const));
+
+    expect(byKey.get('motivation')).toBe(true);
+    expect(byKey.get('overall_state')).toBe(true);
+    expect(byKey.get('clarity')).toBe(true);
+    expect(byKey.get('social')).toBe(false);
+    expect(secondCtx.reply).toHaveBeenCalledTimes(2);
+    expect((secondCtx.reply.mock.calls[0] as [string])[0]).toBe(
+      'Чтобы check-in оставался удобным, одновременно можно включить не больше 3 дополнительных метрик.',
     );
-    expect((telegramCtx.reply.mock.calls[1] as [string])[0]).toContain('• Настроение: вкл');
+    expect((secondCtx.reply.mock.calls[1] as [string])[0]).toContain('• Ясность головы: вкл');
+    expect((secondCtx.reply.mock.calls[1] as [string])[0]).toContain('• Желание общаться: выкл');
   });
 
   it('returns from the daily-metrics submenu back to the main settings screen', async () => {
@@ -352,7 +370,9 @@ describe('Settings integration', () => {
     expect(settingsText).toContain(telegramCopy.settings.title);
     expect(settingsText).toContain(telegramCopy.settings.remindersSectionTitle);
     expect(settingsText).toContain(telegramCopy.settings.checkinSectionTitle);
-    expect(settingsText).toContain(`${telegramCopy.settings.dailyTrackingLabel}: настроение, энергия, стресс, сон`);
+    expect(settingsText).toContain(
+      `${telegramCopy.settings.dailyTrackingLabel}: настроение, энергия, спокойствие, мотивация, общее состояние, сон`,
+    );
     expect(session?.payloadJson).toEqual({ settingsView: 'main' });
   });
 

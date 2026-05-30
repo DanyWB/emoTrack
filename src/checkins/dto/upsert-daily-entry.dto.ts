@@ -6,6 +6,12 @@ export interface DailyMetricValueInput {
   value: number;
 }
 
+export interface DailyEntryV2MetricValueInput {
+  key: string;
+  ordinalValue: number;
+  tagKeys?: string[];
+}
+
 export class UpsertDailyEntryDto {
   @Type(() => Number)
   @IsOptional()
@@ -38,8 +44,8 @@ export class UpsertDailyEntryDto {
   @Type(() => Number)
   @IsOptional()
   @IsInt()
-  @Min(0)
-  @Max(10)
+  @Min(1)
+  @Max(5)
   sleepQuality?: number;
 
   @IsOptional()
@@ -48,4 +54,7 @@ export class UpsertDailyEntryDto {
 
   @IsOptional()
   metricValues?: DailyMetricValueInput[];
+
+  @IsOptional()
+  v2MetricValues?: DailyEntryV2MetricValueInput[];
 }

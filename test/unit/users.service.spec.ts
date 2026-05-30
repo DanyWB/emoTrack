@@ -17,6 +17,7 @@ function buildUser(overrides: Partial<User> = {}): User {
     remindersEnabled: overrides.remindersEnabled ?? true,
     reminderTime: overrides.reminderTime ?? '21:30',
     sleepMode: overrides.sleepMode ?? SleepMode.both,
+    checkinV2OnboardingCompleted: overrides.checkinV2OnboardingCompleted ?? true,
     trackMood: overrides.trackMood ?? true,
     trackEnergy: overrides.trackEnergy ?? true,
     trackStress: overrides.trackStress ?? true,
@@ -42,36 +43,49 @@ describe('UsersService', () => {
     };
   }
 
-  it('rejects settings updates that disable all tracked daily metrics', async () => {
-    const currentUser = buildUser();
-    const repository = {
-      findById: jest.fn().mockResolvedValue(currentUser),
-      updateSettings: jest.fn(),
-    };
-    const dailyMetricsService = {
-      ensureUserTrackedMetrics: jest.fn(),
-    };
-    const service = new UsersService(repository as never, dailyMetricsService as never, createConfigService() as never);
-
-    await expect(
-      service.updateSettings(currentUser.id, {
-        trackMood: false,
-        trackEnergy: false,
-        trackStress: false,
-        trackSleep: false,
-      }),
-    ).rejects.toThrow('INVALID_DAILY_TRACKING_CONFIGURATION');
-
-    expect(repository.updateSettings).not.toHaveBeenCalled();
-    expect(dailyMetricsService.ensureUserTrackedMetrics).not.toHaveBeenCalled();
-  });
-
-  it('allows settings updates when at least one tracked daily metric remains enabled', async () => {
+  it('keeps core check-in metrics enabled when settings updates try to disable legacy flags', async () => {
     const currentUser = buildUser();
     const updatedUser = buildUser({
       trackMood: true,
+      trackEnergy: true,
+      trackStress: true,
+      trackSleep: false,
+    });
+    const repository = {
+      findById: jest.fn().mockResolvedValue(currentUser),
+      updateSettings: jest.fn().mockResolvedValue(updatedUser),
+    };
+    const dailyMetricsService = {
+      ensureUserTrackedMetrics: jest.fn().mockResolvedValue(undefined),
+    };
+    const service = new UsersService(repository as never, dailyMetricsService as never, createConfigService() as never);
+
+    const result = await service.updateSettings(currentUser.id, {
+      trackMood: false,
       trackEnergy: false,
       trackStress: false,
+      trackSleep: false,
+    });
+
+    expect(repository.updateSettings).toHaveBeenCalledWith(currentUser.id, {
+      trackMood: true,
+      trackEnergy: true,
+      trackStress: true,
+      trackSleep: false,
+    });
+    expect(result.trackMood).toBe(true);
+    expect(result.trackEnergy).toBe(true);
+    expect(result.trackStress).toBe(true);
+    expect(result.trackSleep).toBe(false);
+    expect(dailyMetricsService.ensureUserTrackedMetrics).toHaveBeenCalledWith(updatedUser);
+  });
+
+  it('allows disabling the separate sleep block without disabling core metrics', async () => {
+    const currentUser = buildUser();
+    const updatedUser = buildUser({
+      trackMood: true,
+      trackEnergy: true,
+      trackStress: true,
       trackSleep: false,
     });
     const repository = {
@@ -90,13 +104,14 @@ describe('UsersService', () => {
     });
 
     expect(repository.updateSettings).toHaveBeenCalledWith(currentUser.id, {
-      trackEnergy: false,
-      trackStress: false,
+      trackMood: true,
+      trackEnergy: true,
+      trackStress: true,
       trackSleep: false,
     });
     expect(result.trackMood).toBe(true);
-    expect(result.trackEnergy).toBe(false);
-    expect(result.trackStress).toBe(false);
+    expect(result.trackEnergy).toBe(true);
+    expect(result.trackStress).toBe(true);
     expect(result.trackSleep).toBe(false);
     expect(dailyMetricsService.ensureUserTrackedMetrics).toHaveBeenCalledWith(updatedUser);
   });

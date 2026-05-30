@@ -1,7 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { SummaryPeriodType, type DailyEntry, type Event } from '@prisma/client';
 
-import { CheckinsService, type EntryWithExtraMetricScores } from '../checkins/checkins.service';
+import { mapLegacyScoreToOrdinal } from '../checkins/checkins-v2.catalog';
+import { CheckinsService, type EntryWithExtraMetricScores, type EntryWithV2MetricValues } from '../checkins/checkins.service';
 import { formatDateKey } from '../common/utils/date.utils';
 import { DAILY_METRIC_LABELS_BY_KEY, type DailyMetricCatalogKey } from '../daily-metrics/daily-metrics.catalog';
 import { EventsService } from '../events/events.service';
@@ -59,11 +60,12 @@ export class StatsService {
     options: { timezone?: string | null } = {},
   ): Promise<PeriodStatsPayload> {
     const range = this.resolvePeriodRange(periodType, options.timezone);
-    const [entries, extraMetricAverages, events] = await Promise.all([
-      this.checkinsService.getEntriesForPeriod(userId, range.periodStart, range.periodEnd),
-      this.checkinsService.getExtraMetricAveragesForPeriod(userId, range.periodStart, range.periodEnd),
+    const [entriesWithV2Metrics, events] = await Promise.all([
+      this.checkinsService.getEntriesForPeriodWithV2Metrics(userId, range.periodStart, range.periodEnd),
       this.eventsService.getEventsForPeriod(userId, range.periodStart, range.periodEnd),
     ]);
+    const entries = entriesWithV2Metrics.map((entry) => this.toLegacyStatsEntry(entry));
+    const extraMetricAverages = this.calculateV2ExtraMetricAverages(entriesWithV2Metrics);
     const isLowData = isLowDataStats(entries.length);
 
     const averages = this.calculateAverages(entries);
@@ -78,11 +80,12 @@ export class StatsService {
     let patternInsights: StatsPatternInsights | null = null;
 
     if (periodType !== SummaryPeriodType.all && range.previousPeriodStart && range.previousPeriodEnd) {
-      const previousEntries = await this.checkinsService.getEntriesForPeriod(
+      const previousEntriesWithV2Metrics = await this.checkinsService.getEntriesForPeriodWithV2Metrics(
         userId,
         range.previousPeriodStart,
         range.previousPeriodEnd,
       );
+      const previousEntries = previousEntriesWithV2Metrics.map((entry) => this.toLegacyStatsEntry(entry));
       deltaVsPreviousPeriod = this.buildDeltaFromEntries(entries, previousEntries);
     }
 
@@ -139,7 +142,7 @@ export class StatsService {
       return this.buildSelectedSleepMetricStats(payload);
     }
 
-    if (this.isLegacyCoreMetric(metricKey)) {
+    if (this.isCoreV2Metric(metricKey)) {
       return this.buildSelectedCoreMetricStats(payload, metricKey);
     }
 
@@ -190,9 +193,37 @@ export class StatsService {
       .sort((left, right) => left.label.localeCompare(right.label));
   }
 
+  calculateV2ExtraMetricAverages(entries: Array<Pick<EntryWithV2MetricValues, 'checkinMetrics'>>): StatsExtraMetricAverage[] {
+    const metricsByKey = new Map<string, { label: string; values: number[] }>();
+
+    for (const entry of entries) {
+      for (const metric of entry.checkinMetrics) {
+        if (metric.key === 'mood' || metric.key === 'energy' || metric.key === 'calm') {
+          continue;
+        }
+
+        const current = metricsByKey.get(metric.key) ?? {
+          label: metric.label,
+          values: [],
+        };
+        current.values.push(metric.ordinalValue);
+        metricsByKey.set(metric.key, current);
+      }
+    }
+
+    return [...metricsByKey.entries()]
+      .map(([key, data]) => ({
+        key,
+        label: data.label,
+        average: roundToTwo(average(data.values) ?? 0),
+        observationsCount: data.values.length,
+      }))
+      .sort((left, right) => left.label.localeCompare(right.label));
+  }
+
   private buildSelectedCoreMetricStats(
     payload: PeriodStatsPayload,
-    metricKey: 'mood' | 'energy' | 'stress',
+    metricKey: 'mood' | 'energy' | 'calm',
   ): SelectedMetricStatsPayload {
     const metricLabel = DAILY_METRIC_LABELS_BY_KEY[metricKey];
     const chartPoints = payload.chartPoints.map((point) => ({
@@ -212,8 +243,8 @@ export class StatsService {
       metricLabel,
       metricKind: 'score',
       observationsCount,
-      average: payload.averages[metricKey],
-      deltaVsPreviousPeriod: payload.deltaVsPreviousPeriod?.[metricKey] ?? null,
+      average: this.getCoreAverage(payload.averages, metricKey),
+      deltaVsPreviousPeriod: this.getCoreDelta(payload.deltaVsPreviousPeriod, metricKey),
       sleepHoursDeltaVsPreviousPeriod: null,
       sleepQualityDeltaVsPreviousPeriod: null,
       bestDay: metricKey === 'mood' ? payload.bestDay : null,
@@ -269,20 +300,20 @@ export class StatsService {
     metricKey: DailyMetricCatalogKey,
   ): Promise<SelectedMetricStatsPayload> {
     const selectedAverage = payload.extraMetricAverages.find((metric) => metric.key === metricKey) ?? null;
-    const entriesWithExtraMetrics =
+    const entriesWithV2Metrics =
       selectedAverage && selectedAverage.observationsCount > 0
-        ? await this.checkinsService.getEntriesForPeriodWithExtraMetrics(userId, payload.periodStart, payload.periodEnd)
+        ? await this.checkinsService.getEntriesForPeriodWithV2Metrics(userId, payload.periodStart, payload.periodEnd)
         : [];
     const extraMetricValuesByDate = new Map<string, number>();
 
-    for (const entry of entriesWithExtraMetrics) {
-      const metric = entry.extraMetricScores.find((item) => item.key === metricKey);
+    for (const entry of entriesWithV2Metrics) {
+      const metric = entry.checkinMetrics.find((item) => item.key === metricKey);
 
       if (!metric) {
         continue;
       }
 
-      extraMetricValuesByDate.set(formatDateKey(entry.entryDate), metric.value);
+      extraMetricValuesByDate.set(formatDateKey(entry.entryDate), metric.ordinalValue);
     }
 
     const chartPoints: SelectedMetricChartPoint[] = payload.chartPoints.map((point) => ({
@@ -333,7 +364,7 @@ export class StatsService {
       }
 
       if (isNumber(left.stressScore) && isNumber(right.stressScore) && left.stressScore !== right.stressScore) {
-        return (left.stressScore as number) - (right.stressScore as number);
+        return (right.stressScore as number) - (left.stressScore as number);
       }
 
       return left.entryDate.getTime() - right.entryDate.getTime();
@@ -359,7 +390,7 @@ export class StatsService {
       }
 
       if (isNumber(left.stressScore) && isNumber(right.stressScore) && left.stressScore !== right.stressScore) {
-        return (right.stressScore as number) - (left.stressScore as number);
+        return (left.stressScore as number) - (right.stressScore as number);
       }
 
       return left.entryDate.getTime() - right.entryDate.getTime();
@@ -542,18 +573,24 @@ export class StatsService {
       );
     }
 
-    const previousEntries = await this.checkinsService.getEntriesForPeriod(userId, previousStart, previousEnd);
+    const previousEntriesWithV2Metrics = await this.checkinsService.getEntriesForPeriodWithV2Metrics(
+      userId,
+      previousStart,
+      previousEnd,
+    );
+    const previousEntries = previousEntriesWithV2Metrics.map((entry) => this.toLegacyStatsEntry(entry));
 
     if (previousEntries.length === 0) {
       return null;
     }
 
     const currentRange = this.resolvePeriodRange(periodType, options.timezone);
-    const currentEntries = await this.checkinsService.getEntriesForPeriod(
+    const currentEntriesWithV2Metrics = await this.checkinsService.getEntriesForPeriodWithV2Metrics(
       userId,
       currentRange.periodStart,
       currentRange.periodEnd,
     );
+    const currentEntries = currentEntriesWithV2Metrics.map((entry) => this.toLegacyStatsEntry(entry));
 
     if (currentEntries.length === 0) {
       return null;
@@ -711,7 +748,7 @@ export class StatsService {
     }
 
     const delta = roundToTwo(
-      this.averageEntryMetric(lowQualityEntries, 'stress') - this.averageEntryMetric(highQualityEntries, 'stress'),
+      this.averageEntryMetric(highQualityEntries, 'stress') - this.averageEntryMetric(lowQualityEntries, 'stress'),
     );
 
     if (delta < STATS_MIN_SLEEP_PATTERN_DELTA) {
@@ -750,7 +787,7 @@ export class StatsService {
 
   private getCoreMetricPointValue(
     point: PeriodStatsPayload['chartPoints'][number],
-    metricKey: 'mood' | 'energy' | 'stress',
+    metricKey: 'mood' | 'energy' | 'calm',
   ): number | undefined {
     if (metricKey === 'mood') {
       return point.mood;
@@ -763,8 +800,48 @@ export class StatsService {
     return point.stress;
   }
 
-  private isLegacyCoreMetric(metricKey: StatsSelectedMetricKey): metricKey is 'mood' | 'energy' | 'stress' {
-    return metricKey === 'mood' || metricKey === 'energy' || metricKey === 'stress';
+  private isCoreV2Metric(metricKey: StatsSelectedMetricKey): metricKey is 'mood' | 'energy' | 'calm' {
+    return metricKey === 'mood' || metricKey === 'energy' || metricKey === 'calm';
+  }
+
+  private getCoreAverage(averages: StatsAverages, metricKey: 'mood' | 'energy' | 'calm'): number | null {
+    if (metricKey === 'calm') {
+      return averages.stress;
+    }
+
+    return averages[metricKey];
+  }
+
+  private getCoreDelta(delta: StatsDelta | null | undefined, metricKey: 'mood' | 'energy' | 'calm'): number | null {
+    if (!delta) {
+      return null;
+    }
+
+    if (metricKey === 'calm') {
+      return delta.stress;
+    }
+
+    return delta[metricKey];
+  }
+
+  private toLegacyStatsEntry(entry: EntryWithV2MetricValues): DailyEntry {
+    const metricByKey = new Map(entry.checkinMetrics.map((metric) => [metric.key, metric.ordinalValue] as const));
+
+    return {
+      ...entry,
+      moodScore: metricByKey.get('mood') ?? entry.moodScore,
+      energyScore: metricByKey.get('energy') ?? entry.energyScore,
+      stressScore: metricByKey.get('calm') ?? entry.stressScore,
+      sleepQuality: this.toSleepQualityOrdinal(entry.sleepQuality),
+    };
+  }
+
+  private toSleepQualityOrdinal(value: number | null): number | null {
+    if (value === null) {
+      return null;
+    }
+
+    return value > 5 ? mapLegacyScoreToOrdinal(value) : value;
   }
 
 }

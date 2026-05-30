@@ -7,12 +7,16 @@ export const FSM_STATES = {
   onboarding_consent: 'onboarding_consent',
   onboarding_reminder_time: 'onboarding_reminder_time',
   onboarding_first_checkin: 'onboarding_first_checkin',
+  checkin_v2_onboarding: 'checkin_v2_onboarding',
   checkin_mood: 'checkin_mood',
   checkin_energy: 'checkin_energy',
   checkin_stress: 'checkin_stress',
   checkin_metric_score: 'checkin_metric_score',
+  checkin_metric_tags: 'checkin_metric_tags',
   checkin_sleep_hours: 'checkin_sleep_hours',
   checkin_sleep_quality: 'checkin_sleep_quality',
+  checkin_review: 'checkin_review',
+  checkin_review_edit: 'checkin_review_edit',
   checkin_note_prompt: 'checkin_note_prompt',
   checkin_note: 'checkin_note',
   checkin_tags_prompt: 'checkin_tags_prompt',
@@ -40,8 +44,13 @@ export interface CheckinDraftPayload extends FsmPayload {
   energyScore?: number;
   stressScore?: number;
   metricScores?: Record<string, number>;
+  metricKeys?: string[];
+  metricTags?: Record<string, string[]>;
   extraMetricKeys?: string[];
   activeMetricKey?: string;
+  selectedTagKeys?: string[];
+  editingMetricKey?: string;
+  editingSleepField?: 'hours' | 'quality';
   sleepHours?: number;
   sleepQuality?: number;
   entryId?: string;
@@ -61,9 +70,13 @@ export interface CheckinDraftPayload extends FsmPayload {
   eventRepeatMode?: EventRepeatMode;
   eventRepeatCount?: number;
   eventSeriesId?: string;
+  checkinV2OnboardingStep?: number;
   settingsAwaiting?: 'reminder_time' | 'sleep_mode';
   settingsView?: 'main' | 'daily_metrics';
   statsPeriodType?: 'd7' | 'd30' | 'all';
+  statsView?: 'metrics' | 'summary';
+  statsSelectedMetricKey?: string;
+  statsChartMessageIds?: number[];
   telegramPromptMessageId?: number | null;
   showMenuAfterSave?: boolean;
 }

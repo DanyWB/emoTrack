@@ -23,69 +23,115 @@ describe('Check-in flow integration', () => {
         timezone: 'Europe/Berlin',
         onboardingCompleted: true,
         consentGiven: true,
+        checkinV2OnboardingCompleted: true,
         reminderTime: '21:30',
         sleepMode: overrides.sleepMode ?? SleepMode.both,
-        trackMood: overrides.trackMood,
-        trackEnergy: overrides.trackEnergy,
-        trackStress: overrides.trackStress,
         trackSleep: overrides.trackSleep,
       }),
     );
   }
 
-  async function completeCoreCheckin(
-    userId: string,
-    moodScore: string,
-    energyScore: string,
-    stressScore: string,
-    sleepHours: string,
-    sleepQuality: string,
-  ) {
-    const user = await ctx.usersService.findById(userId);
-    if (!user) {
-      throw new Error('User not found');
+  async function submitMetric(user: Awaited<ReturnType<typeof createReadyUser>>, score: string, tagKeys: string[] = []) {
+    const scored = await ctx.checkinsFlow.submitScore(user, score);
+    expect(scored).toMatchObject({
+      status: 'next',
+      nextState: FSM_STATES.checkin_metric_tags,
+    });
+
+    for (const tagKey of tagKeys) {
+      const toggled = await ctx.checkinsFlow.toggleMetricTagSelection(user, tagKey);
+      expect(toggled.status).toBe('next');
     }
 
-    await ctx.checkinsFlow.start(user);
-    await ctx.checkinsFlow.submitScore(user, moodScore);
-    await ctx.checkinsFlow.submitScore(user, energyScore);
-    await ctx.checkinsFlow.submitScore(user, stressScore);
-    await ctx.checkinsFlow.submitSleepHours(user, sleepHours);
-    await ctx.checkinsFlow.submitScore(user, sleepQuality);
-    await ctx.checkinsFlow.skipCurrentStep(user);
-    await ctx.checkinsFlow.skipCurrentStep(user);
+    return ctx.checkinsFlow.confirmMetricTags(user);
+  }
+
+  async function completeDefaultMetrics(
+    user: Awaited<ReturnType<typeof createReadyUser>>,
+    scores: [string, string, string, string, string] = ['4', '3', '2', '3', '2'],
+  ) {
+    const started = await ctx.checkinsFlow.start(user);
+    expect(started).toMatchObject({
+      status: 'next',
+      nextState: FSM_STATES.checkin_metric_score,
+    });
+
+    await submitMetric(user, scores[0], ['mood_calm']);
+    await submitMetric(user, scores[1], ['energy_sleepy']);
+    await submitMetric(user, scores[2], ['calm_anxious']);
+    await submitMetric(user, scores[3]);
+    return submitMetric(user, scores[4]);
+  }
+
+  function listV2MetricValuesByKey(entryId: string) {
+    return Object.fromEntries(
+      ctx.checkinsRepository
+        .listV2MetricValuesForEntry(entryId)
+        .map((metricValue) => [
+          metricValue.metricKey,
+          {
+            ordinalValue: metricValue.ordinalValue,
+            tagKeys: metricValue.tags.map((tag) => tag.tagKey),
+          },
+        ]),
+    );
+  }
+
+  async function finishAfterReview(user: Awaited<ReturnType<typeof createReadyUser>>) {
+    const savedToEntry = await ctx.checkinsFlow.confirmReview(user);
+    expect(savedToEntry).toMatchObject({
+      status: 'next',
+      nextState: FSM_STATES.checkin_add_event_confirm,
+    });
+
+    const notePrompt = await ctx.checkinsFlow.finalizeAfterEventSkip(user);
+    expect(notePrompt).toMatchObject({
+      status: 'next',
+      nextState: FSM_STATES.checkin_note_prompt,
+    });
 
     return ctx.checkinsFlow.skipCurrentStep(user);
   }
 
-  function listMetricValuesByKey(entryId: string) {
-    const definitionsById = new Map(
-      ctx.dailyMetricsRepository.listDefinitions().map((definition) => [definition.id, definition.key] as const),
-    );
-
-    return Object.fromEntries(
-      ctx.checkinsRepository
-        .listMetricValuesForEntry(entryId)
-        .map((metricValue) => [definitionsById.get(metricValue.metricDefinitionId), metricValue.value])
-        .filter((entry): entry is [string, number] => typeof entry[0] === 'string'),
-    );
-  }
-
-  it('persists mood, energy, stress and sleep through the core check-in flow', async () => {
+  it('persists semantic v2 metrics, scoped tags, and sleep from the default check-in', async () => {
     const user = await createReadyUser({
-      id: 'user-checkin-1',
+      id: 'user-checkin-v2-1',
       telegramId: BigInt(6001),
     });
 
-    const result = await completeCoreCheckin(user.id, '7', '6', '4', '7.5', '8');
+    const afterMetrics = await completeDefaultMetrics(user);
+    expect(afterMetrics).toMatchObject({
+      status: 'next',
+      nextState: FSM_STATES.checkin_sleep_hours,
+    });
 
-    expect(result.status).toBe('saved');
-    expect(result.entryPayload).toMatchObject({
-      moodScore: 7,
-      energyScore: 6,
-      stressScore: 4,
-      sleepHours: 7.5,
-      sleepQuality: 8,
+    expect(await ctx.checkinsFlow.submitSleepHours(user, '7.5')).toMatchObject({
+      status: 'next',
+      nextState: FSM_STATES.checkin_sleep_quality,
+    });
+    expect(await ctx.checkinsFlow.submitScore(user, '4')).toMatchObject({
+      status: 'next',
+      nextState: FSM_STATES.checkin_review,
+    });
+
+    const finalResult = await finishAfterReview(user);
+
+    expect(finalResult).toMatchObject({
+      status: 'saved',
+      noteAdded: false,
+      tagsCount: 3,
+      eventAdded: false,
+      entryPayload: {
+        sleepHours: 7.5,
+        sleepQuality: 4,
+        v2MetricValues: expect.arrayContaining([
+          expect.objectContaining({ key: 'mood', ordinalValue: 4, tagKeys: ['mood_calm'] }),
+          expect.objectContaining({ key: 'energy', ordinalValue: 3, tagKeys: ['energy_sleepy'] }),
+          expect.objectContaining({ key: 'calm', ordinalValue: 2, tagKeys: ['calm_anxious'] }),
+          expect.objectContaining({ key: 'motivation', ordinalValue: 3, tagKeys: [] }),
+          expect.objectContaining({ key: 'overall_state', ordinalValue: 2, tagKeys: [] }),
+        ]),
+      },
     });
     expect(await ctx.fsmService.getState(user.id)).toBe(FSM_STATES.idle);
 
@@ -93,369 +139,148 @@ describe('Check-in flow integration', () => {
     expect(entries).toHaveLength(1);
     expect(entries[0]).toMatchObject({
       userId: user.id,
-      moodScore: 7,
-      energyScore: 6,
-      stressScore: 4,
-      sleepQuality: 8,
+      moodScore: null,
+      energyScore: null,
+      stressScore: null,
+      sleepQuality: 4,
+    });
+    expect(listV2MetricValuesByKey(entries[0].id)).toMatchObject({
+      mood: { ordinalValue: 4, tagKeys: ['mood_calm'] },
+      energy: { ordinalValue: 3, tagKeys: ['energy_sleepy'] },
+      calm: { ordinalValue: 2, tagKeys: ['calm_anxious'] },
+      motivation: { ordinalValue: 3, tagKeys: [] },
+      overall_state: { ordinalValue: 2, tagKeys: [] },
     });
   });
 
-  it('builds a partial entry when only selected daily metrics are enabled', async () => {
+  it('skips the separate sleep block when sleep tracking is disabled', async () => {
     const user = await createReadyUser({
-      id: 'user-checkin-1b',
-      telegramId: BigInt(6011),
-      trackMood: true,
-      trackEnergy: false,
-      trackStress: true,
+      id: 'user-checkin-v2-2',
+      telegramId: BigInt(6002),
       trackSleep: false,
     });
 
-    const started = await ctx.checkinsFlow.start(user);
-    expect(started).toMatchObject({
+    const afterMetrics = await completeDefaultMetrics(user);
+    expect(afterMetrics).toMatchObject({
       status: 'next',
-      nextState: FSM_STATES.checkin_mood,
+      nextState: FSM_STATES.checkin_review,
     });
 
-    const moodStep = await ctx.checkinsFlow.submitScore(user, '8');
-    expect(moodStep).toMatchObject({
-      status: 'next',
-      nextState: FSM_STATES.checkin_stress,
-    });
-
-    await ctx.checkinsFlow.submitScore(user, '2');
-    await ctx.checkinsFlow.skipCurrentStep(user);
-    await ctx.checkinsFlow.skipCurrentStep(user);
-    const finalResult = await ctx.checkinsFlow.skipCurrentStep(user);
+    const finalResult = await finishAfterReview(user);
+    const [entry] = ctx.checkinsRepository.listEntries();
 
     expect(finalResult).toMatchObject({
       status: 'saved',
       entryPayload: {
-        moodScore: 8,
-        stressScore: 2,
+        sleepHours: undefined,
+        sleepQuality: undefined,
       },
     });
-    expect(finalResult.entryPayload?.energyScore).toBeUndefined();
-    expect(finalResult.entryPayload?.sleepHours).toBeUndefined();
-
-    const [entry] = ctx.checkinsRepository.listEntries();
     expect(entry).toMatchObject({
-      userId: user.id,
-      moodScore: 8,
-      energyScore: null,
-      stressScore: 2,
       sleepHours: null,
       sleepQuality: null,
     });
   });
 
-  it('persists enabled extra metrics alongside legacy core values', async () => {
+  it('updates the same DailyEntry and replaces metric tags on a repeated same-day check-in', async () => {
     const user = await createReadyUser({
-      id: 'user-checkin-1c',
-      telegramId: BigInt(6014),
-      trackMood: true,
-      trackEnergy: false,
-      trackStress: false,
+      id: 'user-checkin-v2-3',
+      telegramId: BigInt(6003),
       trackSleep: false,
     });
 
-    await ctx.usersService.setTrackedMetric(user.id, 'joy', true);
-    const updatedUser = await ctx.usersService.findById(user.id);
-
-    if (!updatedUser) {
-      throw new Error('User not found');
-    }
-
-    const started = await ctx.checkinsFlow.start(updatedUser);
-    expect(started).toMatchObject({
-      status: 'next',
-      nextState: FSM_STATES.checkin_mood,
-    });
-
-    const nextStep = await ctx.checkinsFlow.submitScore(updatedUser, '7');
-    expect(nextStep).toMatchObject({
-      status: 'next',
-      nextState: FSM_STATES.checkin_metric_score,
-    });
-
-    await ctx.checkinsFlow.submitScore(updatedUser, '9');
-    await ctx.checkinsFlow.skipCurrentStep(updatedUser);
-    await ctx.checkinsFlow.skipCurrentStep(updatedUser);
-    const result = await ctx.checkinsFlow.skipCurrentStep(updatedUser);
-
-    const [entry] = ctx.checkinsRepository.listEntries();
-    const metricValues = listMetricValuesByKey(entry.id);
-
-    expect(result).toMatchObject({
-      status: 'saved',
-      entryPayload: {
-        moodScore: 7,
-        metricValues: expect.arrayContaining([
-          expect.objectContaining({ key: 'mood', value: 7 }),
-          expect.objectContaining({ key: 'joy', value: 9 }),
-        ]),
-      },
-    });
-    expect(entry).toMatchObject({
-      moodScore: 7,
-      energyScore: null,
-      stressScore: null,
-      sleepHours: null,
-      sleepQuality: null,
-    });
-    expect(metricValues).toMatchObject({
-      mood: 7,
-      joy: 9,
-    });
-  });
-
-  it('updates the same DailyEntry on a repeated same-day check-in', async () => {
-    const user = await createReadyUser({
-      id: 'user-checkin-2',
-      telegramId: BigInt(6002),
-    });
-
-    const firstResult = await completeCoreCheckin(user.id, '5', '5', '6', '7', '6');
+    await completeDefaultMetrics(user, ['3', '3', '3', '3', '3']);
+    const firstResult = await finishAfterReview(user);
     const firstEntryId = ctx.checkinsRepository.listEntries()[0]?.id;
 
-    const secondResult = await completeCoreCheckin(user.id, '8', '7', '3', '8', '8');
+    await completeDefaultMetrics(user, ['5', '4', '4', '4', '4']);
+    const secondResult = await finishAfterReview(user);
     const entries = ctx.checkinsRepository.listEntries();
 
     expect(firstResult.status).toBe('saved');
-    expect(secondResult.status).toBe('saved');
-    expect(secondResult.isUpdate).toBe(true);
+    expect(secondResult).toMatchObject({
+      status: 'saved',
+      isUpdate: true,
+    });
     expect(entries).toHaveLength(1);
-    expect(entries[0]).toMatchObject({
-      id: firstEntryId,
-      moodScore: 8,
-      energyScore: 7,
-      stressScore: 3,
-      sleepQuality: 8,
+    expect(entries[0].id).toBe(firstEntryId);
+    expect(listV2MetricValuesByKey(entries[0].id)).toMatchObject({
+      mood: { ordinalValue: 5, tagKeys: ['mood_calm'] },
+      energy: { ordinalValue: 4, tagKeys: ['energy_sleepy'] },
+      calm: { ordinalValue: 4, tagKeys: ['calm_anxious'] },
     });
   });
 
-  it('keeps untracked same-day values untouched on a later partial check-in', async () => {
+  it('removes stale optional metric rows when the active check-in set changes', async () => {
     const user = await createReadyUser({
-      id: 'user-checkin-2b',
-      telegramId: BigInt(6012),
-      trackMood: true,
-      trackEnergy: true,
-      trackStress: true,
-      trackSleep: true,
-    });
-
-    await completeCoreCheckin(user.id, '5', '6', '4', '7', '6');
-    await ctx.usersService.updateSettings(user.id, {
-      trackMood: true,
-      trackEnergy: false,
-      trackStress: false,
-      trackSleep: false,
-    });
-
-    const updatedUser = await ctx.usersService.findById(user.id);
-    if (!updatedUser) {
-      throw new Error('User not found');
-    }
-
-    await ctx.checkinsFlow.start(updatedUser);
-    await ctx.checkinsFlow.submitScore(updatedUser, '9');
-    await ctx.checkinsFlow.skipCurrentStep(updatedUser);
-    await ctx.checkinsFlow.skipCurrentStep(updatedUser);
-    const result = await ctx.checkinsFlow.skipCurrentStep(updatedUser);
-
-    const [entry] = ctx.checkinsRepository.listEntries();
-
-    expect(result).toMatchObject({
-      status: 'saved',
-      isUpdate: true,
-      entryPayload: {
-        moodScore: 9,
-      },
-    });
-    expect(entry).toMatchObject({
-      moodScore: 9,
-      energyScore: 6,
-      stressScore: 4,
-      sleepQuality: 6,
-    });
-    expect(entry.sleepHours?.toString()).toBe('7');
-  });
-
-  it('keeps untouched generic metric values on a later same-day rerun', async () => {
-    const user = await createReadyUser({
-      id: 'user-checkin-2d',
-      telegramId: BigInt(6015),
-      trackMood: true,
-      trackEnergy: false,
-      trackStress: false,
-      trackSleep: false,
-    });
-
-    await ctx.usersService.setTrackedMetric(user.id, 'joy', true);
-    const firstUser = await ctx.usersService.findById(user.id);
-
-    if (!firstUser) {
-      throw new Error('User not found');
-    }
-
-    await ctx.checkinsFlow.start(firstUser);
-    await ctx.checkinsFlow.submitScore(firstUser, '5');
-    await ctx.checkinsFlow.submitScore(firstUser, '8');
-    await ctx.checkinsFlow.skipCurrentStep(firstUser);
-    await ctx.checkinsFlow.skipCurrentStep(firstUser);
-    await ctx.checkinsFlow.skipCurrentStep(firstUser);
-
-    await ctx.usersService.setTrackedMetric(user.id, 'joy', false);
-    const secondUser = await ctx.usersService.findById(user.id);
-
-    if (!secondUser) {
-      throw new Error('User not found');
-    }
-
-    await ctx.checkinsFlow.start(secondUser);
-    await ctx.checkinsFlow.submitScore(secondUser, '9');
-    await ctx.checkinsFlow.skipCurrentStep(secondUser);
-    await ctx.checkinsFlow.skipCurrentStep(secondUser);
-    const result = await ctx.checkinsFlow.skipCurrentStep(secondUser);
-
-    const [entry] = ctx.checkinsRepository.listEntries();
-    const metricValues = listMetricValuesByKey(entry.id);
-
-    expect(result).toMatchObject({
-      status: 'saved',
-      isUpdate: true,
-      entryPayload: {
-        moodScore: 9,
-        metricValues: expect.arrayContaining([expect.objectContaining({ key: 'mood', value: 9 })]),
-      },
-    });
-    expect(metricValues).toMatchObject({
-      mood: 9,
-      joy: 8,
-    });
-  });
-
-  it('does not allow skipping the last remaining tracked metric', async () => {
-    const user = await createReadyUser({
-      id: 'user-checkin-2c',
+      id: 'user-checkin-v2-stale',
       telegramId: BigInt(6013),
-      sleepMode: SleepMode.hours,
-      trackMood: false,
-      trackEnergy: false,
-      trackStress: false,
-      trackSleep: true,
+      trackSleep: false,
     });
 
-    const started = await ctx.checkinsFlow.start(user);
-    const skipped = await ctx.checkinsFlow.skipCurrentStep(user);
+    await completeDefaultMetrics(user, ['3', '3', '3', '3', '3']);
+    await finishAfterReview(user);
 
-    expect(started).toMatchObject({
+    await ctx.usersService.setTrackedMetric(user.id, 'motivation', false);
+    await ctx.usersService.setTrackedMetric(user.id, 'overall_state', false);
+
+    expect(await ctx.checkinsFlow.start(user)).toMatchObject({
       status: 'next',
-      nextState: FSM_STATES.checkin_sleep_hours,
+      nextState: FSM_STATES.checkin_metric_score,
     });
-    expect(skipped).toMatchObject({
-      status: 'cannot_skip',
-    });
-    expect(await ctx.fsmService.getState(user.id)).toBe(FSM_STATES.checkin_sleep_hours);
-    expect(ctx.checkinsRepository.listEntries()).toHaveLength(0);
+    await submitMetric(user, '5', ['mood_calm']);
+    await submitMetric(user, '4', ['energy_even']);
+    await submitMetric(user, '5', ['calm_relaxed']);
+    await finishAfterReview(user);
+
+    const [entry] = ctx.checkinsRepository.listEntries();
+    expect(Object.keys(listV2MetricValuesByKey(entry.id)).sort()).toEqual(['calm', 'energy', 'mood']);
   });
 
-  it('does not report draft tag selections as saved when the tag step is skipped', async () => {
+  it('lets the review screen edit a specific metric before saving', async () => {
     const user = await createReadyUser({
-      id: 'user-checkin-2e',
-      telegramId: BigInt(6016),
+      id: 'user-checkin-v2-4',
+      telegramId: BigInt(6004),
+      trackSleep: false,
+    });
+
+    await completeDefaultMetrics(user, ['3', '3', '2', '3', '3']);
+    expect(await ctx.checkinsFlow.startReviewEdit(user)).toMatchObject({
+      status: 'next',
+      nextState: FSM_STATES.checkin_review_edit,
+    });
+    expect(await ctx.checkinsFlow.editReviewMetric(user, 'calm')).toMatchObject({
+      status: 'next',
+      nextState: FSM_STATES.checkin_metric_score,
+    });
+    await submitMetric(user, '5', ['calm_relaxed']);
+
+    const finalResult = await finishAfterReview(user);
+    const [entry] = ctx.checkinsRepository.listEntries();
+
+    expect(finalResult.status).toBe('saved');
+    expect(listV2MetricValuesByKey(entry.id)).toMatchObject({
+      calm: { ordinalValue: 5, tagKeys: ['calm_relaxed'] },
+    });
+  });
+
+  it('resumes an active v2 check-in at the current metric tags screen', async () => {
+    const user = await createReadyUser({
+      id: 'user-checkin-v2-5',
+      telegramId: BigInt(6005),
     });
 
     await ctx.checkinsFlow.start(user);
-    await ctx.checkinsFlow.submitScore(user, '7');
-    await ctx.checkinsFlow.submitScore(user, '6');
     await ctx.checkinsFlow.submitScore(user, '4');
-    await ctx.checkinsFlow.submitSleepHours(user, '7.5');
-    await ctx.checkinsFlow.submitScore(user, '8');
-    await ctx.checkinsFlow.skipCurrentStep(user);
-    await ctx.checkinsFlow.startTagsSelection(user);
-    await ctx.checkinsFlow.toggleTagSelection(user, 'tag-1');
-
-    const skippedTags = await ctx.checkinsFlow.skipCurrentStep(user);
-    const finalResult = await ctx.checkinsFlow.skipCurrentStep(user);
-    const savedEntry = ctx.checkinsRepository.listEntries()[0];
-
-    expect(skippedTags).toMatchObject({
-      status: 'next',
-      nextState: FSM_STATES.checkin_add_event_confirm,
-    });
-    expect(finalResult).toMatchObject({
-      status: 'saved',
-      tagsCount: 0,
-    });
-    expect(ctx.checkinsRepository.getTagIdsForEntry(savedEntry.id)).toEqual([]);
-  });
-
-  it('resumes an active check-in and preserves saved optional markers after going back', async () => {
-    const user = await createReadyUser({
-      id: 'user-checkin-3',
-      telegramId: BigInt(6003),
-    });
-
-    await ctx.checkinsFlow.start(user);
-    await ctx.checkinsFlow.submitScore(user, '7');
-    await ctx.checkinsFlow.submitScore(user, '6');
+    await ctx.checkinsFlow.toggleMetricTagSelection(user, 'mood_calm');
 
     const resumed = await ctx.checkinsFlow.start(user);
+
     expect(resumed).toMatchObject({
       status: 'next',
-      nextState: FSM_STATES.checkin_stress,
+      nextState: FSM_STATES.checkin_metric_tags,
       resumed: true,
+      selectedTagKeys: ['mood_calm'],
     });
-
-    await ctx.checkinsFlow.submitScore(user, '4');
-    await ctx.checkinsFlow.submitSleepHours(user, '7.5');
-    await ctx.checkinsFlow.submitScore(user, '8');
-
-    await ctx.checkinsFlow.beginNoteStep(user);
-    await ctx.checkinsFlow.submitNote(user, 'Был насыщенный день');
-    await ctx.checkinsFlow.startTagsSelection(user);
-    await ctx.checkinsFlow.toggleTagSelection(user, 'tag-1');
-    await ctx.checkinsFlow.confirmTags(user);
-
-    expect(await ctx.fsmService.getState(user.id)).toBe(FSM_STATES.checkin_add_event_confirm);
-
-    await ctx.checkinsFlow.goBack(user);
-    await ctx.checkinsFlow.goBack(user);
-    const backToSleep = await ctx.checkinsFlow.goBack(user);
-
-    expect(backToSleep).toMatchObject({
-      status: 'next',
-      nextState: FSM_STATES.checkin_sleep_quality,
-    });
-
-    const repersisted = await ctx.checkinsFlow.submitScore(user, '9');
-    expect(repersisted).toMatchObject({
-      status: 'next',
-      nextState: FSM_STATES.checkin_note_prompt,
-    });
-
-    await ctx.checkinsFlow.skipCurrentStep(user);
-    await ctx.checkinsFlow.skipCurrentStep(user);
-    const finalResult = await ctx.checkinsFlow.skipCurrentStep(user);
-
-    const savedEntry = ctx.checkinsRepository.listEntries()[0];
-
-    expect(finalResult).toMatchObject({
-      status: 'saved',
-      isUpdate: true,
-      noteAdded: true,
-      tagsCount: 1,
-      eventAdded: false,
-      entryPayload: {
-        moodScore: 7,
-        energyScore: 6,
-        stressScore: 4,
-        sleepHours: 7.5,
-        sleepQuality: 9,
-        noteText: 'Был насыщенный день',
-      },
-    });
-    expect(savedEntry.noteText).toBe('Был насыщенный день');
-    expect(ctx.checkinsRepository.getTagIdsForEntry(savedEntry.id)).toEqual(['tag-1']);
   });
 });

@@ -47,7 +47,7 @@ export class ChartsRenderer {
 
     if (points.some((point) => typeof point.stress === 'number')) {
       datasets.push(
-        this.buildMetricDataset('\u0421\u0442\u0440\u0435\u0441\u0441', points.map((point) => point.stress ?? null), '#dc2626', pointRadius, tension),
+        this.buildMetricDataset('\u0421\u043f\u043e\u043a\u043e\u0439\u0441\u0442\u0432\u0438\u0435', points.map((point) => point.stress ?? null), '#0f766e', pointRadius, tension),
       );
     }
 
@@ -78,8 +78,8 @@ export class ChartsRenderer {
         scales: {
           x: this.buildXAxisOptions(points.length),
           y: {
-            min: 0,
-            max: 10,
+            min: 1,
+            max: 5,
             grid: {
               color: '#e2e8f0',
             },
@@ -174,8 +174,8 @@ export class ChartsRenderer {
           quality: {
             type: 'linear',
             position: 'right',
-            min: 0,
-            max: 10,
+            min: 1,
+            max: 5,
             grid: {
               drawOnChartArea: false,
             },
@@ -286,8 +286,8 @@ export class ChartsRenderer {
         scales: {
           x: this.buildXAxisOptions(points.length),
           y: {
-            min: 0,
-            max: 10,
+            min: 1,
+            max: 5,
             grid: {
               color: '#e2e8f0',
             },

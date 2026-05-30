@@ -129,10 +129,12 @@ describe('Event period integration', () => {
     const result = await ctx.eventsFlow.skipDescription(user);
 
     expect(result).toMatchObject({
-      status: 'created',
+      status: 'next',
       source: 'checkin',
+      nextState: FSM_STATES.checkin_note_prompt,
       createdEventsCount: 1,
     });
+    expect(await ctx.fsmService.getState(user.id)).toBe(FSM_STATES.checkin_note_prompt);
 
     const events = ctx.eventsRepository.listEvents();
     expect(events).toHaveLength(1);

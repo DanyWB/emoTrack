@@ -32,7 +32,6 @@ describe('Telegram router contract integration', () => {
         renderSleepChart: jest.fn().mockResolvedValue(undefined),
       } as never,
       ctx.remindersService,
-      ctx.tagsService,
       ctx.fsmService,
       ctx.analyticsService,
       ctx.adminService,
@@ -392,14 +391,20 @@ describe('Telegram router contract integration', () => {
     expect((termsCtx.editMessageText.mock.calls[0] as [string])[0]).toContain(telegramCopy.terms.title);
   });
 
-  it('updates the tag selection callback screen instead of sending a new message', async () => {
+  it('updates the metric tag selection callback screen instead of sending a new message', async () => {
     const user = await createReadyUser('user-router-contract-tags', 8912);
-    await ctx.fsmService.setState(user.id, FSM_STATES.checkin_tags, { selectedTagIds: [] });
+    await ctx.fsmService.setState(user.id, FSM_STATES.checkin_metric_tags, {
+      metricKeys: ['mood'],
+      activeMetricKey: 'mood',
+      metricScores: { mood: 4 },
+      metricTags: {},
+      selectedTagKeys: [],
+    });
     const router = createRouter();
     const telegramCtx = {
       ...buildBaseContext(8912),
       callbackQuery: {
-        data: `${TELEGRAM_CALLBACKS.checkinTagsTogglePrefix}tag-1`,
+        data: `${TELEGRAM_CALLBACKS.checkinMetricTagsTogglePrefix}mood_calm`,
       },
       answerCbQuery: jest.fn().mockResolvedValue(undefined),
       editMessageText: jest.fn().mockResolvedValue(undefined),
@@ -417,19 +422,25 @@ describe('Telegram router contract integration', () => {
     ];
     const buttonTexts = extra.reply_markup?.inline_keyboard?.flat().map((button) => button.text) ?? [];
 
-    expect(message).toContain('Выбрано: <b>1 тег</b>');
+    expect(message).toContain('Выбрано: <b>1/2</b>');
     expect(extra.parse_mode).toBe('HTML');
     expect(buttonTexts.some((text) => text.startsWith('✅ '))).toBe(true);
   });
 
   it('falls back to a normal reply when an inline screen cannot be edited', async () => {
     const user = await createReadyUser('user-router-contract-tags-fallback', 8913);
-    await ctx.fsmService.setState(user.id, FSM_STATES.checkin_tags, { selectedTagIds: [] });
+    await ctx.fsmService.setState(user.id, FSM_STATES.checkin_metric_tags, {
+      metricKeys: ['mood'],
+      activeMetricKey: 'mood',
+      metricScores: { mood: 4 },
+      metricTags: {},
+      selectedTagKeys: [],
+    });
     const router = createRouter();
     const telegramCtx = {
       ...buildBaseContext(8913),
       callbackQuery: {
-        data: `${TELEGRAM_CALLBACKS.checkinTagsTogglePrefix}tag-1`,
+        data: `${TELEGRAM_CALLBACKS.checkinMetricTagsTogglePrefix}mood_calm`,
       },
       answerCbQuery: jest.fn().mockResolvedValue(undefined),
       editMessageText: jest.fn().mockRejectedValue(new Error('message to edit not found')),
@@ -440,7 +451,7 @@ describe('Telegram router contract integration', () => {
 
     expect(telegramCtx.editMessageText).toHaveBeenCalledTimes(1);
     expect(telegramCtx.reply).toHaveBeenCalledWith(
-      expect.stringContaining('Выбрано: <b>1 тег</b>'),
+      expect.stringContaining('Выбрано: <b>1/2</b>'),
       expect.objectContaining({ parse_mode: 'HTML' }),
     );
   });
@@ -471,8 +482,11 @@ describe('Telegram router contract integration', () => {
 
   it('deletes the current check-in callback screen before the final confirmation', async () => {
     const user = await createReadyUser('user-router-contract-checkin-delete', 8915);
-    await ctx.fsmService.setState(user.id, FSM_STATES.checkin_add_event_confirm, {
-      moodScore: 7,
+    await ctx.fsmService.setState(user.id, FSM_STATES.checkin_note_prompt, {
+      entryId: 'entry-router-contract-checkin-delete',
+      metricKeys: ['mood'],
+      metricScores: { mood: 4 },
+      metricTags: {},
       isUpdate: false,
     });
     const router = createRouter();
@@ -497,8 +511,11 @@ describe('Telegram router contract integration', () => {
 
   it('shows navigation menu after the first onboarding check-in is saved', async () => {
     const user = await createReadyUser('user-router-contract-first-checkin-menu', 8918);
-    await ctx.fsmService.setState(user.id, FSM_STATES.checkin_add_event_confirm, {
-      moodScore: 8,
+    await ctx.fsmService.setState(user.id, FSM_STATES.checkin_note_prompt, {
+      entryId: 'entry-router-contract-first-checkin-menu',
+      metricKeys: ['mood'],
+      metricScores: { mood: 5 },
+      metricTags: {},
       showMenuAfterSave: true,
     });
     const router = createRouter();
@@ -680,7 +697,7 @@ describe('Telegram router contract integration', () => {
     const telegramCtx = {
       ...buildBaseContext(8904),
       callbackQuery: {
-        data: `${TELEGRAM_CALLBACKS.settingsDailyMetricTogglePrefix}joy`,
+        data: `${TELEGRAM_CALLBACKS.settingsDailyMetricTogglePrefix}clarity`,
       },
       answerCbQuery: jest.fn().mockResolvedValue(undefined),
       reply: jest.fn().mockResolvedValue(undefined),
@@ -689,9 +706,9 @@ describe('Telegram router contract integration', () => {
     await (router as any).handleCallbackQuery(telegramCtx);
 
     const trackedMetrics = await ctx.usersService.getTrackedMetrics(user.id);
-    const joy = trackedMetrics.find((metric) => metric.key === 'joy');
+    const clarity = trackedMetrics.find((metric) => metric.key === 'clarity');
 
-    expect(joy?.enabled).toBe(false);
+    expect(clarity?.enabled).toBe(false);
     expect(await ctx.fsmService.getState(user.id)).toBe(FSM_STATES.settings_menu);
     expect((await ctx.fsmService.getSession(user.id))?.payloadJson).toMatchObject({
       settingsView: 'daily_metrics',

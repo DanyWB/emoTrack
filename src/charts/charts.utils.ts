@@ -57,19 +57,19 @@ export function resolveMoodHeatStripColor(mood?: number): string {
     return '#e2e8f0';
   }
 
-  if (mood <= 2) {
+  if (mood <= 1) {
     return '#ef4444';
   }
 
-  if (mood <= 4) {
+  if (mood <= 2) {
     return '#f97316';
   }
 
-  if (mood <= 6) {
+  if (mood <= 3) {
     return '#f59e0b';
   }
 
-  if (mood <= 8) {
+  if (mood <= 4) {
     return '#84cc16';
   }
 

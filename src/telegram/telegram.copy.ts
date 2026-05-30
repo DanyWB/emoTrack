@@ -5,6 +5,11 @@ import {
   type CheckinStepConfig,
   type CoreCheckinState,
 } from '../checkins/checkins.steps';
+import {
+  CHECKIN_V2_SLEEP_QUALITY_SCALE,
+  getScaleLabel,
+  type CheckinV2MetricDefinition,
+} from '../checkins/checkins-v2.catalog';
 import { formatDateKey } from '../common/utils/date.utils';
 import {
   DAILY_METRIC_LABELS_BY_KEY,
@@ -41,7 +46,8 @@ export const STATS_PERIOD_LABELS: Record<SummaryPeriodType, string> = {
 export const STATS_METRIC_LABELS = {
   mood: 'Настроение',
   energy: 'Энергия',
-  stress: 'Стресс',
+  stress: 'Спокойствие',
+  calm: 'Спокойствие',
   sleepHours: 'Часы сна',
   sleepQuality: 'Качество сна',
 } as const;
@@ -61,14 +67,15 @@ export const TELEGRAM_COMMANDS = [
 export const DAILY_TRACKING_LABELS = {
   trackMood: 'Настроение',
   trackEnergy: 'Энергия',
-  trackStress: 'Стресс',
+  trackStress: 'Спокойствие',
   trackSleep: 'Сон',
 } as const;
 
 export const CORE_TRACKED_METRIC_LABELS = {
   mood: 'Настроение',
   energy: 'Энергия',
-  stress: 'Стресс',
+  stress: 'Спокойствие',
+  calm: 'Спокойствие',
   sleep: 'Сон',
 } as const;
 
@@ -99,10 +106,15 @@ export const telegramCopy = {
     chooseTags: 'Выбрать теги',
     tagsDone: 'Готово',
     addEvent: 'Добавить событие',
+    reviewContinue: 'Продолжить',
+    reviewEdit: 'Изменить ответы',
+    addMetricTagsSkip: 'Без тегов',
     historyMore: 'Еще',
     stats7d: '7 дней',
     stats30d: '30 дней',
     statsAll: 'За всё время',
+    statsBackToMetrics: 'К метрикам',
+    statsChangePeriod: 'Сменить период',
     settingsToggleRemindersOn: 'Напоминания: вкл',
     settingsToggleRemindersOff: 'Напоминания: выкл',
     settingsEditReminderTime: 'Изменить время',
@@ -112,8 +124,8 @@ export const telegramCopy = {
     settingsTrackMoodOff: 'Настроение: выкл',
     settingsTrackEnergyOn: 'Энергия: вкл',
     settingsTrackEnergyOff: 'Энергия: выкл',
-    settingsTrackStressOn: 'Стресс: вкл',
-    settingsTrackStressOff: 'Стресс: выкл',
+    settingsTrackStressOn: 'Спокойствие: вкл',
+    settingsTrackStressOff: 'Спокойствие: выкл',
     settingsTrackSleepOn: 'Сон: вкл',
     settingsTrackSleepOff: 'Сон: выкл',
     sleepModeHours: 'Только часы',
@@ -235,6 +247,14 @@ export const telegramCopy = {
     started: '<b>🌤 Check-in за сегодня</b>\n━━━━━━━━━━━━\nОтметим состояние короткими шагами.',
     resumed:
       '<b>↩️ Продолжим текущий check-in</b>\n━━━━━━━━━━━━\nВернемся к последнему незавершенному шагу.',
+    v2Onboarding: [
+      '<b>Check-in обновился</b>\n━━━━━━━━━━━━\nТеперь состояние отмечается словами, а не цифрами. После каждой оценки можно добавить до 2 уточняющих тегов.',
+      '<b>Основные метрики</b>\n━━━━━━━━━━━━\nВ каждом check-in всегда есть:\n• Настроение\n• Энергия\n• Спокойствие',
+      '<b>Дополнительные метрики</b>\n━━━━━━━━━━━━\nВ настройках можно включить мотивацию, общее состояние, ясность головы, желание общаться и физическое состояние.',
+      '<b>Теги не обязательны</b>\n━━━━━━━━━━━━\nМожно пройти check-in быстро, а можно уточнить состояние тегами сразу после каждой оценки.',
+    ],
+    v2OnboardingDone:
+      '<b>Готово</b>\n━━━━━━━━━━━━\nНачнем первый check-in в новой версии. Сначала выбери оценку, затем при желании уточни ее тегами.',
     interrupted: 'Текущий check-in сбился. Начни заново командой /checkin.',
     notePrompt: [
       '<b>📝 Заметка к check-in</b>',
@@ -304,14 +324,14 @@ export const telegramCopy = {
     eventsBreakdownLabel: 'События по типам',
     lowDataLead: 'Данных пока мало, поэтому сводка предварительная.',
     lowDataNote: 'Подробная сводка и графики появятся, когда будет хотя бы 3 записи за период.',
-    chartCombinedCaption: 'График настроения, энергии и стресса.',
+    chartCombinedCaption: 'График настроения, энергии и спокойствия.',
     chartSelectedMetricPrefix: 'График',
     chartSleepCaption: 'График сна.',
     chartMoodStripCaption: 'Компактная шкала настроения по дням.',
     chartUnavailable: 'Сейчас не удалось построить графики. Текстовая сводка доступна.',
     sleepHoursMoodPattern: 'При более долгом сне настроение в среднем выше на {delta}.',
     sleepHoursEnergyPattern: 'При более долгом сне энергия в среднем выше на {delta}.',
-    sleepQualityStressPattern: 'При более низком качестве сна стресс в среднем выше на {delta}.',
+    sleepQualityStressPattern: 'При более хорошем сне спокойствие в среднем выше на {delta}.',
     weekdayMoodPattern: 'По настроению чаще лучше проходит {best}, сложнее — {worst}.',
     topEventTypePattern: 'Чаще всего встречалось: {label} ({count}).',
     eventMoodHigherPattern: 'В дни с событиями настроение в среднем выше на {delta}.',
@@ -349,9 +369,9 @@ export const telegramCopy = {
     dailyTrackingLabel: 'Критерии',
     dailyMetricsTitle: 'Критерии check-in:',
     dailyMetricsHint:
-      'Выбери, что бот спрашивает в ежедневной отметке. Прошлые записи это не меняет.',
+      'Основные метрики всегда включены. Дополнительно можно держать включенными до 3 метрик.',
     dailyMetricsActiveLabel: 'Сейчас активно',
-    dailyMetricsGuard: 'Нужно оставить хотя бы один критерий.',
+    dailyMetricsGuard: 'Чтобы check-in оставался удобным, одновременно можно включить не больше 3 дополнительных метрик.',
     dailyMetricsStale: 'Этот экран уже неактуален. Показываю текущие настройки.',
     reminderTimePrompt: '⏰ Введи новое время в формате HH:mm.',
     sleepModePrompt: '😴 Выбери режим сна.',
@@ -417,6 +437,10 @@ export const telegramCopy = {
     invalidEventEndDate:
       'Некорректная дата окончания. Используй формат YYYY-MM-DD, и дата не должна быть раньше даты начала события.',
     invalidDailyTrackingConfiguration: 'Нужно оставить хотя бы одну ежедневную метрику.',
+    immutableCoreMetric: 'Основные метрики check-in нельзя выключить.',
+    tooManyOptionalMetrics:
+      'Чтобы check-in оставался удобным, одновременно можно включить не больше 3 дополнительных метрик.',
+    tooManyMetricTags: 'Для одной метрики можно выбрать не больше 2 тегов.',
     missingDailyMetricValue:
       'Нужно заполнить хотя бы одну ежедневную метрику, прежде чем завершать запись.',
   },
@@ -428,6 +452,7 @@ export interface CheckinConfirmationData {
   stressScore?: number | null;
   sleepHours?: number;
   sleepQuality?: number;
+  checkinMetrics?: CheckinMetricDisplayData[];
   extraMetricScores?: Array<{
     key: DailyMetricCatalogKey;
     label: string;
@@ -447,6 +472,7 @@ export interface HistoryEntryData {
   stressScore: number | null;
   sleepHours?: number;
   sleepQuality?: number;
+  checkinMetrics?: CheckinMetricDisplayData[];
   extraMetricScores?: Array<{
     key: DailyMetricCatalogKey;
     label: string;
@@ -464,6 +490,7 @@ export interface HistoryEntryDetailData {
   stressScore: number | null;
   sleepHours?: number;
   sleepQuality?: number;
+  checkinMetrics?: CheckinMetricDisplayData[];
   extraMetricScores?: Array<{
     key: DailyMetricCatalogKey;
     label: string;
@@ -505,6 +532,19 @@ export interface SettingsMetricOptionData {
   key: DailyMetricCatalogKey;
   label: string;
   enabled: boolean;
+  isCore?: boolean;
+  isSleep?: boolean;
+}
+
+export interface CheckinMetricDisplayData {
+  key: string;
+  label: string;
+  ordinalValue: number;
+  scaleLabel: string;
+  tags?: Array<{
+    key: string;
+    label: string;
+  }>;
 }
 
 export interface AdminOverviewData {
@@ -716,9 +756,14 @@ export function formatCheckinConfirmation(data: CheckinConfirmationData): string
       : '✅ <b>Запись за сегодня сохранена</b>',
     '━━━━━━━━━━━━',
   ];
-  const coreMetricsLine = formatCheckinCoreMetrics(data);
+  const v2MetricLines = formatCheckinMetricLines(data.checkinMetrics);
+  const coreMetricsLine = v2MetricLines.length > 0 ? null : formatCheckinCoreMetrics(data);
   const extraMetricsLine = formatCheckinExtraMetrics(data);
   const sleepLine = formatCheckinSleep(data);
+
+  if (v2MetricLines.length > 0) {
+    lines.push(...v2MetricLines);
+  }
 
   if (coreMetricsLine) {
     lines.push(coreMetricsLine);
@@ -753,6 +798,23 @@ export function formatCheckinConfirmation(data: CheckinConfirmationData): string
   return lines.join('\n');
 }
 
+function formatCheckinMetricLines(metrics: CheckinMetricDisplayData[] | undefined): string[] {
+  if (!metrics || metrics.length === 0) {
+    return [];
+  }
+
+  const lines = metrics.map((metric) => `${escapeHtml(metric.label)} — <b>${escapeHtml(metric.scaleLabel)}</b>`);
+  const tagLines = metrics
+    .filter((metric) => metric.tags && metric.tags.length > 0)
+    .map((metric) => `${escapeHtml(metric.label)} — ${metric.tags?.map((tag) => escapeHtml(tag.label)).join(', ')}`);
+
+  if (tagLines.length > 0) {
+    lines.push('', '<b>Уточнения:</b>', ...tagLines);
+  }
+
+  return lines;
+}
+
 function formatCheckinCoreMetrics(data: CheckinConfirmationData): string | null {
   const parts: string[] = [];
 
@@ -765,7 +827,7 @@ function formatCheckinCoreMetrics(data: CheckinConfirmationData): string | null 
   }
 
   if (typeof data.stressScore === 'number') {
-    parts.push(`стресс ${data.stressScore}`);
+    parts.push(`спокойствие ${data.stressScore}`);
   }
 
   return parts.length > 0 ? `🌡 Состояние: ${parts.join(', ')}` : null;
@@ -782,9 +844,9 @@ function formatCheckinExtraMetrics(data: CheckinConfirmationData): string | null
   return `🧩 Доп. метрики: ${summary}`;
 }
 
-function formatCheckinSleep(data: CheckinConfirmationData): string | null {
+function formatCheckinSleep(data: Pick<CheckinConfirmationData, 'sleepHours' | 'sleepQuality'>): string | null {
   if (typeof data.sleepHours === 'number' && typeof data.sleepQuality === 'number') {
-    return `😴 Сон: ${data.sleepHours} ч, качество ${data.sleepQuality}`;
+    return `😴 Сон: ${data.sleepHours} ч, качество ${formatSleepQualityValue(data.sleepQuality)}`;
   }
 
   if (typeof data.sleepHours === 'number') {
@@ -792,10 +854,14 @@ function formatCheckinSleep(data: CheckinConfirmationData): string | null {
   }
 
   if (typeof data.sleepQuality === 'number') {
-    return `😴 Качество сна: ${data.sleepQuality}`;
+    return `😴 Качество сна: ${formatSleepQualityValue(data.sleepQuality)}`;
   }
 
   return null;
+}
+
+function formatSleepQualityValue(value: number): string {
+  return getScaleLabel(CHECKIN_V2_SLEEP_QUALITY_SCALE, value) ?? String(value);
 }
 
 export function getCheckinPrompt(state: CoreCheckinState, config: CheckinStepConfig): string {
@@ -824,6 +890,62 @@ export function getExtraMetricCheckinPrompt(
 ): string {
   const safeLabel = escapeHtml(label);
   return `<b>🧩 Шаг ${stepNumber}/${totalSteps} · ${safeLabel}</b>\n━━━━━━━━━━━━\nОцени <b>${safeLabel.toLowerCase()}</b>: <b>0..10</b>`;
+}
+
+export function getCheckinV2MetricPrompt(
+  metric: CheckinV2MetricDefinition,
+  stepNumber: number,
+  totalSteps: number,
+): string {
+  return [
+    `<b>${stepNumber}/${totalSteps} · ${escapeHtml(metric.label)}</b>`,
+    '━━━━━━━━━━━━',
+    escapeHtml(metric.prompt),
+  ].join('\n');
+}
+
+export function formatCheckinV2MetricTagsPrompt(
+  metric: CheckinV2MetricDefinition,
+  ordinalValue: number,
+  selectedTagKeys: string[],
+): string {
+  const selectedLine =
+    selectedTagKeys.length > 0
+      ? `Выбрано: <b>${selectedTagKeys.length}/${metric.maxTags}</b>`
+      : 'Выбрано: <i>пока ничего</i>';
+
+  return [
+    `<b>${escapeHtml(metric.label)} — ${escapeHtml(getScaleLabel(metric.scale, ordinalValue) ?? String(ordinalValue))}</b>`,
+    '━━━━━━━━━━━━',
+    'Хочешь уточнить это состояние?',
+    `Можно выбрать до ${metric.maxTags} тегов.`,
+    '',
+    selectedLine,
+  ].join('\n');
+}
+
+export function formatCheckinV2Review(data: CheckinReviewData): string {
+  return [
+    '<b>Вот что получилось:</b>',
+    '━━━━━━━━━━━━',
+    ...formatCheckinMetricLines(data.metrics),
+    ...(formatCheckinSleep(data) ? ['', formatCheckinSleep(data) as string] : []),
+  ].join('\n');
+}
+
+export function formatCheckinV2ReviewEdit(data: CheckinReviewData): string {
+  return [
+    '<b>Что изменить?</b>',
+    '━━━━━━━━━━━━',
+    ...data.metrics.map((metric) => `• ${escapeHtml(metric.label)} — ${escapeHtml(metric.scaleLabel)}`),
+    ...(formatCheckinSleep(data) ? [`• ${formatCheckinSleep(data)}`] : []),
+  ].join('\n');
+}
+
+export interface CheckinReviewData {
+  metrics: CheckinMetricDisplayData[];
+  sleepHours?: number;
+  sleepQuality?: number;
 }
 
 export function formatCheckinTagsSelectionPrompt(selectedCount: number): string {
@@ -867,7 +989,7 @@ export function formatSettingsText(data: SettingsViewData): string {
     `• ${telegramCopy.settings.weeklyDigestLabel}: ${formatWeeklyDigestRuntimeLine(data)}`,
     '',
     `<b>${telegramCopy.settings.checkinSectionTitle}</b>`,
-    `• ${telegramCopy.settings.sleepModeLabel}: ${SLEEP_MODE_LABELS[data.sleepMode]}`,
+    `• ${telegramCopy.settings.sleepModeLabel}: ${data.trackSleep ? SLEEP_MODE_LABELS[data.sleepMode] : 'выключен'}`,
     `• ${telegramCopy.settings.dailyTrackingLabel}: ${escapeHtml(formatTrackedMetricsSummary(data))}`,
   ];
 
@@ -876,19 +998,29 @@ export function formatSettingsText(data: SettingsViewData): string {
 
 export function formatDailyMetricsSettingsText(metrics: SettingsMetricOptionData[]): string {
   const activeMetrics = metrics
-    .filter((metric) => metric.enabled)
+    .filter((metric) => metric.enabled && !metric.isCore && !metric.isSleep)
     .map((metric) => escapeHtml(metric.label.toLowerCase()));
+  const coreMetrics = metrics.filter((metric) => metric.isCore);
+  const optionalMetrics = metrics.filter((metric) => !metric.isCore && !metric.isSleep);
+  const sleepMetric = metrics.find((metric) => metric.isSleep);
   const lines = [
     `<b>${telegramCopy.settings.dailyMetricsTitle}</b>`,
     '━━━━━━━━━━━━',
     `<i>${telegramCopy.settings.dailyMetricsHint}</i>`,
     '',
-    `${telegramCopy.settings.dailyMetricsActiveLabel}: ${activeMetrics.length > 0 ? activeMetrics.join(', ') : '—'}`,
+    '<b>Основные метрики</b>',
+    ...coreMetrics.map((metric) => `• ${escapeHtml(metric.label)}: всегда вкл`),
     '',
+    '<b>Дополнительные метрики</b>',
+    `${telegramCopy.settings.dailyMetricsActiveLabel}: ${activeMetrics.length > 0 ? activeMetrics.join(', ') : '—'}`,
   ];
 
-  for (const metric of metrics) {
+  for (const metric of optionalMetrics) {
     lines.push(`• ${escapeHtml(metric.label)}: ${metric.enabled ? 'вкл' : 'выкл'}`);
+  }
+
+  if (sleepMetric) {
+    lines.push('', '<b>Сон</b>', `• ${escapeHtml(sleepMetric.label)}: ${sleepMetric.enabled ? 'вкл' : 'выкл'}`);
   }
 
   lines.push('', telegramCopy.settings.dailyMetricsGuard);
@@ -973,7 +1105,8 @@ export function formatHistoryEntries(
 
   const items = entries.map((entry) => {
     const lines = [`📅 <b>${formatHistoryDate(entry.entryDate)}</b>`];
-    const coreMetricsLine = formatHistoryCoreMetrics(entry);
+    const v2MetricsLine = formatHistoryCheckinMetrics(entry.checkinMetrics);
+    const coreMetricsLine = v2MetricsLine ?? formatHistoryCoreMetrics(entry);
     const extraMetricsLine = formatHistoryExtraMetrics(entry);
 
     if (coreMetricsLine) {
@@ -1004,12 +1137,17 @@ export function formatHistoryEntryDetail(entry: HistoryEntryDetailData): string 
     `<b>${telegramCopy.history.detailTitlePrefix} ${formatHistoryDate(entry.entryDate)}</b>`,
     '━━━━━━━━━━━━',
   ];
-  const coreMetricsLine = formatHistoryCoreMetrics(entry);
+  const v2MetricsLine = formatHistoryCheckinMetrics(entry.checkinMetrics);
+  const coreMetricsLine = v2MetricsLine ?? formatHistoryCoreMetrics(entry);
   const extraMetricsLine = formatHistoryExtraMetrics(entry);
   const sleepLine = formatHistorySleep(entry);
+  const metricTagLines = formatHistoryCheckinMetricTagLines(entry.checkinMetrics);
 
   if (coreMetricsLine) {
     lines.push('', '<b>🌤 Состояние</b>', coreMetricsLine);
+    if (metricTagLines.length > 0) {
+      lines.push('', '<b>Уточнения</b>', ...metricTagLines);
+    }
   } else if (extraMetricsLine) {
     lines.push('', '<b>🌤 Состояние</b>', extraMetricsLine);
   }
@@ -1076,8 +1214,30 @@ function formatHistoryCoreMetrics(
   return [
     `настроение ${formatMetricOrDashBold(entry.moodScore)}`,
     `энергия ${formatMetricOrDashBold(entry.energyScore)}`,
-    `стресс ${formatMetricOrDashBold(entry.stressScore)}`,
+    `спокойствие ${formatMetricOrDashBold(entry.stressScore)}`,
   ].join(' · ');
+}
+
+function formatHistoryCheckinMetrics(metrics: CheckinMetricDisplayData[] | undefined): string | null {
+  if (!metrics || metrics.length === 0) {
+    return null;
+  }
+
+  return metrics
+    .map((metric) => `${escapeHtml(metric.label.toLowerCase())} <b>${escapeHtml(metric.scaleLabel)}</b>`)
+    .join(' · ');
+}
+
+function formatHistoryCheckinMetricTagLines(metrics: CheckinMetricDisplayData[] | undefined): string[] {
+  if (!metrics || metrics.length === 0) {
+    return [];
+  }
+
+  return metrics
+    .filter((metric) => metric.tags && metric.tags.length > 0)
+    .map((metric) => (
+      `• ${escapeHtml(metric.label)} — ${metric.tags?.map((tag) => escapeHtml(tag.label)).join(', ')}`
+    ));
 }
 
 function formatHistoryDate(entryDate: Date): string {
@@ -1089,7 +1249,7 @@ function formatHistorySleep(
   entry: Pick<HistoryEntryData, 'sleepHours' | 'sleepQuality'>,
 ): string | null {
   if (typeof entry.sleepHours === 'number' && typeof entry.sleepQuality === 'number') {
-    return `😴 <b>Сон</b>: ${entry.sleepHours} ч · качество ${entry.sleepQuality}`;
+    return `😴 <b>Сон</b>: ${entry.sleepHours} ч · качество ${formatSleepQualityValue(entry.sleepQuality)}`;
   }
 
   if (typeof entry.sleepHours === 'number') {
@@ -1097,7 +1257,7 @@ function formatHistorySleep(
   }
 
   if (typeof entry.sleepQuality === 'number') {
-    return `😴 <b>Качество сна</b>: ${entry.sleepQuality}`;
+    return `😴 <b>Качество сна</b>: ${formatSleepQualityValue(entry.sleepQuality)}`;
   }
 
   return null;
@@ -1107,7 +1267,7 @@ function formatHistorySleepValue(
   entry: Pick<HistoryEntryData, 'sleepHours' | 'sleepQuality'>,
 ): string {
   if (typeof entry.sleepHours === 'number' && typeof entry.sleepQuality === 'number') {
-    return `${entry.sleepHours} ч, качество ${entry.sleepQuality}`;
+    return `${entry.sleepHours} ч, качество ${formatSleepQualityValue(entry.sleepQuality)}`;
   }
 
   if (typeof entry.sleepHours === 'number') {
@@ -1115,7 +1275,7 @@ function formatHistorySleepValue(
   }
 
   if (typeof entry.sleepQuality === 'number') {
-    return `Качество ${entry.sleepQuality}`;
+    return `Качество ${formatSleepQualityValue(entry.sleepQuality)}`;
   }
 
   return '—';

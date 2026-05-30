@@ -486,11 +486,12 @@ export class EventsFlowService {
         eventAdded: true,
       };
 
-      await this.fsmService.setIdle(user.id);
+      await this.fsmService.setState(user.id, FSM_STATES.checkin_note_prompt, finalizedPayload);
 
       return {
-        status: 'created',
+        status: 'next',
         source: 'checkin',
+        nextState: FSM_STATES.checkin_note_prompt,
         checkinPayload: finalizedPayload,
         createdEventsCount: 1,
       };

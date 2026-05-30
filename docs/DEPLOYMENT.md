@@ -662,7 +662,15 @@ Database rollback:
   - `user_tracked_metrics` stores per-user metric selection
   - `daily_entry_metric_values` stores generic per-entry metric values
   - the seeded catalog is idempotent and includes the current core metrics plus additional score-based metrics
-  - the current Telegram UX now uses `user_tracked_metrics` for the configurable daily flow and writes score values into `daily_entry_metric_values` without removing legacy core-field compatibility
+  - these tables remain for legacy compatibility while Check-in v2 uses the normalized v2 metric tables
+- the Check-in v2 product-model migration is additive for new tables and preferences:
+  - `daily_entry_v2_metric_values` stores normalized ordinal 1..5 metric values
+  - `daily_entry_v2_metric_tags` stores metric-scoped predefined tags
+  - `user_metric_preferences` stores optional metric preferences
+  - `users.checkinV2OnboardingCompleted` controls the one-time v2 explainer
+  - old numeric `moodScore`, `energyScore`, and `stressScore` columns remain for transition
+  - `daily_entries.sleepQuality` is converted to semantic 1..5, so take a backup before deploy
+  - see `docs/CHECKIN_V2_MIGRATION.md` for verification SQL
 - the current series-metadata schema change is also additive only:
   - `events.seriesId` is nullable
   - `events.seriesPosition` is nullable

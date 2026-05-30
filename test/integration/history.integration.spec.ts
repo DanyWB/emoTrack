@@ -27,7 +27,6 @@ describe('History integration', () => {
         generatePeriodCharts: jest.fn(),
       } as never,
       ctx.remindersService,
-      ctx.tagsService,
       ctx.fsmService,
       ctx.analyticsService,
       ctx.adminService,
@@ -56,7 +55,7 @@ describe('History integration', () => {
         energyScore: 7 - index,
         stressScore: 3 + index,
         sleepHours: index === 0 ? 7.5 : undefined,
-        sleepQuality: index === 0 ? 8 : undefined,
+        sleepQuality: index === 0 ? 4 : undefined,
         noteText: index === 0 ? 'Busy day' : undefined,
       });
     }
@@ -75,26 +74,29 @@ describe('History integration', () => {
     });
   }
 
-  async function attachEntryMetricValues(entryId: string, values: Record<string, number>): Promise<void> {
-    const definitionsByKey = new Map(
-      ctx.dailyMetricsRepository.listDefinitions().map((definition) => [definition.key, definition.id] as const),
-    );
-
-    await ctx.checkinsRepository.upsertMetricValues(
+  async function attachV2MetricValues(entryId: string, values: Record<string, number>): Promise<void> {
+    await ctx.checkinsRepository.upsertV2MetricValues(
       entryId,
-      Object.entries(values).map(([key, value]) => {
-        const metricDefinitionId = definitionsByKey.get(key);
-
-        if (!metricDefinitionId) {
-          throw new Error(`Metric definition ${key} not found`);
-        }
-
-        return {
-          metricDefinitionId,
-          value,
-        };
-      }),
+      Object.entries(values).map(([key, value]) => ({
+        metricKey: key,
+        ordinalValue: value,
+      })),
     );
+  }
+
+  async function attachLegacyMetricValue(entryId: string, key: string, value: number): Promise<void> {
+    const definition = ctx.dailyMetricsRepository.listDefinitions().find((item) => item.key === key);
+
+    if (!definition) {
+      throw new Error(`Missing metric definition ${key}`);
+    }
+
+    await ctx.checkinsRepository.upsertMetricValues(entryId, [
+      {
+        metricDefinitionId: definition.id,
+        value,
+      },
+    ]);
   }
 
   async function seedOverlapHistory(userId: string): Promise<void> {
@@ -162,17 +164,19 @@ describe('History integration', () => {
     expect(ctx.analyticsRepository.events.map((event) => event.eventName)).toContain('history_requested');
   });
 
-  it('shows extra tracked metrics in the history output for saved entries', async () => {
+  it('shows v2 optional metrics in the history output for saved entries', async () => {
     const user = await createReadyUser();
     await seedHistoryEntries(user.id, 1);
     const [entry] = ctx.checkinsRepository.listEntries();
 
-    await attachEntryMetricValues(entry.id, {
-      joy: 8,
-      wellbeing: 6,
+    await attachV2MetricValues(entry.id, {
+      mood: 4,
+      energy: 4,
+      calm: 4,
+      motivation: 4,
+      overall_state: 3,
     });
-    await ctx.usersService.setTrackedMetric(user.id, 'joy', true);
-    await ctx.usersService.setTrackedMetric(user.id, 'joy', false);
+    await attachLegacyMetricValue(entry.id, 'motivation', 8);
 
     const router = createRouter();
     const telegramCtx = {
@@ -184,19 +188,21 @@ describe('History integration', () => {
 
     const [message] = telegramCtx.reply.mock.calls[0] as [string];
 
-    expect(message).toContain('🧩 <b>Доп. метрики</b>: Радость <b>8</b>, Самочувствие <b>6</b>');
-    expect(message).toContain('настроение <b>8</b> · энергия <b>7</b> · стресс <b>3</b>');
+    expect(message).toContain('настроение <b>Хорошее</b>');
+    expect(message).toContain('мотивация <b>Хочется</b>');
+    expect(message).toContain('общее состояние <b>Нормальное</b>');
+    expect(message).not.toContain('🧩 <b>Доп. метрики</b>: Мотивация <b>8</b>');
   });
 
-  it('keeps historical extra metrics visible when their definition becomes inactive', async () => {
+  it('keeps historical optional metrics visible after the metric is disabled in settings', async () => {
     const user = await createReadyUser();
     await seedHistoryEntries(user.id, 1);
     const [entry] = ctx.checkinsRepository.listEntries();
 
-    await attachEntryMetricValues(entry.id, {
-      joy: 8,
+    await attachV2MetricValues(entry.id, {
+      motivation: 4,
     });
-    ctx.dailyMetricsRepository.setDefinitionActive('joy', false);
+    await ctx.usersService.setTrackedMetric(user.id, 'motivation', false);
 
     const router = createRouter();
     const telegramCtx = {
@@ -207,12 +213,11 @@ describe('History integration', () => {
     await (router as any).handleHistoryCommand(telegramCtx);
 
     const [message] = telegramCtx.reply.mock.calls[0] as [string];
-    const joyLabel = ctx.dailyMetricsRepository.listDefinitions().find((definition) => definition.key === 'joy')?.label;
 
-    expect(message).toContain(`🧩 <b>${telegramCopy.stats.extraMetricsLabel}</b>: ${joyLabel} <b>8</b>`);
+    expect(message).toContain('мотивация <b>Хочется</b>');
   });
 
-  it('renders an extra-only history entry without the empty legacy core line', async () => {
+  it('renders an optional-only history entry without the empty legacy core line', async () => {
     const user = await createReadyUser();
     const entry = await ctx.checkinsRepository.upsertByUserAndDate(user.id, new Date('2026-03-12T00:00:00.000Z'), {
       moodScore: null,
@@ -221,9 +226,9 @@ describe('History integration', () => {
       noteText: 'Only extra metrics today',
     });
 
-    await attachEntryMetricValues(entry.id, {
-      joy: 8,
-      wellbeing: 6,
+    await attachV2MetricValues(entry.id, {
+      motivation: 4,
+      overall_state: 3,
     });
 
     const router = createRouter();
@@ -236,12 +241,10 @@ describe('History integration', () => {
 
     const [message] = telegramCtx.reply.mock.calls[0] as [string];
     const lines = message.split('\n');
-    const joyLabel = ctx.dailyMetricsRepository.listDefinitions().find((definition) => definition.key === 'joy')?.label;
-    const wellbeingLabel = ctx.dailyMetricsRepository.listDefinitions().find((definition) => definition.key === 'wellbeing')?.label;
-    const extraMetricsLine = `🧩 <b>${telegramCopy.stats.extraMetricsLabel}</b>: ${joyLabel} <b>8</b>, ${wellbeingLabel} <b>6</b>`;
+    const optionalMetricsLine = 'мотивация <b>Хочется</b> · общее состояние <b>Нормальное</b>';
 
-    expect(message).toContain(extraMetricsLine);
-    expect(lines[4]).toBe(extraMetricsLine);
+    expect(message).toContain(optionalMetricsLine);
+    expect(lines[4]).toBe(optionalMetricsLine);
     expect(message).toContain('📝 заметка · 🗂 0 событий');
   });
 
@@ -250,9 +253,19 @@ describe('History integration', () => {
     await seedHistoryEntries(user.id, 1);
     const [entry] = ctx.checkinsRepository.listEntries();
 
-    await attachEntryMetricValues(entry.id, {
-      joy: 8,
+    await attachV2MetricValues(entry.id, {
+      mood: 4,
+      energy: 4,
+      calm: 4,
+      motivation: 4,
     });
+    await ctx.checkinsRepository.upsertV2MetricValues(entry.id, [
+      {
+        metricKey: 'mood',
+        ordinalValue: 4,
+        tagKeys: ['mood_calm'],
+      },
+    ]);
     await ctx.checkinsRepository.replaceTags(entry.id, ['tag-1', 'tag-2']);
 
     const router = createRouter();
@@ -278,9 +291,10 @@ describe('History integration', () => {
 
     expect(message).toContain('Запись за 12.03.2026');
     expect(message).toContain('Состояние');
-    expect(message).toContain('настроение <b>8</b> · энергия <b>7</b> · стресс <b>3</b>');
-    expect(message).toContain('<b>😴 Сон</b>\n7.5 ч, качество 8');
-    expect(message).toContain('🧩 <b>Доп. метрики</b>: Радость <b>8</b>');
+    expect(message).toContain('настроение <b>Хорошее</b>');
+    expect(message).toContain('мотивация <b>Хочется</b>');
+    expect(message).toContain('<b>Уточнения</b>\n• Настроение — спокойное');
+    expect(message).toContain('<b>😴 Сон</b>\n7.5 ч, качество Хорошо восстановил');
     expect(message).toContain('<b>📝 Заметка</b>\nBusy day');
     expect(message).toContain('Теги');
     expect(message).toContain('Тревога');
@@ -293,7 +307,7 @@ describe('History integration', () => {
     );
   });
 
-  it('renders an extra-only history detail without placeholder sections', async () => {
+  it('renders an optional-only history detail without placeholder sections', async () => {
     const user = await createReadyUser();
     const entry = await ctx.checkinsRepository.upsertByUserAndDate(user.id, new Date('2026-03-12T00:00:00.000Z'), {
       moodScore: null,
@@ -302,9 +316,9 @@ describe('History integration', () => {
       noteText: 'Only extra metrics today',
     });
 
-    await attachEntryMetricValues(entry.id, {
-      joy: 8,
-      wellbeing: 6,
+    await attachV2MetricValues(entry.id, {
+      motivation: 4,
+      overall_state: 3,
     });
 
     const router = createRouter();
@@ -323,9 +337,9 @@ describe('History integration', () => {
 
     const [message] = telegramCtx.editMessageText.mock.calls[0] as [string];
 
-    expect(message).toContain('🧩 <b>Доп. метрики</b>: Радость <b>8</b>, Самочувствие <b>6</b>');
+    expect(message).toContain('мотивация <b>Хочется</b> · общее состояние <b>Нормальное</b>');
     expect(message).toContain('<b>📝 Заметка</b>\nOnly extra metrics today');
-    expect(message).not.toContain('Настроение / энергия / стресс: — / — / —');
+    expect(message).not.toContain('Настроение / энергия / спокойствие: — / — / —');
     expect(message).not.toContain('Теги\n—');
     expect(message).not.toContain('События\n—');
   });

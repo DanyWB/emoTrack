@@ -57,6 +57,10 @@ export class UsersRepository {
     return this.update(id, { consentGiven });
   }
 
+  setCheckinV2OnboardingCompleted(id: string, completed: boolean): Promise<User> {
+    return this.update(id, { checkinV2OnboardingCompleted: completed });
+  }
+
   updateTelegramProfile(
     id: string,
     profile: { username?: string; firstName?: string; languageCode?: string },

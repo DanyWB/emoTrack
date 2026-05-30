@@ -1,11 +1,17 @@
 import { Injectable } from '@nestjs/common';
-import type { DailyMetricDefinition, Prisma, UserTrackedMetric } from '@prisma/client';
+import type { DailyMetricDefinition, Prisma, UserMetricPreference, UserTrackedMetric } from '@prisma/client';
 
 import { PrismaService } from '../database/prisma.service';
 
 export interface UpsertUserTrackedMetricInput {
   metricDefinitionId: string;
   isEnabled: boolean;
+  sortOrder: number;
+}
+
+export interface UpsertUserMetricPreferenceInput {
+  metricKey: string;
+  enabled: boolean;
   sortOrder: number;
 }
 
@@ -62,6 +68,13 @@ export class DailyMetricsRepository {
     });
   }
 
+  findUserMetricPreferences(userId: string): Promise<UserMetricPreference[]> {
+    return this.prisma.userMetricPreference.findMany({
+      where: { userId },
+      orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
+    });
+  }
+
   async upsertUserTrackedMetrics(
     userId: string,
     metrics: UpsertUserTrackedMetricInput[],
@@ -83,6 +96,34 @@ export class DailyMetricsRepository {
           },
           update: {
             isEnabled: metric.isEnabled,
+            sortOrder: metric.sortOrder,
+          },
+        }),
+      ),
+    );
+  }
+
+  async upsertUserMetricPreferences(
+    userId: string,
+    metrics: UpsertUserMetricPreferenceInput[],
+  ): Promise<UserMetricPreference[]> {
+    return this.prisma.$transaction(
+      metrics.map((metric) =>
+        this.prisma.userMetricPreference.upsert({
+          where: {
+            userId_metricKey: {
+              userId,
+              metricKey: metric.metricKey,
+            },
+          },
+          create: {
+            userId,
+            metricKey: metric.metricKey,
+            enabled: metric.enabled,
+            sortOrder: metric.sortOrder,
+          },
+          update: {
+            enabled: metric.enabled,
             sortOrder: metric.sortOrder,
           },
         }),

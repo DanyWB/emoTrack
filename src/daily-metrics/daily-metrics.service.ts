@@ -1,25 +1,33 @@
 import { Injectable, Logger } from '@nestjs/common';
 import type { DailyMetricDefinition, User } from '@prisma/client';
 
+import {
+  CHECKIN_V2_MAX_OPTIONAL_METRICS,
+  CHECKIN_V2_METRICS,
+  isCheckinV2CoreMetricKey,
+  isCheckinV2MetricKey,
+  isCheckinV2OptionalMetricKey,
+  type CheckinV2MetricKey,
+} from '../checkins/checkins-v2.catalog';
 import { formatLogEvent } from '../common/utils/logging.utils';
 import { type DailyTrackingSelection } from '../common/utils/validation.utils';
 import {
-  DAILY_METRIC_CATALOG,
   type DailyMetricCatalogKey,
   LEGACY_TRACKED_METRIC_MAP,
 } from './daily-metrics.catalog';
 import {
   DailyMetricsRepository,
+  type UpsertUserMetricPreferenceInput,
   type UpsertUserTrackedMetricInput,
   type UserTrackedMetricWithDefinition,
 } from './daily-metrics.repository';
 
-type LegacyTrackingUser = Pick<
+type TrackingUser = Pick<
   User,
   'id' | 'trackMood' | 'trackEnergy' | 'trackStress' | 'trackSleep'
 >;
 
-export type CoreDailyMetricKey = keyof typeof LEGACY_TRACKED_METRIC_MAP;
+export type CoreDailyMetricKey = CheckinV2MetricKey;
 
 export interface TrackedMetricSettingsItem {
   key: DailyMetricCatalogKey;
@@ -28,6 +36,7 @@ export interface TrackedMetricSettingsItem {
   sortOrder: number;
   inputType: DailyMetricDefinition['inputType'];
   isCore: boolean;
+  isSleep: boolean;
 }
 
 export interface EnabledCheckinMetric {
@@ -60,54 +69,48 @@ export class DailyMetricsService {
     return this.dailyMetricsRepository.findUserTrackedMetrics(userId);
   }
 
-  async ensureUserTrackedMetrics(user: LegacyTrackingUser): Promise<void> {
-    const [definitions, existingMetrics] = await Promise.all([
-      this.dailyMetricsRepository.findActiveDefinitions(),
-      this.dailyMetricsRepository.findUserTrackedMetrics(user.id),
+  async ensureUserTrackedMetrics(user: TrackingUser): Promise<void> {
+    await Promise.all([
+      this.ensureLegacyTrackedMetricRows(user),
+      this.ensureProductMetricPreferences(user),
     ]);
+  }
 
-    if (definitions.length === 0) {
-      this.logger.warn(formatLogEvent('daily_metric_catalog_empty', {
-        userId: user.id,
-      }));
-      return;
-    }
+  async getUserTrackedMetricsForSettings(user: TrackingUser): Promise<TrackedMetricSettingsItem[]> {
+    await this.ensureUserTrackedMetrics(user);
 
-    const existingByDefinitionId = new Map(
-      existingMetrics.map((metric) => [metric.metricDefinitionId, metric] as const),
-    );
+    const preferences = await this.dailyMetricsRepository.findUserMetricPreferences(user.id);
+    const preferenceByKey = new Map(preferences.map((preference) => [preference.metricKey, preference] as const));
 
-    const syncPayload: UpsertUserTrackedMetricInput[] = definitions.map((definition) => {
-      const existing = existingByDefinitionId.get(definition.id);
+    const stateMetrics = CHECKIN_V2_METRICS.map((metric) => {
+      const preference = preferenceByKey.get(metric.key);
+      const isCore = metric.type === 'core';
 
       return {
-        metricDefinitionId: definition.id,
-        isEnabled: this.resolveEnabledState(definition, user, existing),
-        sortOrder: existing?.sortOrder ?? definition.sortOrder,
+        key: metric.key as DailyMetricCatalogKey,
+        label: metric.label,
+        enabled: isCore ? true : (preference?.enabled ?? metric.defaultEnabled),
+        sortOrder: preference?.sortOrder ?? metric.sortOrder,
+        inputType: 'score' as DailyMetricDefinition['inputType'],
+        isCore,
+        isSleep: false,
       };
     });
 
-    await this.dailyMetricsRepository.upsertUserTrackedMetrics(user.id, syncPayload);
+    stateMetrics.push({
+      key: 'sleep' as DailyMetricCatalogKey,
+      label: 'Сон',
+      enabled: user.trackSleep,
+      sortOrder: 90,
+      inputType: 'sleep_block' as DailyMetricDefinition['inputType'],
+      isCore: false,
+      isSleep: true,
+    });
+
+    return stateMetrics.sort((left, right) => left.sortOrder - right.sortOrder || left.label.localeCompare(right.label));
   }
 
-  async getUserTrackedMetricsForSettings(user: LegacyTrackingUser): Promise<TrackedMetricSettingsItem[]> {
-    await this.ensureUserTrackedMetrics(user);
-
-    const trackedMetrics = await this.dailyMetricsRepository.findUserTrackedMetrics(user.id);
-
-    return trackedMetrics
-      .map((metric) => ({
-        key: metric.metricDefinition.key as DailyMetricCatalogKey,
-        label: metric.metricDefinition.label,
-        enabled: metric.isEnabled,
-        sortOrder: metric.sortOrder,
-        inputType: metric.metricDefinition.inputType,
-        isCore: this.isCoreMetricKey(metric.metricDefinition.key),
-      }))
-      .sort((left, right) => left.sortOrder - right.sortOrder || left.label.localeCompare(right.label));
-  }
-
-  async getEnabledCheckinMetrics(user: LegacyTrackingUser): Promise<EnabledCheckinMetric[]> {
+  async getEnabledCheckinMetrics(user: TrackingUser): Promise<EnabledCheckinMetric[]> {
     const metrics = await this.getUserTrackedMetricsForSettings(user);
 
     return metrics
@@ -129,60 +132,115 @@ export class DailyMetricsService {
       return;
     }
 
+    const stateMetrics = metrics.filter((metric) => metric.key !== 'sleep');
+    const normalized = this.normalizeProductPreferences(stateMetrics);
+
+    await this.dailyMetricsRepository.upsertUserMetricPreferences(userId, normalized);
+
     const definitions = await this.dailyMetricsRepository.findDefinitionsByKeys(metrics.map((metric) => metric.key));
     const definitionByKey = new Map(definitions.map((definition) => [definition.key, definition] as const));
+    const legacyPayload: UpsertUserTrackedMetricInput[] = metrics
+      .map((metric) => {
+        const definition = definitionByKey.get(metric.key);
 
-    const payload: UpsertUserTrackedMetricInput[] = metrics.map((metric) => {
-      const definition = definitionByKey.get(metric.key);
+        if (!definition) {
+          return null;
+        }
 
-      if (!definition) {
-        throw new Error(`Daily metric definition ${metric.key} not found`);
-      }
+        return {
+          metricDefinitionId: definition.id,
+          isEnabled: metric.enabled,
+          sortOrder: metric.sortOrder,
+        };
+      })
+      .filter((item): item is UpsertUserTrackedMetricInput => item !== null);
 
-      return {
-        metricDefinitionId: definition.id,
-        isEnabled: metric.enabled,
-        sortOrder: metric.sortOrder,
-      };
-    });
-
-    await this.dailyMetricsRepository.upsertUserTrackedMetrics(userId, payload);
+    if (legacyPayload.length > 0) {
+      await this.dailyMetricsRepository.upsertUserTrackedMetrics(userId, legacyPayload);
+    }
   }
 
   getAvailableScoreMetricKeys(): string[] {
-    return DAILY_METRIC_CATALOG.filter((metric) => metric.inputType === 'score').map((metric) => metric.key);
+    return CHECKIN_V2_METRICS.map((metric) => metric.key);
   }
 
-  getLegacyTrackingSelection(user: LegacyTrackingUser): DailyTrackingSelection {
+  getLegacyTrackingSelection(user: TrackingUser): DailyTrackingSelection {
     return {
-      trackMood: user.trackMood,
-      trackEnergy: user.trackEnergy,
-      trackStress: user.trackStress,
+      trackMood: true,
+      trackEnergy: true,
+      trackStress: true,
       trackSleep: user.trackSleep,
     };
   }
 
-  private resolveEnabledState(
-    definition: DailyMetricDefinition,
-    user: LegacyTrackingUser,
-    existing?: UserTrackedMetricWithDefinition,
-  ): boolean {
-    const legacyField = LEGACY_TRACKED_METRIC_MAP[
-      definition.key as keyof typeof LEGACY_TRACKED_METRIC_MAP
-    ];
+  private async ensureLegacyTrackedMetricRows(user: TrackingUser): Promise<void> {
+    const [definitions, existingMetrics] = await Promise.all([
+      this.dailyMetricsRepository.findActiveDefinitions(),
+      this.dailyMetricsRepository.findUserTrackedMetrics(user.id),
+    ]);
 
-    if (legacyField) {
-      return user[legacyField];
+    if (definitions.length === 0) {
+      this.logger.warn(formatLogEvent('daily_metric_catalog_empty', {
+        userId: user.id,
+      }));
+      return;
     }
 
-    if (existing) {
-      return existing.isEnabled;
-    }
+    const existingByDefinitionId = new Map(
+      existingMetrics.map((metric) => [metric.metricDefinitionId, metric] as const),
+    );
 
-    return definition.defaultEnabled;
+    const syncPayload: UpsertUserTrackedMetricInput[] = definitions.map((definition) => {
+      const existing = existingByDefinitionId.get(definition.id);
+      const legacyField = LEGACY_TRACKED_METRIC_MAP[
+        definition.key as keyof typeof LEGACY_TRACKED_METRIC_MAP
+      ];
+
+      return {
+        metricDefinitionId: definition.id,
+        isEnabled: legacyField ? user[legacyField] : (existing?.isEnabled ?? definition.defaultEnabled),
+        sortOrder: existing?.sortOrder ?? definition.sortOrder,
+      };
+    });
+
+    await this.dailyMetricsRepository.upsertUserTrackedMetrics(user.id, syncPayload);
   }
 
-  private isCoreMetricKey(key: string): key is CoreDailyMetricKey {
-    return key in LEGACY_TRACKED_METRIC_MAP;
+  private async ensureProductMetricPreferences(user: TrackingUser): Promise<void> {
+    const existingPreferences = await this.dailyMetricsRepository.findUserMetricPreferences(user.id);
+    const existingByKey = new Map(existingPreferences.map((preference) => [preference.metricKey, preference] as const));
+
+    const payload = CHECKIN_V2_METRICS.map((metric): UpsertUserMetricPreferenceInput => {
+      const existing = existingByKey.get(metric.key);
+      const isCore = metric.type === 'core';
+
+      return {
+        metricKey: metric.key,
+        enabled: isCore ? true : (existing?.enabled ?? metric.defaultEnabled),
+        sortOrder: existing?.sortOrder ?? metric.sortOrder,
+      };
+    });
+
+    await this.dailyMetricsRepository.upsertUserMetricPreferences(user.id, payload);
+  }
+
+  private normalizeProductPreferences(
+    metrics: Array<Pick<TrackedMetricSettingsItem, 'key' | 'enabled' | 'sortOrder'>>,
+  ): UpsertUserMetricPreferenceInput[] {
+    const enabledOptionalCount = metrics.filter(
+      (metric) => isCheckinV2OptionalMetricKey(metric.key) && metric.enabled,
+    ).length;
+
+    if (enabledOptionalCount > CHECKIN_V2_MAX_OPTIONAL_METRICS) {
+      throw new Error('TOO_MANY_OPTIONAL_CHECKIN_METRICS');
+    }
+
+    return metrics
+      .filter((metric) => isCheckinV2MetricKey(metric.key))
+      .map((metric) => ({
+        metricKey: metric.key,
+        enabled: isCheckinV2CoreMetricKey(metric.key) ? true : metric.enabled,
+        sortOrder: metric.sortOrder,
+      }));
   }
 }

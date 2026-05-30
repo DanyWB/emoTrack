@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import {
   type DailyEntryMetricValue,
+  type DailyEntryV2MetricTag,
+  type DailyEntryV2MetricValue,
   type DailyMetricDefinition,
   Prisma,
   SleepMode,
@@ -11,6 +13,7 @@ import {
   type PredefinedTag,
   type ProductEvent,
   type Summary,
+  type UserMetricPreference,
   type UserTrackedMetric,
   type User,
 } from '@prisma/client';
@@ -109,6 +112,7 @@ export class InMemoryUsersRepository {
       notesEnabled: (data.notesEnabled as boolean | undefined) ?? true,
       tagsEnabled: (data.tagsEnabled as boolean | undefined) ?? true,
       eventsEnabled: (data.eventsEnabled as boolean | undefined) ?? true,
+      checkinV2OnboardingCompleted: (data.checkinV2OnboardingCompleted as boolean | undefined) ?? true,
       createdAt: now,
       updatedAt: now,
     };
@@ -146,6 +150,10 @@ export class InMemoryUsersRepository {
     return this.update(id, { consentGiven });
   }
 
+  setCheckinV2OnboardingCompleted(id: string, completed: boolean): Promise<User> {
+    return this.update(id, { checkinV2OnboardingCompleted: completed });
+  }
+
   updateTelegramProfile(id: string, profile: Record<string, unknown>): Promise<User> {
     return this.update(id, profile);
   }
@@ -166,6 +174,7 @@ type InMemoryUserTrackedMetricWithDefinition = UserTrackedMetric & {
 export class InMemoryDailyMetricsRepository {
   private readonly definitions = new Map<string, DailyMetricDefinition>();
   private readonly trackedMetrics = new Map<string, UserTrackedMetric>();
+  private readonly metricPreferences = new Map<string, UserMetricPreference>();
   private readonly metricValues = new Map<string, DailyEntryMetricValue>();
 
   constructor() {
@@ -211,6 +220,12 @@ export class InMemoryDailyMetricsRepository {
       .sort((left, right) => left.sortOrder - right.sortOrder || left.createdAt.getTime() - right.createdAt.getTime());
   }
 
+  async findUserMetricPreferences(userId: string): Promise<UserMetricPreference[]> {
+    return [...this.metricPreferences.values()]
+      .filter((preference) => preference.userId === userId)
+      .sort((left, right) => left.sortOrder - right.sortOrder || left.createdAt.getTime() - right.createdAt.getTime());
+  }
+
   async upsertUserTrackedMetrics(
     userId: string,
     metrics: Array<{ metricDefinitionId: string; isEnabled: boolean; sortOrder: number }>,
@@ -232,6 +247,30 @@ export class InMemoryDailyMetricsRepository {
       };
 
       this.trackedMetrics.set(key, next);
+      return next;
+    });
+  }
+
+  async upsertUserMetricPreferences(
+    userId: string,
+    metrics: Array<{ metricKey: string; enabled: boolean; sortOrder: number }>,
+  ): Promise<UserMetricPreference[]> {
+    const updatedAt = new Date();
+
+    return metrics.map((metric) => {
+      const key = this.buildMetricPreferenceKey(userId, metric.metricKey);
+      const existing = this.metricPreferences.get(key);
+      const next: UserMetricPreference = {
+        id: existing?.id ?? randomUUID(),
+        userId,
+        metricKey: metric.metricKey,
+        enabled: metric.enabled,
+        sortOrder: metric.sortOrder,
+        createdAt: existing?.createdAt ?? updatedAt,
+        updatedAt,
+      };
+
+      this.metricPreferences.set(key, next);
       return next;
     });
   }
@@ -290,6 +329,10 @@ export class InMemoryDailyMetricsRepository {
   private buildTrackedMetricKey(userId: string, metricDefinitionId: string): string {
     return `${userId}:${metricDefinitionId}`;
   }
+
+  private buildMetricPreferenceKey(userId: string, metricKey: string): string {
+    return `${userId}:${metricKey}`;
+  }
 }
 
 export class InMemoryFsmRepository {
@@ -332,6 +375,8 @@ export class InMemoryCheckinsRepository {
   private readonly tagsByEntry = new Map<string, string[]>();
   private readonly eventCounts = new Map<string, number>();
   private readonly metricValues = new Map<string, DailyEntryMetricValue>();
+  private readonly v2MetricValues = new Map<string, DailyEntryV2MetricValue>();
+  private readonly v2MetricTagsByValue = new Map<string, DailyEntryV2MetricTag[]>();
 
   async findByUserAndDate(userId: string, entryDate: Date): Promise<DailyEntry | null> {
     return this.entries.get(this.buildKey(userId, entryDate)) ?? null;
@@ -443,6 +488,22 @@ export class InMemoryCheckinsRepository {
       });
   }
 
+  async findV2MetricValuesByEntryIds(entryIds: string[]): Promise<Array<DailyEntryV2MetricValue & { tags: DailyEntryV2MetricTag[] }>> {
+    return [...this.v2MetricValues.values()]
+      .filter((metricValue) => entryIds.includes(metricValue.dailyEntryId))
+      .map((metricValue) => ({
+        ...metricValue,
+        tags: [...(this.v2MetricTagsByValue.get(metricValue.id) ?? [])],
+      }))
+      .sort((left, right) => {
+        if (left.dailyEntryId !== right.dailyEntryId) {
+          return left.dailyEntryId.localeCompare(right.dailyEntryId);
+        }
+
+        return left.metricKey.localeCompare(right.metricKey);
+      });
+  }
+
   async aggregateMetricAveragesByUserAndDateRange(
     userId: string,
     from: Date,
@@ -502,6 +563,57 @@ export class InMemoryCheckinsRepository {
     });
   }
 
+  async upsertV2MetricValues(
+    dailyEntryId: string,
+    values: Array<{ metricKey: string; ordinalValue: number; tagKeys?: string[] }>,
+  ): Promise<DailyEntryV2MetricValue[]> {
+    const updatedAt = new Date();
+
+    return values.map((metricValue) => {
+      const key = this.buildV2MetricValueKey(dailyEntryId, metricValue.metricKey);
+      const existing = this.v2MetricValues.get(key);
+      const next: DailyEntryV2MetricValue = {
+        id: existing?.id ?? randomUUID(),
+        dailyEntryId,
+        metricKey: metricValue.metricKey,
+        ordinalValue: metricValue.ordinalValue,
+        createdAt: existing?.createdAt ?? updatedAt,
+        updatedAt,
+      };
+      const tagRows = [...new Set(metricValue.tagKeys ?? [])].map((tagKey) => ({
+        id: randomUUID(),
+        dailyEntryMetricValueId: next.id,
+        tagKey,
+      }));
+
+      this.v2MetricValues.set(key, next);
+      this.v2MetricTagsByValue.set(next.id, tagRows);
+      return next;
+    });
+  }
+
+  async replaceV2MetricValues(
+    dailyEntryId: string,
+    values: Array<{ metricKey: string; ordinalValue: number; tagKeys?: string[] }>,
+  ): Promise<DailyEntryV2MetricValue[]> {
+    const incomingKeys = new Set(values.map((metricValue) => metricValue.metricKey));
+
+    for (const [key, metricValue] of this.v2MetricValues.entries()) {
+      if (metricValue.dailyEntryId !== dailyEntryId || incomingKeys.has(metricValue.metricKey)) {
+        continue;
+      }
+
+      this.v2MetricValues.delete(key);
+      this.v2MetricTagsByValue.delete(metricValue.id);
+    }
+
+    if (values.length === 0) {
+      return [];
+    }
+
+    return this.upsertV2MetricValues(dailyEntryId, values);
+  }
+
   listEntries(): DailyEntry[] {
     return [...this.entries.values()].sort((left, right) => left.entryDate.getTime() - right.entryDate.getTime());
   }
@@ -510,6 +622,16 @@ export class InMemoryCheckinsRepository {
     return [...this.metricValues.values()]
       .filter((metricValue) => metricValue.dailyEntryId === entryId)
       .sort((left, right) => left.metricDefinitionId.localeCompare(right.metricDefinitionId));
+  }
+
+  listV2MetricValuesForEntry(entryId: string): Array<DailyEntryV2MetricValue & { tags: DailyEntryV2MetricTag[] }> {
+    return [...this.v2MetricValues.values()]
+      .filter((metricValue) => metricValue.dailyEntryId === entryId)
+      .map((metricValue) => ({
+        ...metricValue,
+        tags: [...(this.v2MetricTagsByValue.get(metricValue.id) ?? [])],
+      }))
+      .sort((left, right) => left.metricKey.localeCompare(right.metricKey));
   }
 
   async findTagIdsByEntryId(entryId: string): Promise<string[]> {
@@ -534,6 +656,10 @@ export class InMemoryCheckinsRepository {
 
   private buildMetricValueKey(dailyEntryId: string, metricDefinitionId: string): string {
     return `${dailyEntryId}:${metricDefinitionId}`;
+  }
+
+  private buildV2MetricValueKey(dailyEntryId: string, metricKey: string): string {
+    return `${dailyEntryId}:${metricKey}`;
   }
 }
 
@@ -843,6 +969,7 @@ export function buildUser(overrides: Partial<User> = {}): User {
     notesEnabled: overrides.notesEnabled ?? true,
     tagsEnabled: overrides.tagsEnabled ?? true,
     eventsEnabled: overrides.eventsEnabled ?? true,
+    checkinV2OnboardingCompleted: overrides.checkinV2OnboardingCompleted ?? true,
     createdAt: overrides.createdAt ?? new Date('2026-03-11T08:00:00.000Z'),
     updatedAt: overrides.updatedAt ?? new Date('2026-03-11T08:00:00.000Z'),
   };

@@ -248,7 +248,7 @@ describe('Prisma database smoke', () => {
     const definitions = await dailyMetricsRepository.findActiveDefinitions();
     const definitionsByKey = new Map(definitions.map((definition) => [definition.key, definition]));
 
-    for (const key of ['mood', 'energy', 'stress', 'sleep', 'joy', 'wellbeing']) {
+    for (const key of ['mood', 'energy', 'calm', 'motivation', 'overall_state', 'sleep']) {
       expect(definitionsByKey.has(key)).toBe(true);
     }
 
@@ -260,9 +260,17 @@ describe('Prisma database smoke', () => {
       inputType: 'sleep_block',
       defaultEnabled: true,
     });
-    expect(definitionsByKey.get('joy')).toMatchObject({
+    expect(definitionsByKey.get('calm')).toMatchObject({
       inputType: 'score',
-      defaultEnabled: false,
+      defaultEnabled: true,
+    });
+    expect(definitionsByKey.get('motivation')).toMatchObject({
+      inputType: 'score',
+      defaultEnabled: true,
+    });
+    expect(definitionsByKey.get('overall_state')).toMatchObject({
+      inputType: 'score',
+      defaultEnabled: true,
     });
   });
 

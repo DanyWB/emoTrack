@@ -14,7 +14,6 @@ describe('CheckinsService', () => {
   function createService(): {
     service: CheckinsService;
     repository: InMemoryCheckinsRepository;
-    dailyMetricsRepository: InMemoryDailyMetricsRepository;
   } {
     const repository = new InMemoryCheckinsRepository();
     const eventsService = new EventsService(new InMemoryEventsRepository() as never, createConfigService());
@@ -33,20 +32,36 @@ describe('CheckinsService', () => {
       }),
     );
 
-    return { service, repository, dailyMetricsRepository };
+    return { service, repository };
   }
 
-  it('creates a daily entry when none exists for the day', async () => {
+  function listV2MetricValuesByKey(repository: InMemoryCheckinsRepository, entryId: string) {
+    return Object.fromEntries(
+      repository
+        .listV2MetricValuesForEntry(entryId)
+        .map((metricValue) => [
+          metricValue.metricKey,
+          {
+            ordinalValue: metricValue.ordinalValue,
+            tagKeys: metricValue.tags.map((tag) => tag.tagKey),
+          },
+        ]),
+    );
+  }
+
+  it('creates a daily entry with v2 metric values when none exists for the day', async () => {
     const { service, repository } = createService();
 
     const result = await service.upsertTodayEntry(
       'user-1',
       {
-        moodScore: 6,
-        energyScore: 5,
-        stressScore: 4,
+        v2MetricValues: [
+          { key: 'mood', ordinalValue: 4, tagKeys: ['mood_calm'] },
+          { key: 'energy', ordinalValue: 3, tagKeys: ['energy_even'] },
+          { key: 'calm', ordinalValue: 2, tagKeys: ['calm_tense'] },
+        ],
         sleepHours: 7.5,
-        sleepQuality: 8,
+        sleepQuality: 4,
       },
       {
         date: new Date('2026-03-11T10:15:00.000Z'),
@@ -57,24 +72,31 @@ describe('CheckinsService', () => {
     expect(result.isUpdate).toBe(false);
     expect(repository.listEntries()).toHaveLength(1);
     expect(repository.listEntries()[0]).toMatchObject({
-      moodScore: 6,
-      energyScore: 5,
-      stressScore: 4,
-      sleepQuality: 8,
+      moodScore: null,
+      energyScore: null,
+      stressScore: null,
+      sleepQuality: 4,
+    });
+    expect(listV2MetricValuesByKey(repository, result.entry.id)).toMatchObject({
+      mood: { ordinalValue: 4, tagKeys: ['mood_calm'] },
+      energy: { ordinalValue: 3, tagKeys: ['energy_even'] },
+      calm: { ordinalValue: 2, tagKeys: ['calm_tense'] },
     });
   });
 
-  it('updates the same entry on a repeated same-day check-in', async () => {
+  it('updates the same entry and replaces v2 metric tags on a repeated same-day check-in', async () => {
     const { service, repository } = createService();
 
     const first = await service.upsertTodayEntry(
       'user-1',
       {
-        moodScore: 5,
-        energyScore: 4,
-        stressScore: 6,
+        v2MetricValues: [
+          { key: 'mood', ordinalValue: 3, tagKeys: ['mood_unclear'] },
+          { key: 'energy', ordinalValue: 2 },
+          { key: 'calm', ordinalValue: 3 },
+        ],
         sleepHours: 7,
-        sleepQuality: 6,
+        sleepQuality: 3,
       },
       {
         date: new Date('2026-03-11T08:00:00.000Z'),
@@ -84,11 +106,13 @@ describe('CheckinsService', () => {
     const second = await service.upsertTodayEntry(
       'user-1',
       {
-        moodScore: 8,
-        energyScore: 7,
-        stressScore: 3,
+        v2MetricValues: [
+          { key: 'mood', ordinalValue: 5, tagKeys: ['mood_joyful', 'mood_inspired'] },
+          { key: 'energy', ordinalValue: 4 },
+          { key: 'calm', ordinalValue: 4 },
+        ],
         sleepHours: 8,
-        sleepQuality: 8,
+        sleepQuality: 4,
       },
       {
         date: new Date('2026-03-11T19:30:00.000Z'),
@@ -101,79 +125,57 @@ describe('CheckinsService', () => {
     expect(repository.listEntries()).toHaveLength(1);
     expect(repository.listEntries()[0]).toMatchObject({
       id: first.entry.id,
-      moodScore: 8,
-      energyScore: 7,
-      stressScore: 3,
-      sleepQuality: 8,
+      sleepQuality: 4,
+    });
+    expect(listV2MetricValuesByKey(repository, second.entry.id)).toMatchObject({
+      mood: { ordinalValue: 5, tagKeys: ['mood_joyful', 'mood_inspired'] },
+      energy: { ordinalValue: 4, tagKeys: [] },
+      calm: { ordinalValue: 4, tagKeys: [] },
     });
   });
 
-  it('aggregates extra metric averages for a period without loading per-entry metric views', async () => {
-    const { service, repository, dailyMetricsRepository } = createService();
+  it('attaches v2 optional metric values for period reads', async () => {
+    const { service, repository } = createService();
 
     const first = await repository.upsertByUserAndDate('user-1', new Date('2026-03-09T00:00:00.000Z'), {
-      moodScore: 6,
-      energyScore: 5,
-      stressScore: 4,
+      moodScore: null,
+      energyScore: null,
+      stressScore: null,
     });
     const second = await repository.upsertByUserAndDate('user-1', new Date('2026-03-10T00:00:00.000Z'), {
-      moodScore: 7,
-      energyScore: 6,
-      stressScore: 3,
+      moodScore: null,
+      energyScore: null,
+      stressScore: null,
     });
 
-    const definitionsByKey = new Map(
-      dailyMetricsRepository.listDefinitions().map((definition) => [definition.key, definition.id] as const),
-    );
-
-    await repository.upsertMetricValues(first.id, [
-      {
-        metricDefinitionId: definitionsByKey.get('joy')!,
-        value: 7,
-      },
-      {
-        metricDefinitionId: definitionsByKey.get('wellbeing')!,
-        value: 6,
-      },
-      {
-        metricDefinitionId: definitionsByKey.get('mood')!,
-        value: 6,
-      },
+    await repository.upsertV2MetricValues(first.id, [
+      { metricKey: 'mood', ordinalValue: 4 },
+      { metricKey: 'motivation', ordinalValue: 3, tagKeys: ['motivation_neutral'] },
+      { metricKey: 'overall_state', ordinalValue: 2, tagKeys: ['overall_heavy'] },
     ]);
-    await repository.upsertMetricValues(second.id, [
-      {
-        metricDefinitionId: definitionsByKey.get('joy')!,
-        value: 9,
-      },
-      {
-        metricDefinitionId: definitionsByKey.get('wellbeing')!,
-        value: 8,
-      },
-      {
-        metricDefinitionId: definitionsByKey.get('stress')!,
-        value: 3,
-      },
+    await repository.upsertV2MetricValues(second.id, [
+      { metricKey: 'mood', ordinalValue: 5 },
+      { metricKey: 'motivation', ordinalValue: 4, tagKeys: ['motivation_interesting'] },
+      { metricKey: 'overall_state', ordinalValue: 3 },
     ]);
 
-    const averages = await service.getExtraMetricAveragesForPeriod(
+    const entries = await service.getEntriesForPeriodWithV2Metrics(
       'user-1',
       new Date('2026-03-09T00:00:00.000Z'),
       new Date('2026-03-10T00:00:00.000Z'),
     );
 
-    expect(averages).toEqual([
-      {
-        key: 'joy',
-        label: 'Радость',
-        average: 8,
-        observationsCount: 2,
-      },
-      {
-        key: 'wellbeing',
-        label: 'Самочувствие',
-        average: 7,
-        observationsCount: 2,
-      },
-    ]);
+    expect(entries).toHaveLength(2);
+    expect(entries[0]?.checkinMetrics.map((metric) => metric.key)).toEqual(['mood', 'motivation', 'overall_state']);
+    expect(entries[0]?.checkinMetrics.find((metric) => metric.key === 'motivation')).toMatchObject({
+      label: 'Мотивация',
+      ordinalValue: 3,
+      tags: [{ key: 'motivation_neutral', label: 'нейтрально' }],
+    });
+    expect(entries[1]?.checkinMetrics.find((metric) => metric.key === 'overall_state')).toMatchObject({
+      label: 'Общее состояние',
+      ordinalValue: 3,
+      tags: [],
+    });
   });
 });

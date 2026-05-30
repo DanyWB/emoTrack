@@ -10,7 +10,7 @@ describe('formatHistoryEntries', () => {
           energyScore: 6,
           stressScore: 4,
           sleepHours: 7.5,
-          sleepQuality: 8,
+          sleepQuality: 4,
           hasNote: true,
           tagsCount: 2,
           eventsCount: 2,
@@ -30,8 +30,8 @@ describe('formatHistoryEntries', () => {
 
     expect(text).toContain(telegramCopy.history.moreTitle);
     expect(text).toContain('📅 <b>12.03.2026</b>');
-    expect(text).toContain('настроение <b>7</b> · энергия <b>6</b> · стресс <b>4</b>');
-    expect(text).toContain('😴 <b>Сон</b>: 7.5 ч · качество 8');
+    expect(text).toContain('настроение <b>7</b> · энергия <b>6</b> · спокойствие <b>4</b>');
+    expect(text).toContain('😴 <b>Сон</b>: 7.5 ч · качество Хорошо восстановил');
     expect(text).toContain('📝 заметка · 🏷 2 тега · 🗂 2 события');
     expect(text).toContain('📅 <b>11.03.2026</b>');
     expect(text).toContain('🗂 0 событий');

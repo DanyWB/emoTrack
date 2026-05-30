@@ -10,7 +10,7 @@ The bot helps a user:
 - complete onboarding with consent, optional reminder setup, and an immediate first check-in offer
 - log one daily check-in per day
 - update the same day entry instead of creating duplicates
-- add an optional note, predefined tags, and an event
+- add optional metric-scoped tags, a note, and an event
 - create standalone single-day or bounded multi-day events
 - use `/menu` for secondary navigation while the bottom keyboard keeps only the two frequent actions
 - view recent history
@@ -169,7 +169,8 @@ The project includes:
 - Prisma schema
 - migrations
 - idempotent seed for predefined tags
-- idempotent seed for the daily metric catalog used by the configurable check-in groundwork
+- idempotent seed for legacy predefined tags and the legacy daily metric catalog
+- an additive Check-in v2 migration that creates normalized metric tables and backfills legacy numeric check-ins
 
 ### 5. Run the Bot Locally
 
@@ -466,95 +467,75 @@ Current first-run behavior is product-first:
 Current check-in behavior is intentionally conservative:
 
 - `/checkin` resumes an active check-in instead of silently resetting progress
-- `Back` is available on optional note/tag/event branches where the FSM supports it
-- score-step prompts now make the active metric explicit in the bold step title, for example `Шаг 1/5 · Настроение`
+- score prompts use semantic 1..5 labels, not visible numeric 1..10 scales
+- the fixed core metrics are `Настроение`, `Энергия`, and `Спокойствие`
+- each metric immediately opens its own predefined tag screen after the score; up to 2 tags can be selected per metric
+- `Back` is available on metric tag, review, sleep, note, and event branches where the FSM supports it
+- score-step prompts make the active metric explicit in the bold step title, for example `1/5 · Настроение`
+- after all active state metrics and sleep fields, the user sees a review screen before data is saved
 - note copy explains that a note is free-form context attached to the daily check-in, while events are separate categorized facts
 - score, skip, back, note, tag, and check-in event callbacks refresh the current inline screen where possible instead of producing a stack of prompts
 - final confirmation from an inline check-in callback removes the previous inline screen before sending the saved-entry confirmation
-- if a user returns to core sleep steps after already saving optional note/tag data in the same flow, the final confirmation still reflects that saved optional data
+- if a user returns to review or sleep steps after already saving optional note/event data in the same flow, the final confirmation still reflects saved optional data
 - final confirmation is compact and reports only values and optional data that were actually saved
-- draft tag selections are not reported as saved until the user confirms them with `Готово`
-- tag selection updates the existing inline message as tags are toggled, so the chat does not fill with duplicate tag prompts
+- draft metric-tag selections are not reported as saved until the user confirms them with `Готово`
+- metric-tag selection updates the existing inline message as tags are toggled, so the chat does not fill with duplicate tag prompts
 - if the check-in FSM loses context, the user gets a safe restart message instead of a raw or ambiguous error
 - same-day upsert behavior remains unchanged: one normalized day key, one `DailyEntry`
 
 ## Configurable Check-in
 
-Configurable check-in now uses the catalog-backed tracked-metrics layer for the daily flow.
+Check-in v2 uses a code-defined product metric catalog and normalized metric storage.
 
-- `users` now store per-metric tracking flags:
-  - `trackMood`
-  - `trackEnergy`
-  - `trackStress`
-  - `trackSleep`
-- `daily_entries.moodScore`
-- `daily_entries.energyScore`
-- `daily_entries.stressScore`
-  are nullable in the schema so disabled metrics do not require fake zero values
-- existing users keep the original effective behavior because all tracking flags default to `true`
-- `/settings` shows a separate `Критерии check-in` submenu backed by `user_tracked_metrics`
-- the submenu now exposes the current metric catalog used by the Telegram check-in flow:
-  - mood
-  - energy
-  - stress
-  - sleep
-  - joy
-  - sadness
-  - anxiety
-  - irritation
-  - motivation
-  - concentration
-  - wellbeing
-- the check-in flow builds its metric steps dynamically in a fixed order:
-  - core metrics first:
-    - mood
-    - energy
-    - stress
-    - sleep
-  - then enabled extra score metrics from the catalog
-- sleep remains a dedicated block and still follows the current `sleepMode`
-- a user must keep at least one daily metric enabled
-- same-day update behavior stays patch-like:
-  - only prompted metrics are updated
-  - disabled metrics are not silently cleared from an existing same-day entry
-- persistence is backward-compatible:
-  - mood/energy/stress are dual-written to legacy `DailyEntry` fields and to `daily_entry_metric_values`
-  - extra score metrics are written to `daily_entry_metric_values`
-  - sleep stays in the legacy sleep fields for now
+- Core metrics are always active and cannot be disabled:
+  - `mood` / `Настроение`
+  - `energy` / `Энергия`
+  - `calm` / `Спокойствие`
+- Optional state metrics are managed in `/settings`:
+  - `motivation` / `Мотивация`
+  - `overall_state` / `Общее состояние`
+  - `clarity` / `Ясность головы`
+  - `social` / `Желание общаться`
+  - `physical_state` / `Физическое состояние`
+- Product defaults enable `motivation` and `overall_state`; the other optional metrics are available but off.
+- At most 3 optional state metrics can be enabled at once.
+- Sleep remains a separate check-in block controlled by `trackSleep` and `sleepMode`; sleep quality is now also stored as an ordinal 1..5 semantic value.
+- Existing users see the new Check-in v2 onboarding before their next `/checkin`; history, stats, settings, and other product routes remain available.
 
-## Daily Metric Catalog Groundwork
+## Check-in v2 Data Model
 
-The project includes a backward-compatible metric catalog layer that is now active for tracked-metric selection and generic score persistence.
+`DailyEntry` remains the day container, while new state answers are stored in normalized rows:
 
-- Prisma now stores:
-  - `daily_metric_definitions`
-  - `user_tracked_metrics`
-  - `daily_entry_metric_values`
-- the seeded metric catalog currently includes:
-  - core metrics:
-    - mood
-    - energy
-    - stress
-    - sleep
-  - additional score-based metrics:
-    - joy
-    - sadness
-    - anxiety
-    - irritation
-    - motivation
-    - concentration
-    - wellbeing
-- `UsersService` lazily syncs `user_tracked_metrics` for existing and new users so the catalog can be introduced without a destructive rollout
-- the `Критерии check-in` submenu reads from `user_tracked_metrics` and keeps legacy core flags synchronized for backward compatibility
-- `daily_entry_metric_values` is now actively used by the check-in flow for:
-  - dual-write of core score metrics
-  - storage of enabled extra score metrics
-- saved extra score metrics are now visible again on the user-facing read-path:
-  - `/history` renders them as a compact extra-metrics line per entry
-  - `/stats` includes them in the text summary as averaged extra metrics
-- historical extra-metric visibility no longer depends on the metric definition staying active in the catalog:
-  - if an extra score was saved earlier, `/history` and `/stats` continue to show it even after that metric is later disabled or marked inactive
-- charts still keep their accepted legacy metric set and are not expanded by generic catalog metrics in this step
+- `daily_entry_v2_metric_values`
+  - `dailyEntryId`
+  - `metricKey`
+  - `ordinalValue` from 1 to 5
+  - unique `(dailyEntryId, metricKey)`
+- `daily_entry_v2_metric_tags`
+  - `dailyEntryMetricValueId`
+  - metric-scoped `tagKey`
+  - unique `(dailyEntryMetricValueId, tagKey)`
+- `user_metric_preferences`
+  - `userId`
+  - `metricKey`
+  - `enabled`
+  - `sortOrder`
+  - unique `(userId, metricKey)`
+
+Metric definitions live in code in `src/checkins/checkins-v2.catalog.ts`, not in the database. The catalog includes labels, prompts, semantic scale labels, tag metadata, core/optional flags, defaults, sort order, and max tag count.
+
+The migration is additive and backfills legacy data:
+
+- legacy `moodScore` and `energyScore` 1..10 are mapped to ordinal 1..5
+- legacy `stressScore` 1..10 is reversed into `calm` 1..5
+- legacy generic `motivation`/`motivation_score`, `wellbeing`, and `concentration` are mapped where possible
+- old optional preferences for matching legacy metrics are preserved where possible
+- legacy `sleepQuality` is converted to 1..5
+- the `daily_entries.sleepQuality` database check is tightened to the semantic 1..5 range
+- old numeric fields remain for transition and backward-compatible reads
+- repeated same-day Check-in v2 saves replace the current v2 metric set for that day, so disabled optional metrics do not leave stale values in the refreshed entry
+
+See [docs/CHECKIN_V2_MIGRATION.md](docs/CHECKIN_V2_MIGRATION.md) for local and server migration notes.
 
 ## History UX Notes
 
@@ -562,11 +543,13 @@ Current `/history` behavior stays intentionally simple, but the Telegram text is
 
 - the first page shows the most recent 5 entries in a compact Telegram-friendly layout
 - each history row now includes an inline `Открыть` action for a full entry view
-- each item shows a bold date, mood/energy/stress when present, sleep data when present, and an icon summary line for note, tags, and linked events
-- if an entry contains saved extra score metrics, `/history` adds one compact formatted `Доп. метрики` line for them
-- extra-only entries do not render a useless empty core placeholder line; the first meaningful metric line is shown instead
+- each item shows a bold date, semantic check-in metrics when present, sleep data when present, and an icon summary line for note, tags, and linked events
+- if an entry contains saved optional v2 metrics, `/history` renders them with the same semantic metric line as core metrics
+- migrated legacy optional rows that were already backfilled into v2 metrics are filtered from the legacy extra-metric line to avoid duplicate history output
+- optional-only entries do not render a useless empty legacy core placeholder line; the first meaningful metric line is shown instead
 - opening an entry shows a detail view with:
   - all saved score metrics
+  - metric-scoped Check-in v2 tag details
   - sleep data
   - full note text
   - attached tags
@@ -576,7 +559,7 @@ Current `/history` behavior stays intentionally simple, but the Telegram text is
 - history day counts are overlap-aware for events: a multi-day event is counted on each day in its inclusive span
 - older entries are loaded through a single inline `Еще` action
 - `Еще` edits the same history message instead of appending duplicate history blocks
-- history messages are sent with HTML parse mode and escape user-provided note, tag, event, and custom metric text before rendering
+- history messages are sent with HTML parse mode and escape user-provided note, event, and metric text before rendering
 - stale `Еще` and stale `Открыть` callbacks degrade gracefully and ask the user to open `/history` again
 
 ## Event Model Notes
@@ -605,10 +588,10 @@ Current `/settings` behavior stays within the original scope, but is clearer abo
 - the settings screen shows reminder state, reminder time, weekly digest runtime status, sleep mode, tracked daily metrics, and whether background auto-reminders are actually available
 - when jobs are disabled locally, reminder preferences are still saved, but the bot explicitly distinguishes between “settings saved” and “background delivery unavailable in this environment”
 - tracked daily metrics are managed in a separate `Критерии check-in` submenu inside `/settings`
-- that submenu is backed by `user_tracked_metrics`, while legacy core flags are kept synchronized so the current check-in flow remains stable
-- the submenu now includes both core metrics and the currently supported extra score metrics from the catalog
-- the submenu explicitly says that changing criteria affects future daily prompts only and does not rewrite historical entries
-- the settings layer rejects configurations that would disable all daily metrics at once
+- that submenu shows immutable core metrics, toggleable optional state metrics, and a separate sleep block
+- optional state metric preferences are backed by `user_metric_preferences`; sleep still uses `trackSleep` and `sleepMode`
+- the settings layer rejects attempts to disable core metrics
+- the settings layer rejects enabling more than 3 optional state metrics at once
 
 ## Stats Readability Notes
 
@@ -620,6 +603,8 @@ Current `/stats` behavior is now intentionally lightweight for Telegram:
 - the bot then shows a compact single-metric summary instead of a large all-in-one analytics screen
 - this keeps Telegram stats useful and fast, while deeper analytics remain out of scope for the current bot UI
 - stats selectors label the cancel action as `В меню` and return to the navigation menu by editing the current inline screen
+- after a metric is opened from an inline selector, the summary edits the same stats message and keeps buttons for `К метрикам`, `Сменить период`, and `В меню`
+- when a user returns from a stats summary or switches away from it, previously sent stats chart messages are deleted best-effort to avoid cluttering the chat
 
 Low-data contract:
 
@@ -633,10 +618,11 @@ Current selected-metric behavior:
 
 - score metrics use a compact summary for the selected metric only
 - sleep remains a dedicated special-case metric with sleep-specific counts and averages
-- extra score metrics from `daily_entry_metric_values` are first-class options in the metric selector when they are enabled for the user
-- if an extra score was saved earlier, it remains visible on the stats read-path even after that metric is later disabled or marked inactive
+- optional v2 state metrics from `daily_entry_v2_metric_values` are first-class options in the metric selector when they are enabled for the user
+- if an optional metric was saved earlier, it remains visible on the stats read-path even after that metric is later disabled in settings
 - the best/worst day block remains mood-based:
   - it is shown only when the selected metric is `mood` and mood data exists
+  - mood ties are resolved by energy and then by `calm`, where a higher calm ordinal is better
   - it stays hidden for non-mood metrics and for mood periods without usable mood data
 - comparison and pattern logic keep their accepted semantics and are not expanded into a broader analytics browser in this step
 
@@ -645,13 +631,13 @@ Current chart behavior:
 - a selected score metric gets one single-metric line chart
 - a selected sleep metric uses the existing sleep chart path
 - selected chart captions now include both the metric and the chosen period
-- extra-only datasets no longer try to send an empty legacy combined chart
+- optional-only datasets no longer try to send an empty legacy combined chart
+- chart messages are still separate Telegram photo messages, but their message ids are tracked in the existing FSM payload during the active stats flow for cleanup on navigation
 - chart failure fallback is unchanged: the user still receives the text summary
 
 Internal note:
 
-- the `all-time` stats path now aggregates extra-metric averages at repository level instead of loading all generic metric values in memory only for summary formatting
-- this is an internal optimization only; visible `/stats` semantics stay the same
+- stats and summaries read the normalized v2 metric model first and fall back to safely mapped legacy numeric values during transition
 
 Stage B comparison and pattern notes:
 

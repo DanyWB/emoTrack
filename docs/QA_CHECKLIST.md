@@ -50,6 +50,16 @@ Use this checklist before a local handoff or release candidate review.
 - choosing `Позже` on the first check-in offer removes the inline offer where possible, shows the main menu, and explains the main benefits
 - choosing `Позже` also opens the inline navigation menu after the explanatory message
 
+## Check-in v2 Onboarding
+
+- existing onboarded users who have not completed Check-in v2 onboarding see the v2 explainer before `/checkin`
+- Check-in v2 onboarding blocks only `/checkin`; `/history`, `/stats`, `/settings`, `/event`, `/help`, and `/terms` remain available
+- v2 onboarding explains that check-in now uses words instead of a 1..10 scale
+- v2 onboarding explains the 3 immutable core metrics
+- v2 onboarding explains optional metrics and where to configure them
+- v2 onboarding explains that tags are optional and selected after each metric
+- after v2 onboarding, the first guided check-in starts normally
+
 ## Existing User `/start`
 
 - existing onboarded user sends `/start`
@@ -72,27 +82,28 @@ Use this checklist before a local handoff or release candidate review.
 
 ### Sleep Mode: `hours`
 
-- `/checkin` asks for mood
-- asks for energy
-- asks for stress
+- `/checkin` shows semantic word buttons, not 1..10 numeric buttons
+- asks for `Настроение`, then immediately offers up to 2 mood tags
+- asks for `Энергия`, then immediately offers up to 2 energy tags
+- asks for `Спокойствие`, then immediately offers up to 2 calm tags
+- asks for enabled optional metrics such as `Мотивация` and `Общее состояние`
 - asks only for sleep hours
+- shows the review screen before saving
 - check-in can be completed successfully
 
 ### Sleep Mode: `quality`
 
-- `/checkin` asks for mood
-- asks for energy
-- asks for stress
-- asks only for sleep quality
+- `/checkin` asks for all active state metrics with semantic word buttons and per-metric tags
+- asks only for semantic sleep quality
+- shows the review screen before saving
 - check-in can be completed successfully
 
 ### Sleep Mode: `both`
 
-- `/checkin` asks for mood
-- asks for energy
-- asks for stress
+- `/checkin` asks for all active state metrics with semantic word buttons and per-metric tags
 - asks for sleep hours
-- asks for sleep quality
+- asks for semantic sleep quality
+- shows the review screen before saving
 - check-in can be completed successfully
 
 ## Check-in Navigation
@@ -101,27 +112,29 @@ Use this checklist before a local handoff or release candidate review.
 - `Отмена` clears active check-in flow safely and returns to navigation instead of only saying “cancelled”
 - `Назад` works on multi-step check-in
 - running `/checkin` during an active check-in resumes the current step instead of resetting progress
-- check-in score prompts have bold step titles that name the active metric, such as `Шаг 1/5 · Настроение`
+- check-in score prompts have bold step titles that name the active metric, such as `1/5 · Настроение`
 - tapping score/back/skip buttons refreshes the current inline check-in prompt where possible instead of adding a new prompt each time
 - when `Назад` is available in a check-in/event prompt, the same inline row does not also show generic `Отмена`
-- `Back` is available on the optional note prompt
-- after going back from optional steps to sleep/core steps, already saved note/tag data is still reflected in the final confirmation
+- `Back` is available on metric tags, review edit, event prompt, and optional note prompt
+- `Изменить ответы` on the review screen lets the user choose the exact metric or sleep field to edit
+- after going back from optional steps to review/sleep/metric steps, already saved note/event data is still reflected in the final confirmation
 - invalid score input shows Russian validation error
 - invalid sleep-hours input shows Russian validation error
 
 ## Configurable Check-in
 
 - in `/settings`, open `Критерии check-in`
-- verify that the submenu shows both core metrics and extra score metrics such as `Радость`
-- verify that the submenu explains that changed criteria affect future daily prompts only and do not rewrite history
-- disable `Энергия` and `Сон`
-- `/checkin` now asks only for the remaining enabled metrics in the configured order
-- enable `Радость`
-- `/checkin` now includes an extra score step for `Радость` after the enabled core metrics
-- final confirmation shows only the metrics that were actually tracked, including enabled extra score metrics
-- when only one daily metric remains enabled, trying to disable it is rejected
-- when the last remaining tracked metric is the current sleep step, `Пропустить` does not allow saving an empty entry
-- after changing tracked metrics, the refreshed `Критерии check-in` screen shows the new current-state metric list
+- verify that core metrics `Настроение`, `Энергия`, and `Спокойствие` are shown as always enabled and cannot be disabled
+- verify that optional metrics `Мотивация`, `Общее состояние`, `Ясность головы`, `Желание общаться`, and `Физическое состояние` are shown as toggles
+- verify that `Мотивация` and `Общее состояние` are enabled by default
+- verify that `Ясность головы`, `Желание общаться`, and `Физическое состояние` are off by default
+- verify that `Сон` is shown separately and follows the sleep-mode setting
+- disable `Сон`
+- `/checkin` no longer asks sleep questions but still asks all core metrics
+- enable `Ясность головы`
+- `/checkin` now includes `Ясность головы` after default optional metrics
+- try enabling a fourth optional metric and verify the max-3 optional guard text
+- final confirmation shows semantic labels, selected metric tags, sleep status, event status, and note status
 
 ## Same-Day Upsert
 
@@ -129,20 +142,23 @@ Use this checklist before a local handoff or release candidate review.
 - user runs `/checkin` again on the same day
 - existing `DailyEntry` is updated
 - duplicate `DailyEntry` is not created
-- if some core metrics were later disabled in `/settings`, a same-day re-check-in updates only the prompted metrics and keeps the old unprompted legacy values untouched
-- if an extra score metric was recorded earlier in the day and later disabled in `Критерии check-in`, a same-day re-check-in keeps the old generic metric value untouched
+- updated v2 metric values replace the previous same-day value for the same metric
+- updated metric tags replace the previous same-day tags for the same metric
+- if an optional metric was recorded earlier today and then disabled before a repeated same-day check-in, the refreshed entry no longer keeps the stale optional metric row
+- if an optional metric was saved on an older day and later disabled in `Критерии check-in`, historical reads still show the old saved value
 
 ## Optional Check-in Data
 
 - note step accepts a valid text note
 - note prompt explains that notes are free-form context attached to the daily check-in and gives a concrete example
 - too-long note is rejected
-- tag selection allows multi-select
-- tapping tag buttons updates the existing tag-selection message instead of sending a new tag prompt each time
-- if Telegram cannot edit the old tag-selection message, the bot falls back to one normal reply
-- tag selection saves without duplicate relations
-- skipping the tag-selection screen after selecting draft tags does not report those draft tags as saved
+- metric tag selection allows multi-select up to 2 tags per metric
+- tapping metric tag buttons updates the existing tag-selection message instead of sending a new tag prompt each time
+- if Telegram cannot edit the old metric tag-selection message, the bot falls back to one normal reply
+- metric tag selection saves without duplicate relations
+- skipping the metric tag-selection screen does not report draft tags as saved
 - event can be added from the check-in continuation
+- adding an event from check-in returns to the optional note prompt before final confirmation
 - final confirmation reflects optional data correctly
 - when final confirmation is reached from an inline check-in callback, the previous inline prompt is removed where Telegram allows it
 - final confirmation stays compact and only lists saved/tracked values
@@ -168,13 +184,14 @@ Use this checklist before a local handoff or release candidate review.
 - `/history` works for a user with entries
 - entries are ordered descending by date
 - the first history page stays compact and readable in Telegram
-- each history item shows a bold date and mood/energy/stress when present
-- sleep data appears when present
-- if an entry has saved extra score metrics, `/history` shows a compact `Доп. метрики` line for them
-- extra score metrics remain visible in `/history` even if their metric definition was later marked inactive
-- an extra-only history entry does not show the empty legacy core placeholder line
+- each history item shows a bold date and semantic state metrics when present
+- sleep data appears with semantic sleep-quality wording when present
+- optional v2 metrics remain visible in `/history` even if they were later disabled in settings
+- migrated optional metrics do not appear twice as both semantic v2 metrics and legacy numeric extra metrics
+- opening a history entry shows metric-scoped Check-in v2 tag details under `Уточнения`
+- an optional-only history entry does not show the empty legacy core placeholder line
 - history list items use a compact summary line for note, tags, and linked events
-- opening a history entry shows clearly separated sections for state, sleep, full note text, tags, extra metrics, and day events
+- opening a history entry shows clearly separated sections for state, sleep, full note text, legacy entry tags if present, and day events
 - empty note/tag/event sections are hidden in the detail view instead of showing placeholder dashes
 - the detail view can return to the same history page without duplicating messages
 - stale `Открыть` callbacks degrade gracefully back to the regular history entry point
@@ -191,6 +208,11 @@ Use this checklist before a local handoff or release candidate review.
 - `В меню` from the period or metric selector returns to `/menu` by editing the current stats message
 - the metric selector shows only the user's enabled metrics from the `Check-in criteria` submenu
 - the metric selector shows the light-stats helper text about one metric at a time
+- choosing a metric from the selector edits the current stats message into loading and then into the selected metric summary
+- the selected metric summary keeps inline buttons for `К метрикам`, `Сменить период`, and `В меню`
+- `К метрикам` returns to the metric selector without requiring `/stats` again
+- `Сменить период` returns to the period selector without requiring `/stats` again
+- returning from a metric summary deletes previously sent stats chart messages where Telegram allows it
 - stale or unknown stats metric callbacks re-open the metric selector and do not generate a summary
 - selecting an enabled score metric returns a single-metric summary text
 - selecting `sleep` returns the sleep-specific summary text
@@ -198,9 +220,8 @@ Use this checklist before a local handoff or release candidate review.
 - with 1-2 entries, `/stats` returns a preliminary low-data summary without charts
 - with 3 or more entries, `/stats` returns the full selected-metric summary path
 - the selected summary includes counts and averages for that metric only
-- extra score metrics remain visible in `/stats` even if their metric definition was later marked inactive
-- extra score metrics remain visible in `/stats` even if they were later disabled in the `Check-in criteria` submenu
-- an extra-only user can still complete the full `/stats` flow for an enabled extra metric
+- optional v2 metrics remain visible in `/stats` even if they were later disabled in the `Check-in criteria` submenu
+- an optional-only user can still complete the full `/stats` flow for an enabled optional metric
 - a mood-only stats dataset still shows the best/worst day block when `mood` is selected
 - when the selected metric is not `mood`, the best/worst day block stays hidden
 - when a stats period has no mood data, the best/worst day block stays hidden
@@ -217,8 +238,8 @@ Use this checklist before a local handoff or release candidate review.
 - selecting a score metric sends one single-metric line chart when there is enough data
 - selecting `sleep` sends the existing sleep chart when sleep data exists
 - selected chart captions include both the metric and the chosen period
-- an extra-only stats dataset does not send an empty legacy combined chart
-- a sleep-only or sleep-plus-extra dataset can still send the sleep chart
+- an optional-only stats dataset does not send an empty legacy combined chart
+- a sleep-only or sleep-plus-optional dataset can still send the sleep chart
 - compact mood strip is sent only when the dataset stays readable and is not overly dense
 - charts are skipped for low-data periods with fewer than 3 entries
 - on a normal `3-5` entry dataset, the selected-metric chart remains readable
@@ -232,9 +253,10 @@ Use this checklist before a local handoff or release candidate review.
 - current settings screen shows reminder state, reminder time, weekly digest runtime status, sleep mode, tracked daily metrics, and current auto-reminder runtime status
 - `Критерии check-in` opens as a separate submenu from the main settings screen
 - settings submenu buttons refresh the current inline settings message where possible
-- opening the submenu lazily syncs `user_tracked_metrics` if they are missing for the user
-- the submenu can enable and disable both core metrics and supported extra score metrics
-- trying to disable the last remaining daily metric shows the generic guard text `Нужно оставить хотя бы одну ежедневную метрику.`
+- opening the submenu lazily syncs `user_metric_preferences` if they are missing for the user
+- the submenu shows immutable core metrics, optional metric toggles, and sleep separately
+- trying to disable a core metric shows `Основные метрики check-in нельзя выключить.`
+- trying to enable more than 3 optional metrics shows the optional-metric limit text
 - reminders can be toggled on and off
 - enabling reminders with `JOBS_ENABLED=false` keeps settings saved but does not imply background delivery is active
 - reminder time can be updated
@@ -342,12 +364,17 @@ Run this section only when an isolated local PostgreSQL test database is availab
 - `npm run verify` passes before release/handoff when DB smoke tests are available
 - release/runbook docs were reviewed before handoff
 
-## Daily Metric Catalog Groundwork
+## Check-in v2 Data Model
 
 - `npm run prisma:migrate` creates:
-  - `daily_metric_definitions`
-  - `user_tracked_metrics`
-  - `daily_entry_metric_values`
-- `npm run prisma:seed` populates the daily metric catalog idempotently
-- a newly created or freshly loaded user gets `user_tracked_metrics` rows lazily through the service layer
-- current Telegram UX still behaves like the accepted core-metric toggle flow and does not yet expose the full metric catalog directly
+  - `daily_entry_v2_metric_values`
+  - `daily_entry_v2_metric_tags`
+  - `user_metric_preferences`
+- `users.checkinV2OnboardingCompleted` exists and defaults to `false`
+- existing legacy mood/energy/stress rows are backfilled into v2 metric rows
+- existing legacy stress is reversed into `calm`
+- existing legacy sleep quality is converted to ordinal 1..5
+- `daily_entries.sleepQuality` rejects values outside the semantic 1..5 range after migration
+- v2 metric values have no ordinal values outside 1..5
+- metric tags are scoped by metric value and cannot duplicate the same tag for the same metric value
+- read paths for `/history`, `/stats`, summaries, charts, and weekly digest work for both migrated v2 rows and legacy fallback rows

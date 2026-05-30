@@ -28,7 +28,6 @@ describe('Telegram access integration', () => {
         generatePeriodCharts: jest.fn(),
       } as never,
       ctx.remindersService,
-      ctx.tagsService,
       ctx.fsmService,
       ctx.analyticsService,
       ctx.adminService,

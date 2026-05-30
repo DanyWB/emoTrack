@@ -1,7 +1,12 @@
-﻿import { SummaryPeriodType } from '@prisma/client';
+import { SummaryPeriodType } from '@prisma/client';
 
 import { TelegramRouter } from '../../src/telegram/telegram.router';
-import { STATS_METRIC_LABELS, STATS_PERIOD_LABELS, formatStatsSelectedMetricChartCaption, telegramCopy } from '../../src/telegram/telegram.copy';
+import {
+  STATS_METRIC_LABELS,
+  STATS_PERIOD_LABELS,
+  formatStatsSelectedMetricChartCaption,
+  telegramCopy,
+} from '../../src/telegram/telegram.copy';
 import { buildUser } from '../helpers/in-memory';
 import { createIntegrationTestContext, type IntegrationTestContext } from '../helpers/test-context';
 
@@ -23,63 +28,75 @@ describe('Summaries integration', () => {
         telegramId: BigInt(7001),
         onboardingCompleted: true,
         consentGiven: true,
+        checkinV2OnboardingCompleted: true,
         reminderTime: '21:30',
       }),
     );
   }
 
-  async function attachEntryMetricValues(entryId: string, values: Record<string, number>): Promise<void> {
-    const definitionsByKey = new Map(
-      ctx.dailyMetricsRepository.listDefinitions().map((definition) => [definition.key, definition.id] as const),
-    );
-
-    await ctx.checkinsRepository.upsertMetricValues(
+  async function attachV2MetricValues(entryId: string, values: Record<string, number>): Promise<void> {
+    await ctx.checkinsRepository.upsertV2MetricValues(
       entryId,
-      Object.entries(values).map(([key, value]) => {
-        const metricDefinitionId = definitionsByKey.get(key);
-
-        if (!metricDefinitionId) {
-          throw new Error(`Metric definition ${key} not found`);
-        }
-
-        return {
-          metricDefinitionId,
-          value,
-        };
-      }),
+      Object.entries(values).map(([key, value]) => ({
+        metricKey: key,
+        ordinalValue: value,
+      })),
     );
   }
 
-  it('builds and persists a normal summary payload through the real stats path', async () => {
-    const user = await createReadyUser();
+  function createRouter(charts: { generateSelectedMetricChart: jest.Mock }) {
+    return new TelegramRouter(
+      ctx.usersService,
+      ctx.onboardingFlow,
+      ctx.checkinsFlow,
+      ctx.checkinsService,
+      ctx.eventsFlow,
+      ctx.summariesService,
+      charts as never,
+      ctx.remindersService,
+      ctx.fsmService,
+      ctx.analyticsService,
+      ctx.adminService,
+    );
+  }
+
+  async function seedThreeLegacyEntries(userId: string) {
     const today = ctx.checkinsService.buildEntryDate({
       date: new Date(),
-      timezone: user.timezone,
+      timezone: 'Europe/Berlin',
     });
     const yesterday = new Date(today.getTime() - 24 * 60 * 60 * 1000);
     const twoDaysAgo = new Date(today.getTime() - 2 * 24 * 60 * 60 * 1000);
 
-    await ctx.checkinsRepository.upsertByUserAndDate(user.id, twoDaysAgo, {
+    const firstEntry = await ctx.checkinsRepository.upsertByUserAndDate(userId, twoDaysAgo, {
       moodScore: 5,
       energyScore: 5,
       stressScore: 6,
       sleepHours: 6.5,
-      sleepQuality: 5,
+      sleepQuality: 3,
     });
-    await ctx.checkinsRepository.upsertByUserAndDate(user.id, yesterday, {
+    const secondEntry = await ctx.checkinsRepository.upsertByUserAndDate(userId, yesterday, {
       moodScore: 6,
       energyScore: 5,
       stressScore: 4,
       sleepHours: 7,
-      sleepQuality: 6,
+      sleepQuality: 4,
     });
-    await ctx.checkinsRepository.upsertByUserAndDate(user.id, today, {
+    const thirdEntry = await ctx.checkinsRepository.upsertByUserAndDate(userId, today, {
       moodScore: 8,
       energyScore: 7,
       stressScore: 3,
       sleepHours: 7.5,
-      sleepQuality: 8,
+      sleepQuality: 5,
     });
+
+    return { today, firstEntry, secondEntry, thirdEntry };
+  }
+
+  it('builds and persists a normal summary payload through the v2 stats read path', async () => {
+    const user = await createReadyUser();
+    const { today } = await seedThreeLegacyEntries(user.id);
+
     await ctx.eventsService.createEvent(user.id, {
       eventType: 'work',
       title: 'Sprint review',
@@ -97,11 +114,11 @@ describe('Summaries integration', () => {
     expect(payload.eventsCount).toBe(1);
     expect(payload.isLowData).toBe(false);
     expect(payload.averages).toMatchObject({
-      mood: 6.33,
-      energy: 5.67,
-      stress: 4.33,
+      mood: 3.33,
+      energy: 3.33,
+      stress: 3.67,
       sleepHours: 7,
-      sleepQuality: 6.33,
+      sleepQuality: 4,
     });
     expect(payload.patternInsights).toBeNull();
     expect(ctx.summariesRepository.summaries).toHaveLength(1);
@@ -109,52 +126,14 @@ describe('Summaries integration', () => {
     expect(text).toContain(telegramCopy.stats.daysLabel);
   });
 
-  it('shows extra tracked metrics in the stats text without changing legacy summary semantics', async () => {
+  it('shows v2 optional metrics in the stats text independently from current settings', async () => {
     const user = await createReadyUser();
-    const today = ctx.checkinsService.buildEntryDate({
-      date: new Date(),
-      timezone: user.timezone,
-    });
-    const yesterday = new Date(today.getTime() - 24 * 60 * 60 * 1000);
-    const twoDaysAgo = new Date(today.getTime() - 2 * 24 * 60 * 60 * 1000);
+    const { firstEntry, secondEntry, thirdEntry } = await seedThreeLegacyEntries(user.id);
 
-    const firstEntry = await ctx.checkinsRepository.upsertByUserAndDate(user.id, twoDaysAgo, {
-      moodScore: 5,
-      energyScore: 5,
-      stressScore: 6,
-      sleepHours: 6.5,
-      sleepQuality: 5,
-    });
-    const secondEntry = await ctx.checkinsRepository.upsertByUserAndDate(user.id, yesterday, {
-      moodScore: 6,
-      energyScore: 5,
-      stressScore: 4,
-      sleepHours: 7,
-      sleepQuality: 6,
-    });
-    const thirdEntry = await ctx.checkinsRepository.upsertByUserAndDate(user.id, today, {
-      moodScore: 8,
-      energyScore: 7,
-      stressScore: 3,
-      sleepHours: 7.5,
-      sleepQuality: 8,
-    });
-
-    await attachEntryMetricValues(firstEntry.id, {
-      joy: 7,
-    });
-    await attachEntryMetricValues(secondEntry.id, {
-      joy: 8,
-      wellbeing: 6,
-    });
-    await attachEntryMetricValues(thirdEntry.id, {
-      joy: 9,
-      wellbeing: 8,
-    });
-    await ctx.usersService.setTrackedMetric(user.id, 'joy', true);
-    await ctx.usersService.setTrackedMetric(user.id, 'wellbeing', true);
-    await ctx.usersService.setTrackedMetric(user.id, 'joy', false);
-    await ctx.usersService.setTrackedMetric(user.id, 'wellbeing', false);
+    await attachV2MetricValues(firstEntry.id, { motivation: 3 });
+    await attachV2MetricValues(secondEntry.id, { motivation: 4, overall_state: 3 });
+    await attachV2MetricValues(thirdEntry.id, { motivation: 5, overall_state: 4 });
+    await ctx.usersService.setTrackedMetric(user.id, 'motivation', false);
 
     const payload = await ctx.summariesService.generateSummary(user.id, SummaryPeriodType.d7, {
       timezone: user.timezone,
@@ -164,71 +143,24 @@ describe('Summaries integration', () => {
 
     expect(payload.extraMetricAverages).toEqual([
       {
-        key: 'joy',
-        label: 'Радость',
-        average: 8,
+        key: 'motivation',
+        label: 'Мотивация',
+        average: 4,
         observationsCount: 3,
       },
       {
-        key: 'wellbeing',
-        label: 'Самочувствие',
-        average: 7,
+        key: 'overall_state',
+        label: 'Общее состояние',
+        average: 3.5,
         observationsCount: 2,
       },
     ]);
     expect(text).toContain(telegramCopy.stats.extraMetricsLabel);
-    expect(text).toContain('- Радость: 8.00');
-    expect(text).toContain('- Самочувствие: 7.00');
+    expect(text).toContain('- Мотивация: 4.00');
+    expect(text).toContain('- Общее состояние: 3.50');
   });
 
-  it('keeps historical extra metrics visible in the stats summary when their definition becomes inactive', async () => {
-    const user = await createReadyUser();
-    const today = ctx.checkinsService.buildEntryDate({
-      date: new Date(),
-      timezone: user.timezone,
-    });
-    const yesterday = new Date(today.getTime() - 24 * 60 * 60 * 1000);
-    const twoDaysAgo = new Date(today.getTime() - 2 * 24 * 60 * 60 * 1000);
-
-    const firstEntry = await ctx.checkinsRepository.upsertByUserAndDate(user.id, twoDaysAgo, {
-      moodScore: 5,
-      energyScore: 5,
-      stressScore: 6,
-    });
-    const secondEntry = await ctx.checkinsRepository.upsertByUserAndDate(user.id, yesterday, {
-      moodScore: 6,
-      energyScore: 5,
-      stressScore: 4,
-    });
-    const thirdEntry = await ctx.checkinsRepository.upsertByUserAndDate(user.id, today, {
-      moodScore: 8,
-      energyScore: 7,
-      stressScore: 3,
-    });
-
-    await attachEntryMetricValues(firstEntry.id, { joy: 7 });
-    await attachEntryMetricValues(secondEntry.id, { joy: 8 });
-    await attachEntryMetricValues(thirdEntry.id, { joy: 9 });
-    ctx.dailyMetricsRepository.setDefinitionActive('joy', false);
-
-    const payload = await ctx.summariesService.generateSummary(user.id, SummaryPeriodType.d7, {
-      timezone: user.timezone,
-      persist: false,
-    });
-    const text = ctx.summariesService.formatSummaryText(payload);
-    const joyAverage = payload.extraMetricAverages.find((metric) => metric.key === 'joy');
-
-    expect(payload.extraMetricAverages).toEqual([
-      expect.objectContaining({
-        key: 'joy',
-        average: 8,
-      }),
-    ]);
-    expect(joyAverage).toBeDefined();
-    expect(text).toContain(`- ${joyAverage?.label}: 8.00`);
-  });
-
-  it('renders an extra-only stats summary without legacy noise or best-day block', async () => {
+  it('renders an optional-only stats summary without legacy core noise or best-day blocks', async () => {
     const user = await createReadyUser();
     const today = ctx.checkinsService.buildEntryDate({
       date: new Date(),
@@ -251,43 +183,33 @@ describe('Summaries integration', () => {
       stressScore: null,
     });
 
-    await attachEntryMetricValues(firstEntry.id, {
-      joy: 7,
-      wellbeing: 6,
-    });
-    await attachEntryMetricValues(secondEntry.id, {
-      joy: 8,
-      wellbeing: 7,
-    });
-    await attachEntryMetricValues(thirdEntry.id, {
-      joy: 9,
-      wellbeing: 8,
-    });
+    await attachV2MetricValues(firstEntry.id, { motivation: 3, overall_state: 2 });
+    await attachV2MetricValues(secondEntry.id, { motivation: 4, overall_state: 3 });
+    await attachV2MetricValues(thirdEntry.id, { motivation: 5, overall_state: 4 });
 
     const payload = await ctx.summariesService.generateSummary(user.id, SummaryPeriodType.d7, {
       timezone: user.timezone,
       persist: false,
     });
     const text = ctx.summariesService.formatSummaryText(payload);
-    const joyAverage = payload.extraMetricAverages.find((metric) => metric.key === 'joy');
-    const wellbeingAverage = payload.extraMetricAverages.find((metric) => metric.key === 'wellbeing');
 
     expect(payload.bestDay).toBeNull();
     expect(payload.worstDay).toBeNull();
-    expect(joyAverage).toBeDefined();
-    expect(wellbeingAverage).toBeDefined();
+    expect(payload.extraMetricAverages).toEqual([
+      expect.objectContaining({ key: 'motivation', average: 4 }),
+      expect.objectContaining({ key: 'overall_state', average: 3 }),
+    ]);
     expect(text).toContain(`${telegramCopy.stats.averagesLabel}:`);
-    expect(text).toContain(`- ${joyAverage?.label}: 8.00`);
-    expect(text).toContain(`- ${wellbeingAverage?.label}: 7.00`);
+    expect(text).toContain('- Мотивация: 4.00');
+    expect(text).toContain('- Общее состояние: 3.00');
     expect(text).not.toContain(`- ${STATS_METRIC_LABELS.mood}:`);
     expect(text).not.toContain(`- ${STATS_METRIC_LABELS.energy}:`);
-    expect(text).not.toContain(`- ${STATS_METRIC_LABELS.stress}:`);
-    expect(text).not.toContain(`${telegramCopy.stats.extraMetricsLabel}:`);
+    expect(text).not.toContain(`- ${STATS_METRIC_LABELS.calm}:`);
     expect(text).not.toContain(telegramCopy.stats.bestDayLabel);
     expect(text).not.toContain(telegramCopy.stats.worstDayLabel);
   });
 
-  it('renders the best/worst day block for a mood-only dataset without requiring full core scores', async () => {
+  it('renders the best/worst day block for a mood-only dataset after legacy mapping', async () => {
     const user = await createReadyUser();
     const today = ctx.checkinsService.buildEntryDate({
       date: new Date(),
@@ -318,13 +240,13 @@ describe('Summaries integration', () => {
 
     expect(payload.bestDay).toMatchObject({
       date: expect.any(String),
-      moodScore: 8,
+      moodScore: 4,
       energyScore: null,
       stressScore: null,
     });
     expect(payload.worstDay).toMatchObject({
       date: expect.any(String),
-      moodScore: 5,
+      moodScore: 3,
       energyScore: null,
       stressScore: null,
     });
@@ -332,7 +254,7 @@ describe('Summaries integration', () => {
     expect(text).toContain(telegramCopy.stats.worstDayLabel);
   });
 
-  it('keeps the same mixed summary semantics on the all-time stats path after aggregated extra-metric reads', async () => {
+  it('keeps mixed summary semantics on the all-time stats path with v2 optional metrics', async () => {
     const user = await createReadyUser();
 
     const firstEntry = await ctx.checkinsRepository.upsertByUserAndDate(user.id, new Date('2026-03-05T00:00:00.000Z'), {
@@ -340,26 +262,26 @@ describe('Summaries integration', () => {
       energyScore: 5,
       stressScore: 6,
       sleepHours: 6.5,
-      sleepQuality: 5,
+      sleepQuality: 3,
     });
     const secondEntry = await ctx.checkinsRepository.upsertByUserAndDate(user.id, new Date('2026-03-09T00:00:00.000Z'), {
       moodScore: 6,
       energyScore: 5,
       stressScore: 4,
       sleepHours: 7,
-      sleepQuality: 6,
+      sleepQuality: 4,
     });
     const thirdEntry = await ctx.checkinsRepository.upsertByUserAndDate(user.id, new Date('2026-03-12T00:00:00.000Z'), {
       moodScore: 8,
       energyScore: 7,
       stressScore: 3,
       sleepHours: 7.5,
-      sleepQuality: 8,
+      sleepQuality: 5,
     });
 
-    await attachEntryMetricValues(firstEntry.id, { joy: 7 });
-    await attachEntryMetricValues(secondEntry.id, { joy: 8, wellbeing: 6 });
-    await attachEntryMetricValues(thirdEntry.id, { joy: 9, wellbeing: 8 });
+    await attachV2MetricValues(firstEntry.id, { motivation: 3 });
+    await attachV2MetricValues(secondEntry.id, { motivation: 4, overall_state: 3 });
+    await attachV2MetricValues(thirdEntry.id, { motivation: 5, overall_state: 4 });
 
     const payload = await ctx.summariesService.generateSummary(user.id, SummaryPeriodType.all, {
       timezone: user.timezone,
@@ -369,26 +291,26 @@ describe('Summaries integration', () => {
 
     expect(payload.entriesCount).toBe(3);
     expect(payload.averages).toMatchObject({
-      mood: 6.33,
-      energy: 5.67,
-      stress: 4.33,
+      mood: 3.33,
+      energy: 3.33,
+      stress: 3.67,
     });
     expect(payload.extraMetricAverages).toEqual([
       {
-        key: 'joy',
-        label: 'Радость',
-        average: 8,
+        key: 'motivation',
+        label: 'Мотивация',
+        average: 4,
         observationsCount: 3,
       },
       {
-        key: 'wellbeing',
-        label: 'Самочувствие',
-        average: 7,
+        key: 'overall_state',
+        label: 'Общее состояние',
+        average: 3.5,
         observationsCount: 2,
       },
     ]);
-    expect(text).toContain('- Радость: 8.00');
-    expect(text).toContain('- Самочувствие: 7.00');
+    expect(text).toContain('- Мотивация: 4.00');
+    expect(text).toContain('- Общее состояние: 3.50');
   });
 
   it('builds comparison and conservative pattern blocks when the dataset is strong enough', async () => {
@@ -403,11 +325,11 @@ describe('Summaries integration', () => {
       const isHighSleepDay = index < 3;
 
       await ctx.checkinsRepository.upsertByUserAndDate(user.id, entryDate, {
-        moodScore: isHighSleepDay ? 8 : 6,
-        energyScore: isHighSleepDay ? 8 : 5,
-        stressScore: isHighSleepDay ? 3 : 5,
+        moodScore: 6,
+        energyScore: isHighSleepDay ? 10 : 3,
+        stressScore: 5,
         sleepHours: isHighSleepDay ? 8 : 5,
-        sleepQuality: isHighSleepDay ? 8 : 6,
+        sleepQuality: 4,
       });
     }
 
@@ -419,7 +341,7 @@ describe('Summaries integration', () => {
         energyScore: 4,
         stressScore: 6,
         sleepHours: 6,
-        sleepQuality: 6,
+        sleepQuality: 4,
       });
     }
 
@@ -431,11 +353,11 @@ describe('Summaries integration', () => {
 
     expect(payload.isLowData).toBe(false);
     expect(payload.deltaVsPreviousPeriod).toMatchObject({
-      mood: 1.86,
-      energy: 2.29,
-      stress: -1.86,
+      mood: 0,
+      energy: 1.29,
+      stress: 0,
       sleepHours: 0.29,
-      sleepQuality: 0.86,
+      sleepQuality: 0,
     });
     expect(payload.patternInsights?.sleepState).toEqual({
       kind: 'sleep_hours_energy',
@@ -447,7 +369,6 @@ describe('Summaries integration', () => {
     expect(text).toContain(telegramCopy.stats.patternsLabel);
     expect(text).toContain('3.00');
   });
-
 
   it('uses the low-data selected-metric summary path and skips charts for sparse periods', async () => {
     const user = await createReadyUser();
@@ -468,23 +389,9 @@ describe('Summaries integration', () => {
       stressScore: 3,
     });
 
-    const router = new TelegramRouter(
-      ctx.usersService,
-      ctx.onboardingFlow,
-      ctx.checkinsFlow,
-      ctx.checkinsService,
-      ctx.eventsFlow,
-      ctx.summariesService,
-      {
-        generateSelectedMetricChart: jest.fn().mockResolvedValue(Buffer.from('selected-chart')),
-      } as never,
-      ctx.remindersService,
-      ctx.tagsService,
-      ctx.fsmService,
-      ctx.analyticsService,
-      ctx.adminService,
-    );
-
+    const router = createRouter({
+      generateSelectedMetricChart: jest.fn().mockResolvedValue(Buffer.from('selected-chart')),
+    });
     const telegramCtx = {
       reply: jest.fn().mockResolvedValue(undefined),
       replyWithPhoto: jest.fn().mockResolvedValue(undefined),
@@ -523,40 +430,26 @@ describe('Summaries integration', () => {
       energyScore: 6,
       stressScore: 5,
       sleepHours: 7,
-      sleepQuality: 6,
+      sleepQuality: 4,
     });
     await ctx.checkinsRepository.upsertByUserAndDate(user.id, yesterday, {
       moodScore: 7,
       energyScore: 6,
       stressScore: 4,
       sleepHours: 7,
-      sleepQuality: 7,
+      sleepQuality: 4,
     });
     await ctx.checkinsRepository.upsertByUserAndDate(user.id, today, {
       moodScore: 8,
       energyScore: 7,
       stressScore: 4,
       sleepHours: 7,
-      sleepQuality: 7,
+      sleepQuality: 4,
     });
 
-    const router = new TelegramRouter(
-      ctx.usersService,
-      ctx.onboardingFlow,
-      ctx.checkinsFlow,
-      ctx.checkinsService,
-      ctx.eventsFlow,
-      ctx.summariesService,
-      {
-        generateSelectedMetricChart: jest.fn().mockRejectedValue(new Error('chart failed')),
-      } as never,
-      ctx.remindersService,
-      ctx.tagsService,
-      ctx.fsmService,
-      ctx.analyticsService,
-      ctx.adminService,
-    );
-
+    const router = createRouter({
+      generateSelectedMetricChart: jest.fn().mockRejectedValue(new Error('chart failed')),
+    });
     const telegramCtx = {
       reply: jest.fn().mockResolvedValue(undefined),
       replyWithPhoto: jest.fn().mockResolvedValue(undefined),
@@ -582,52 +475,10 @@ describe('Summaries integration', () => {
 
   it('sends a selected metric chart image for a normal dataset when a chart buffer is available', async () => {
     const user = await createReadyUser();
-    const today = ctx.checkinsService.buildEntryDate({
-      date: new Date(),
-      timezone: user.timezone,
+    await seedThreeLegacyEntries(user.id);
+    const router = createRouter({
+      generateSelectedMetricChart: jest.fn().mockResolvedValue(Buffer.from('selected')),
     });
-    const yesterday = new Date(today.getTime() - 24 * 60 * 60 * 1000);
-    const twoDaysAgo = new Date(today.getTime() - 2 * 24 * 60 * 60 * 1000);
-
-    await ctx.checkinsRepository.upsertByUserAndDate(user.id, twoDaysAgo, {
-      moodScore: 5,
-      energyScore: 5,
-      stressScore: 6,
-      sleepHours: 6.5,
-      sleepQuality: 5,
-    });
-    await ctx.checkinsRepository.upsertByUserAndDate(user.id, yesterday, {
-      moodScore: 6,
-      energyScore: 5,
-      stressScore: 4,
-      sleepHours: 7,
-      sleepQuality: 6,
-    });
-    await ctx.checkinsRepository.upsertByUserAndDate(user.id, today, {
-      moodScore: 8,
-      energyScore: 7,
-      stressScore: 3,
-      sleepHours: 7.5,
-      sleepQuality: 8,
-    });
-
-    const router = new TelegramRouter(
-      ctx.usersService,
-      ctx.onboardingFlow,
-      ctx.checkinsFlow,
-      ctx.checkinsService,
-      ctx.eventsFlow,
-      ctx.summariesService,
-      {
-        generateSelectedMetricChart: jest.fn().mockResolvedValue(Buffer.from('selected')),
-      } as never,
-      ctx.remindersService,
-      ctx.tagsService,
-      ctx.fsmService,
-      ctx.analyticsService,
-      ctx.adminService,
-    );
-
     const telegramCtx = {
       reply: jest.fn().mockResolvedValue(undefined),
       replyWithPhoto: jest.fn().mockResolvedValue(undefined),

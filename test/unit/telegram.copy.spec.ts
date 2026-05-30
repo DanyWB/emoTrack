@@ -8,11 +8,31 @@
 describe('formatCheckinConfirmation', () => {
   it('formats a concise confirmation with combined sleep and extras', () => {
     const text = formatCheckinConfirmation({
-      moodScore: 8,
-      energyScore: 7,
-      stressScore: 3,
+      checkinMetrics: [
+        {
+          key: 'mood',
+          label: 'Настроение',
+          ordinalValue: 4,
+          scaleLabel: 'Хорошее',
+          tags: [{ key: 'mood_calm', label: 'спокойное' }],
+        },
+        {
+          key: 'energy',
+          label: 'Энергия',
+          ordinalValue: 2,
+          scaleLabel: 'Мало сил',
+          tags: [],
+        },
+        {
+          key: 'calm',
+          label: 'Спокойствие',
+          ordinalValue: 2,
+          scaleLabel: 'Напряженно',
+          tags: [{ key: 'calm_anxious', label: 'тревожно' }],
+        },
+      ],
       sleepHours: 7.5,
-      sleepQuality: 8,
+      sleepQuality: 4,
       updated: true,
       noteAdded: true,
       tagsCount: 2,
@@ -20,8 +40,12 @@ describe('formatCheckinConfirmation', () => {
     });
 
     expect(text).toContain('✅ <b>Запись за сегодня обновлена</b>');
-    expect(text).toContain('🌡 Состояние: настроение 8, энергия 7, стресс 3');
-    expect(text).toContain('😴 Сон: 7.5 ч, качество 8');
+    expect(text).toContain('Настроение — <b>Хорошее</b>');
+    expect(text).toContain('Энергия — <b>Мало сил</b>');
+    expect(text).toContain('Спокойствие — <b>Напряженно</b>');
+    expect(text).toContain('Настроение — спокойное');
+    expect(text).toContain('Спокойствие — тревожно');
+    expect(text).toContain('😴 Сон: 7.5 ч, качество Хорошо восстановил');
     expect(text).toContain('➕ Добавлено: заметка, 2 тега, событие');
   });
 
@@ -44,7 +68,7 @@ describe('formatCheckinConfirmation', () => {
       updated: false,
     });
 
-    expect(text).toContain('🌡 Состояние: настроение 9, стресс 3');
+    expect(text).toContain('🌡 Состояние: настроение 9, спокойствие 3');
     expect(text).not.toContain('энергия');
     expect(text).not.toContain('😴 Сон:');
   });
@@ -96,7 +120,7 @@ describe('formatHistoryEntries', () => {
         energyScore: 7,
         stressScore: 3,
         sleepHours: 7.5,
-        sleepQuality: 8,
+        sleepQuality: 4,
         extraMetricScores: [
           {
             key: 'joy',
@@ -116,8 +140,8 @@ describe('formatHistoryEntries', () => {
     ]);
 
     expect(text).toContain('📅 <b>12.03.2026</b>');
-    expect(text).toContain('настроение <b>8</b> · энергия <b>7</b> · стресс <b>3</b>');
-    expect(text).toContain('😴 <b>Сон</b>: 7.5 ч · качество 8');
+    expect(text).toContain('настроение <b>8</b> · энергия <b>7</b> · спокойствие <b>3</b>');
+    expect(text).toContain('😴 <b>Сон</b>: 7.5 ч · качество Хорошо восстановил');
     expect(text).toContain('🧩 <b>Доп. метрики</b>: Радость <b>8</b>, Самочувствие <b>6</b>');
     expect(text).toContain('📝 заметка · 🏷 2 тега · 🗂 2 события');
   });
@@ -145,7 +169,7 @@ describe('formatHistoryEntries', () => {
 
     expect(text).toContain('🧩 <b>Доп. метрики</b>: Радость <b>8</b>');
     expect(text).toContain('🗂 0 событий');
-    expect(text).not.toContain('Настроение / энергия / стресс: — / — / —');
+    expect(text).not.toContain('Настроение / энергия / спокойствие: — / — / —');
   });
 });
 
@@ -157,7 +181,7 @@ describe('formatHistoryEntryDetail', () => {
       energyScore: 7,
       stressScore: 3,
       sleepHours: 7.5,
-      sleepQuality: 8,
+      sleepQuality: 4,
       extraMetricScores: [
         {
           key: 'joy',
@@ -187,8 +211,8 @@ describe('formatHistoryEntryDetail', () => {
 
     expect(text).toContain('Запись за 12.03.2026');
     expect(text).toContain('Состояние');
-    expect(text).toContain('настроение <b>8</b> · энергия <b>7</b> · стресс <b>3</b>');
-    expect(text).toContain('<b>😴 Сон</b>\n7.5 ч, качество 8');
+    expect(text).toContain('настроение <b>8</b> · энергия <b>7</b> · спокойствие <b>3</b>');
+    expect(text).toContain('<b>😴 Сон</b>\n7.5 ч, качество Хорошо восстановил');
     expect(text).toContain('🧩 <b>Доп. метрики</b>: Радость <b>8</b>');
     expect(text).toContain('<b>📝 Заметка</b>\nBusy day');
     expect(text).toContain('<b>🏷 Теги</b>\n• Тревога');

@@ -102,20 +102,32 @@ describe('StatsService', () => {
         energyScore: 8,
         stressScore: 4,
       }),
+      buildDailyEntry({
+        entryDate: new Date('2026-03-12T00:00:00.000Z'),
+        moodScore: 9,
+        energyScore: 8,
+        stressScore: 5,
+      }),
+      buildDailyEntry({
+        entryDate: new Date('2026-03-13T00:00:00.000Z'),
+        moodScore: 4,
+        energyScore: 6,
+        stressScore: 2,
+      }),
     ];
 
     expect(service.findBestDay(entries)).toEqual({
-      date: '2026-03-11',
+      date: '2026-03-12',
       moodScore: 9,
       energyScore: 8,
-      stressScore: 4,
+      stressScore: 5,
     });
 
     expect(service.findWorstDay(entries)).toEqual({
-      date: '2026-03-09',
+      date: '2026-03-13',
       moodScore: 4,
       energyScore: 6,
-      stressScore: 8,
+      stressScore: 2,
     });
   });
 
@@ -174,25 +186,31 @@ describe('StatsService', () => {
   it('calculates delta versus previous period when both ranges have data', async () => {
     const checkinsService = {
       buildEntryDate: jest.fn().mockReturnValue(new Date('2026-03-11T00:00:00.000Z')),
-      getEntriesForPeriod: jest
+      getEntriesForPeriodWithV2Metrics: jest
         .fn()
         .mockResolvedValueOnce([
-          buildDailyEntry({
-            moodScore: 5,
-            energyScore: 4,
-            stressScore: 7,
-            sleepHours: null,
-            sleepQuality: 5,
-          }),
+          {
+            ...buildDailyEntry({
+              moodScore: 5,
+              energyScore: 4,
+              stressScore: 7,
+              sleepHours: null,
+              sleepQuality: 5,
+            }),
+            checkinMetrics: [],
+          },
         ])
         .mockResolvedValueOnce([
-          buildDailyEntry({
-            moodScore: 8,
-            energyScore: 6,
-            stressScore: 3,
-            sleepHours: null,
-            sleepQuality: 7,
-          }),
+          {
+            ...buildDailyEntry({
+              moodScore: 8,
+              energyScore: 6,
+              stressScore: 3,
+              sleepHours: null,
+              sleepQuality: 7,
+            }),
+            checkinMetrics: [],
+          },
         ]),
     };
     const service = new StatsService(checkinsService as never, {} as never);
@@ -209,7 +227,7 @@ describe('StatsService', () => {
       energy: 2,
       stress: -4,
       sleepHours: null,
-      sleepQuality: 2,
+      sleepQuality: -1,
     });
   });
 
@@ -283,9 +301,9 @@ describe('StatsService', () => {
   it('adds lightweight chart annotations from existing stats payload semantics', async () => {
     const missingSleepEntry = buildDailyEntry({
       entryDate: new Date('2026-03-09T00:00:00.000Z'),
-      moodScore: 4,
-      energyScore: 5,
-      stressScore: 7,
+      moodScore: 2,
+      energyScore: 3,
+      stressScore: 2,
     });
     missingSleepEntry.sleepHours = null;
     missingSleepEntry.sleepQuality = null;
@@ -294,15 +312,15 @@ describe('StatsService', () => {
       missingSleepEntry,
       buildDailyEntry({
         entryDate: new Date('2026-03-10T00:00:00.000Z'),
-        moodScore: 8,
-        energyScore: 7,
-        stressScore: 3,
+        moodScore: 5,
+        energyScore: 4,
+        stressScore: 4,
       }),
       buildDailyEntry({
         entryDate: new Date('2026-03-11T00:00:00.000Z'),
-        moodScore: 6,
-        energyScore: 6,
-        stressScore: 4,
+        moodScore: 3,
+        energyScore: 3,
+        stressScore: 3,
       }),
     ];
     const events = [
@@ -315,7 +333,12 @@ describe('StatsService', () => {
     const checkinsService = {
       buildEntryDate: jest.fn().mockReturnValue(new Date('2026-03-11T00:00:00.000Z')),
       getEntriesForPeriod: jest.fn().mockResolvedValue(entries),
-      getExtraMetricAveragesForPeriod: jest.fn().mockResolvedValue([]),
+      getEntriesForPeriodWithV2Metrics: jest.fn().mockResolvedValue(
+        entries.map((entry) => ({
+          ...entry,
+          checkinMetrics: [],
+        })),
+      ),
     };
     const eventsService = {
       getEventsForPeriod: jest.fn().mockResolvedValue(events),

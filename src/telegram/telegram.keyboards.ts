@@ -2,6 +2,7 @@
 import { Markup } from 'telegraf';
 
 import { TELEGRAM_CALLBACKS, TELEGRAM_MAIN_MENU_BUTTONS } from '../common/constants/app.constants';
+import type { CheckinV2ScaleOption, CheckinV2TagDefinition } from '../checkins/checkins-v2.catalog';
 import {
   EVENT_TYPE_LABELS,
   SLEEP_MODE_LABELS,
@@ -222,6 +223,14 @@ export const telegramKeyboards = {
   scorePicker: (options: { back?: boolean; skip?: boolean } = {}) =>
     Markup.inlineKeyboard([...scoreRows(), actionRow(options)]),
 
+  semanticScorePicker: (scale: CheckinV2ScaleOption[], options: { back?: boolean; skip?: boolean } = {}) =>
+    Markup.inlineKeyboard([
+      ...scale.map((option) => [
+        Markup.button.callback(option.label, `${TELEGRAM_CALLBACKS.scorePrefix}${option.ordinalValue}`),
+      ]),
+      actionRow(options),
+    ]),
+
   cancelOnly: () =>
     Markup.inlineKeyboard([
       [Markup.button.callback(telegramCopy.buttons.cancel, TELEGRAM_CALLBACKS.actionCancel)],
@@ -266,6 +275,51 @@ export const telegramKeyboards = {
       actionRow({ back: true, skip: true }),
     ]);
   },
+
+  checkinMetricTagsSelection: (tags: CheckinV2TagDefinition[], selectedTagKeys: string[]) => {
+    const selected = new Set(selectedTagKeys);
+    const tagButtons = tags.map((tag) => {
+      const selectedMarker = selected.has(tag.key) ? '✅ ' : '';
+      return Markup.button.callback(
+        `${selectedMarker}${tag.label}`,
+        `${TELEGRAM_CALLBACKS.checkinMetricTagsTogglePrefix}${tag.key}`,
+      );
+    });
+
+    return Markup.inlineKeyboard([
+      ...chunkButtons(tagButtons, 2),
+      [Markup.button.callback(telegramCopy.buttons.tagsDone, TELEGRAM_CALLBACKS.checkinMetricTagsDone)],
+      actionRow({ back: true, skip: true, skipLabel: telegramCopy.buttons.addMetricTagsSkip }),
+    ]);
+  },
+
+  checkinReview: () =>
+    Markup.inlineKeyboard([
+      [Markup.button.callback(telegramCopy.buttons.reviewContinue, TELEGRAM_CALLBACKS.checkinReviewConfirm)],
+      [Markup.button.callback(telegramCopy.buttons.reviewEdit, TELEGRAM_CALLBACKS.checkinReviewEdit)],
+      actionRow({ cancel: true }),
+    ]),
+
+  checkinReviewEdit: (items: Array<{ key: string; label: string }>) =>
+    Markup.inlineKeyboard([
+      ...chunkButtons(
+        items.map((item) =>
+          Markup.button.callback(item.label, `${TELEGRAM_CALLBACKS.checkinReviewEditPrefix}${item.key}`),
+        ),
+        2,
+      ),
+      [Markup.button.callback(telegramCopy.buttons.back, TELEGRAM_CALLBACKS.actionBack)],
+    ]),
+
+  checkinV2Onboarding: (isLast: boolean) =>
+    Markup.inlineKeyboard([
+      [
+        Markup.button.callback(
+          isLast ? telegramCopy.buttons.firstCheckinStart : telegramCopy.buttons.next,
+          isLast ? TELEGRAM_CALLBACKS.checkinV2OnboardingStart : TELEGRAM_CALLBACKS.checkinV2OnboardingNext,
+        ),
+      ],
+    ]),
 
   checkinAddEventPrompt: () =>
     Markup.inlineKeyboard([
@@ -326,6 +380,13 @@ export const telegramKeyboards = {
       [Markup.button.callback(telegramCopy.buttons.toMenu, TELEGRAM_CALLBACKS.actionCancel)],
     ]),
 
+  statsSummaryActions: () =>
+    Markup.inlineKeyboard([
+      [Markup.button.callback(telegramCopy.buttons.statsBackToMetrics, TELEGRAM_CALLBACKS.actionBack)],
+      [Markup.button.callback(telegramCopy.buttons.statsChangePeriod, TELEGRAM_CALLBACKS.statsBackToPeriods)],
+      [Markup.button.callback(telegramCopy.buttons.toMenu, TELEGRAM_CALLBACKS.actionCancel)],
+    ]),
+
   settingsMenu: (options: {
     remindersEnabled: boolean;
   }) =>
@@ -342,12 +403,14 @@ export const telegramKeyboards = {
     ]),
 
   settingsDailyMetrics: (metrics: SettingsMetricOptionData[]) => {
-    const metricButtons = metrics.map((metric) =>
-      Markup.button.callback(
-        getSettingsMetricToggleButtonLabel(metric.label, metric.enabled),
-        `${TELEGRAM_CALLBACKS.settingsDailyMetricTogglePrefix}${metric.key}`,
-      ),
-    );
+    const metricButtons = metrics
+      .filter((metric) => !metric.isCore)
+      .map((metric) =>
+        Markup.button.callback(
+          getSettingsMetricToggleButtonLabel(metric.label, metric.enabled),
+          `${TELEGRAM_CALLBACKS.settingsDailyMetricTogglePrefix}${metric.key}`,
+        ),
+      );
 
     return Markup.inlineKeyboard([
       ...chunkButtons(metricButtons, 2),
@@ -357,6 +420,7 @@ export const telegramKeyboards = {
 
   settingsSleepMode: () =>
     Markup.inlineKeyboard([
+      [Markup.button.callback('Выключить сон', `${TELEGRAM_CALLBACKS.settingsSleepModePrefix}off`)],
       [Markup.button.callback(SLEEP_MODE_LABELS.hours, `${TELEGRAM_CALLBACKS.settingsSleepModePrefix}hours`)],
       [Markup.button.callback(SLEEP_MODE_LABELS.quality, `${TELEGRAM_CALLBACKS.settingsSleepModePrefix}quality`)],
       [Markup.button.callback(SLEEP_MODE_LABELS.both, `${TELEGRAM_CALLBACKS.settingsSleepModePrefix}both`)],

@@ -5,7 +5,7 @@ import {
 } from '../helpers/in-memory';
 
 describe('DailyMetricsService', () => {
-  it('creates default tracked metrics for a user and mirrors legacy core flags', async () => {
+  it('creates default product preferences with immutable core metrics and a separate sleep block', async () => {
     const repository = new InMemoryDailyMetricsRepository();
     const service = new DailyMetricsService(repository as never);
     const user = buildUser({
@@ -20,17 +20,25 @@ describe('DailyMetricsService', () => {
 
     const trackedMetrics = repository.listUserTrackedMetrics(user.id);
     const byKey = new Map(trackedMetrics.map((metric) => [metric.metricDefinition.key, metric] as const));
+    const preferences = await repository.findUserMetricPreferences(user.id);
+    const preferencesByKey = new Map(preferences.map((preference) => [preference.metricKey, preference] as const));
 
-    expect(trackedMetrics).toHaveLength(11);
+    expect(trackedMetrics).toHaveLength(9);
     expect(byKey.get('mood')?.isEnabled).toBe(true);
-    expect(byKey.get('energy')?.isEnabled).toBe(false);
-    expect(byKey.get('stress')?.isEnabled).toBe(true);
+    expect(byKey.get('energy')?.isEnabled).toBe(true);
+    expect(byKey.get('calm')?.isEnabled).toBe(true);
     expect(byKey.get('sleep')?.isEnabled).toBe(false);
-    expect(byKey.get('joy')?.isEnabled).toBe(false);
-    expect(byKey.get('wellbeing')?.isEnabled).toBe(false);
+    expect(preferencesByKey.get('mood')?.enabled).toBe(true);
+    expect(preferencesByKey.get('energy')?.enabled).toBe(true);
+    expect(preferencesByKey.get('calm')?.enabled).toBe(true);
+    expect(preferencesByKey.get('motivation')?.enabled).toBe(true);
+    expect(preferencesByKey.get('overall_state')?.enabled).toBe(true);
+    expect(preferencesByKey.get('clarity')?.enabled).toBe(false);
+    expect(preferencesByKey.get('social')?.enabled).toBe(false);
+    expect(preferencesByKey.get('physical_state')?.enabled).toBe(false);
   });
 
-  it('preserves existing extra metric choices while re-syncing legacy core flags', async () => {
+  it('preserves existing optional metric choices while re-syncing immutable core preferences', async () => {
     const repository = new InMemoryDailyMetricsRepository();
     const service = new DailyMetricsService(repository as never);
     const initialUser = buildUser({
@@ -42,18 +50,11 @@ describe('DailyMetricsService', () => {
     });
 
     await service.ensureUserTrackedMetrics(initialUser);
-
-    const joyDefinition = repository.listDefinitions().find((definition) => definition.key === 'joy');
-
-    if (!joyDefinition) {
-      throw new Error('joy definition missing');
-    }
-
-    await repository.upsertUserTrackedMetrics(initialUser.id, [
+    await repository.upsertUserMetricPreferences(initialUser.id, [
       {
-        metricDefinitionId: joyDefinition.id,
-        isEnabled: true,
-        sortOrder: joyDefinition.sortOrder,
+        metricKey: 'clarity',
+        enabled: true,
+        sortOrder: 60,
       },
     ]);
 
@@ -69,11 +70,16 @@ describe('DailyMetricsService', () => {
 
     const trackedMetrics = repository.listUserTrackedMetrics(initialUser.id);
     const byKey = new Map(trackedMetrics.map((metric) => [metric.metricDefinition.key, metric] as const));
+    const preferences = await repository.findUserMetricPreferences(initialUser.id);
+    const preferencesByKey = new Map(preferences.map((preference) => [preference.metricKey, preference] as const));
 
-    expect(byKey.get('mood')?.isEnabled).toBe(false);
+    expect(byKey.get('mood')?.isEnabled).toBe(true);
     expect(byKey.get('energy')?.isEnabled).toBe(true);
-    expect(byKey.get('stress')?.isEnabled).toBe(false);
+    expect(byKey.get('calm')?.isEnabled).toBe(true);
     expect(byKey.get('sleep')?.isEnabled).toBe(true);
-    expect(byKey.get('joy')?.isEnabled).toBe(true);
+    expect(preferencesByKey.get('mood')?.enabled).toBe(true);
+    expect(preferencesByKey.get('energy')?.enabled).toBe(true);
+    expect(preferencesByKey.get('calm')?.enabled).toBe(true);
+    expect(preferencesByKey.get('clarity')?.enabled).toBe(true);
   });
 });

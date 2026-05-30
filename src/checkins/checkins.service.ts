@@ -4,6 +4,13 @@ import type { DailyEntry, EventType } from '@prisma/client';
 
 import { TEXT_LIMITS } from '../common/constants/app.constants';
 import { buildNormalizedEntryDate, formatDateKey, normalizeDayKeyToUtcDate } from '../common/utils/date.utils';
+import {
+  CHECKIN_V2_METRIC_BY_KEY,
+  getScaleLabel,
+  mapLegacyScoreToOrdinal,
+  mapLegacyStressToCalmOrdinal,
+  type CheckinV2MetricKey,
+} from './checkins-v2.catalog';
 import type { DailyMetricCatalogKey } from '../daily-metrics/daily-metrics.catalog';
 import { DailyMetricsService } from '../daily-metrics/daily-metrics.service';
 import { EventsService } from '../events/events.service';
@@ -30,6 +37,7 @@ export interface RecentEntryView {
   sleepHours?: number;
   sleepQuality?: number;
   extraMetricScores: ExtraMetricScoreView[];
+  checkinMetrics: CheckinMetricValueView[];
   hasNote: boolean;
   tagsCount: number;
   eventsCount: number;
@@ -51,6 +59,23 @@ export interface ExtraMetricAverageView {
 export type EntryWithExtraMetricScores = DailyEntry & {
   extraMetricScores: ExtraMetricScoreView[];
 };
+
+export type EntryWithV2MetricValues = DailyEntry & {
+  checkinMetrics: CheckinMetricValueView[];
+};
+
+export interface CheckinMetricTagView {
+  key: string;
+  label: string;
+}
+
+export interface CheckinMetricValueView {
+  key: CheckinV2MetricKey;
+  label: string;
+  ordinalValue: number;
+  scaleLabel: string;
+  tags: CheckinMetricTagView[];
+}
 
 export interface RecentEntriesPage {
   entries: RecentEntryView[];
@@ -82,6 +107,7 @@ export interface HistoryEntryDetailView {
   sleepHours?: number;
   sleepQuality?: number;
   extraMetricScores: ExtraMetricScoreView[];
+  checkinMetrics: CheckinMetricValueView[];
   noteText: string | null;
   tags: HistoryEntryTagView[];
   events: HistoryEntryEventView[];
@@ -134,6 +160,7 @@ export class CheckinsService {
     });
 
     await this.upsertMetricValues(entry.id, payload.metricValues);
+    await this.upsertV2MetricValues(entry.id, payload.v2MetricValues);
 
     this.logger.log(
       `${existing ? 'Updated' : 'Created'} daily entry ${entry.id} for user ${userId} on ${entryDate.toISOString().slice(0, 10)}`,
@@ -185,6 +212,15 @@ export class CheckinsService {
   ): Promise<EntryWithExtraMetricScores[]> {
     const entries = await this.checkinsRepository.findByUserAndDateRange(userId, from, to);
     return this.attachExtraMetricScores(entries);
+  }
+
+  async getEntriesForPeriodWithV2Metrics(
+    userId: string,
+    from: Date,
+    to: Date,
+  ): Promise<EntryWithV2MetricValues[]> {
+    const entries = await this.checkinsRepository.findByUserAndDateRange(userId, from, to);
+    return this.attachV2MetricValues(entries);
   }
 
   async getExtraMetricAveragesForPeriod(
@@ -249,7 +285,7 @@ export class CheckinsService {
     const rows = await this.checkinsRepository.findRecentByUser(userId, safeLimit + 1, cursorDate ?? undefined);
     const hasMore = rows.length > safeLimit;
     const pageRows = hasMore ? rows.slice(0, safeLimit) : rows;
-    const pageRowsWithMetrics = await this.attachExtraMetricScores(pageRows);
+    const pageRowsWithMetrics = await this.attachV2MetricValues(await this.attachExtraMetricScores(pageRows));
     const entries = await Promise.all(
       pageRowsWithMetrics.map(async (row) => {
         const [events, tagIds] = await Promise.all([
@@ -266,8 +302,9 @@ export class CheckinsService {
           sleepHours: row.sleepHours ? Number(row.sleepHours) : undefined,
           sleepQuality: row.sleepQuality ?? undefined,
           extraMetricScores: row.extraMetricScores,
+          checkinMetrics: row.checkinMetrics,
           hasNote: !!row.noteText?.trim(),
-          tagsCount: tagIds.length,
+          tagsCount: tagIds.length + this.countV2MetricTags(row.checkinMetrics),
           eventsCount: events.length,
         };
       }),
@@ -293,7 +330,7 @@ export class CheckinsService {
       return null;
     }
 
-    const [entryWithMetrics] = await this.attachExtraMetricScores([entry]);
+    const [entryWithMetrics] = await this.attachV2MetricValues(await this.attachExtraMetricScores([entry]));
     const [tagIds, events] = await Promise.all([
       this.checkinsRepository.findTagIdsByEntryId(entry.id),
       this.eventsService.getEventsForDay(userId, entry.entryDate),
@@ -309,6 +346,7 @@ export class CheckinsService {
       sleepHours: entry.sleepHours ? Number(entry.sleepHours) : undefined,
       sleepQuality: entry.sleepQuality ?? undefined,
       extraMetricScores: entryWithMetrics.extraMetricScores,
+      checkinMetrics: entryWithMetrics.checkinMetrics,
       noteText: entry.noteText?.trim() ? entry.noteText : null,
       tags: tags.map((tag) => ({
         id: tag.id,
@@ -378,6 +416,29 @@ export class CheckinsService {
     await this.checkinsRepository.upsertMetricValues(dailyEntryId, valuesToPersist);
   }
 
+  private async upsertV2MetricValues(
+    dailyEntryId: string,
+    metricValues: UpsertDailyEntryDto['v2MetricValues'],
+  ): Promise<void> {
+    if (!metricValues || metricValues.length === 0) {
+      return;
+    }
+
+    const uniqueValues = [...new Map(metricValues.map((item) => [item.key, item])).values()]
+      .filter((item) => item.key in CHECKIN_V2_METRIC_BY_KEY)
+      .map((item) => ({
+        metricKey: item.key,
+        ordinalValue: item.ordinalValue,
+        tagKeys: item.tagKeys,
+      }));
+
+    if (uniqueValues.length === 0) {
+      return;
+    }
+
+    await this.checkinsRepository.replaceV2MetricValues(dailyEntryId, uniqueValues);
+  }
+
   private async attachExtraMetricScores<T extends { id: string }>(
     entries: T[],
   ): Promise<Array<T & { extraMetricScores: ExtraMetricScoreView[] }>> {
@@ -440,7 +501,140 @@ export class CheckinsService {
     }));
   }
 
+  private async attachV2MetricValues<T extends DailyEntry>(
+    entries: T[],
+  ): Promise<Array<T & { checkinMetrics: CheckinMetricValueView[] }>> {
+    if (entries.length === 0) {
+      return [];
+    }
+
+    const metricValues = await this.checkinsRepository.findV2MetricValuesByEntryIds(entries.map((entry) => entry.id));
+    const grouped = new Map<string, CheckinMetricValueView[]>();
+
+    for (const metricValue of metricValues) {
+      const definition = CHECKIN_V2_METRIC_BY_KEY[metricValue.metricKey as CheckinV2MetricKey];
+
+      if (!definition) {
+        continue;
+      }
+
+      const scaleLabel = getScaleLabel(definition.scale, metricValue.ordinalValue);
+
+      if (!scaleLabel) {
+        continue;
+      }
+
+      const tagByKey = new Map(definition.tags.map((tag) => [tag.key, tag] as const));
+      const bucket = grouped.get(metricValue.dailyEntryId) ?? [];
+      bucket.push({
+        key: definition.key,
+        label: definition.label,
+        ordinalValue: metricValue.ordinalValue,
+        scaleLabel,
+        tags: metricValue.tags
+          .map((tag) => tagByKey.get(tag.tagKey))
+          .filter((tag): tag is NonNullable<typeof tag> => !!tag)
+          .map((tag) => ({
+            key: tag.key,
+            label: tag.label,
+          })),
+      });
+      grouped.set(metricValue.dailyEntryId, bucket);
+    }
+
+    return entries.map((entry) => {
+      const storedMetrics = grouped.get(entry.id) ?? [];
+      const storedKeys = new Set(storedMetrics.map((metric) => metric.key));
+      const legacyMetrics = this.buildLegacyV2MetricValues(entry).filter((metric) => !storedKeys.has(metric.key));
+      const checkinMetrics = [...storedMetrics, ...legacyMetrics];
+      const extraMetricScores = this.filterExtraMetricScoresForV2Entry(entry, checkinMetrics);
+
+      return {
+        ...entry,
+        ...(extraMetricScores ? { extraMetricScores } : {}),
+        checkinMetrics: checkinMetrics.sort((left, right) => {
+          const leftOrder = CHECKIN_V2_METRIC_BY_KEY[left.key]?.sortOrder ?? 0;
+          const rightOrder = CHECKIN_V2_METRIC_BY_KEY[right.key]?.sortOrder ?? 0;
+          return leftOrder - rightOrder || left.label.localeCompare(right.label);
+        }),
+      };
+    });
+  }
+
+  private filterExtraMetricScoresForV2Entry<T extends DailyEntry>(
+    entry: T,
+    checkinMetrics: CheckinMetricValueView[],
+  ): ExtraMetricScoreView[] | null {
+    if (!this.hasExtraMetricScores(entry)) {
+      return null;
+    }
+
+    if (checkinMetrics.length === 0) {
+      return entry.extraMetricScores;
+    }
+
+    return entry.extraMetricScores.filter((metric) => !this.mapLegacyExtraMetricKeyToV2Key(metric.key));
+  }
+
+  private hasExtraMetricScores(entry: DailyEntry): entry is DailyEntry & { extraMetricScores: ExtraMetricScoreView[] } {
+    return Array.isArray((entry as { extraMetricScores?: unknown }).extraMetricScores);
+  }
+
+  private buildLegacyV2MetricValues(entry: DailyEntry): CheckinMetricValueView[] {
+    const legacyValues: CheckinMetricValueView[] = [];
+
+    if (typeof entry.moodScore === 'number') {
+      legacyValues.push(this.toMetricValueView('mood', mapLegacyScoreToOrdinal(entry.moodScore), []));
+    }
+
+    if (typeof entry.energyScore === 'number') {
+      legacyValues.push(this.toMetricValueView('energy', mapLegacyScoreToOrdinal(entry.energyScore), []));
+    }
+
+    if (typeof entry.stressScore === 'number') {
+      legacyValues.push(this.toMetricValueView('calm', mapLegacyStressToCalmOrdinal(entry.stressScore), []));
+    }
+
+    return legacyValues;
+  }
+
+  private toMetricValueView(
+    key: CheckinV2MetricKey,
+    ordinalValue: number,
+    tags: CheckinMetricTagView[],
+  ): CheckinMetricValueView {
+    const definition = CHECKIN_V2_METRIC_BY_KEY[key];
+
+    return {
+      key,
+      label: definition.label,
+      ordinalValue,
+      scaleLabel: getScaleLabel(definition.scale, ordinalValue) ?? String(ordinalValue),
+      tags,
+    };
+  }
+
+  private countV2MetricTags(metrics: CheckinMetricValueView[]): number {
+    return metrics.reduce((sum, metric) => sum + metric.tags.length, 0);
+  }
+
   private isLegacyCoreMetricKey(key: string): key is 'mood' | 'energy' | 'stress' {
     return key === 'mood' || key === 'energy' || key === 'stress';
+  }
+
+  private mapLegacyExtraMetricKeyToV2Key(key: string): CheckinV2MetricKey | null {
+    if (key === 'motivation' || key === 'motivation_score') {
+      return 'motivation';
+    }
+
+    if (key === 'wellbeing') {
+      return 'overall_state';
+    }
+
+    if (key === 'concentration') {
+      return 'clarity';
+    }
+
+    return null;
   }
 }

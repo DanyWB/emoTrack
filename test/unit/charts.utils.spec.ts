@@ -42,10 +42,10 @@ describe('charts utils', () => {
 
   it('maps mood values to stable compact heat-strip colors', () => {
     expect(resolveMoodHeatStripColor(undefined)).toBe('#e2e8f0');
-    expect(resolveMoodHeatStripColor(2)).toBe('#ef4444');
-    expect(resolveMoodHeatStripColor(4)).toBe('#f97316');
-    expect(resolveMoodHeatStripColor(6)).toBe('#f59e0b');
-    expect(resolveMoodHeatStripColor(8)).toBe('#84cc16');
-    expect(resolveMoodHeatStripColor(10)).toBe('#16a34a');
+    expect(resolveMoodHeatStripColor(1)).toBe('#ef4444');
+    expect(resolveMoodHeatStripColor(2)).toBe('#f97316');
+    expect(resolveMoodHeatStripColor(3)).toBe('#f59e0b');
+    expect(resolveMoodHeatStripColor(4)).toBe('#84cc16');
+    expect(resolveMoodHeatStripColor(5)).toBe('#16a34a');
   });
 });
