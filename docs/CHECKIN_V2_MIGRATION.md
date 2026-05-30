@@ -101,3 +101,23 @@ This migration is additive except for converting `daily_entries.sleepQuality` to
 - `/history` shows metric-scoped v2 tag details in entry detail, avoids duplicate backfilled optional metrics, and keeps old legacy-only tags visible separately.
 - `/stats`, summaries, charts, and weekly digest still work for old and new entries, with `calm` treated as higher-is-better.
 - `npm run build`, `npm run lint`, and `npm test -- --runInBand` pass.
+
+## Follow-up Tag Catalog Patch
+
+The follow-up Check-in v2 tag catalog patch changes code-defined labels and metadata only. It does not add a Prisma migration and does not require any manual SQL after the main Check-in v2 migration has already been applied.
+
+What changed:
+
+- every state metric has an unclear/uncertain tag option;
+- `Настроение` keeps `игривое`;
+- `Энергия` uses `непонятно` instead of more ambiguous wording such as `нервная энергия`;
+- `Спокойствие` no longer offers duplicate scale wording like `спокойно`;
+- `Ясность головы` no longer offers duplicate scale wording like `ясно` or `туманно`;
+- motivation tags keep the more analytical wording such as `прокрастинация`, `избегание`, and `сопротивление`.
+
+Deployment impact:
+
+- no database migration;
+- no seed change;
+- restart the application after deploying the code;
+- old saved `tagKey` rows remain valid because existing keys were preserved where practical.

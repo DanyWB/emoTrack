@@ -156,6 +156,7 @@ Use this checklist before a local handoff or release candidate review.
 - tapping metric tag buttons updates the existing tag-selection message instead of sending a new tag prompt each time
 - if Telegram cannot edit the old metric tag-selection message, the bot falls back to one normal reply
 - metric tag selection saves without duplicate relations
+- metric tag lists include an unclear option for every state metric and do not repeat scale wording such as `Спокойствие -> спокойно`
 - skipping the metric tag-selection screen does not report draft tags as saved
 - event can be added from the check-in continuation
 - adding an event from check-in returns to the optional note prompt before final confirmation

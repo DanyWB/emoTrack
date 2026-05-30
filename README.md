@@ -481,6 +481,7 @@ Current check-in behavior is intentionally conservative:
 - final confirmation includes an inline `В меню` action so the user can return to navigation without typing `/menu`
 - draft metric-tag selections are not reported as saved until the user confirms them with `Готово`
 - metric-tag selection updates the existing inline message as tags are toggled, so the chat does not fill with duplicate tag prompts
+- metric tags are tuned as analytical qualifiers: unclear options exist for every metric, while scale duplicates such as `Спокойствие -> спокойно` are avoided
 - if the check-in FSM loses context, the user gets a safe restart message instead of a raw or ambiguous error
 - same-day upsert behavior remains unchanged: one normalized day key, one `DailyEntry`
 
