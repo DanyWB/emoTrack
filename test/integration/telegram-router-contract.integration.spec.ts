@@ -422,7 +422,7 @@ describe('Telegram router contract integration', () => {
     ];
     const buttonTexts = extra.reply_markup?.inline_keyboard?.flat().map((button) => button.text) ?? [];
 
-    expect(message).toContain('Выбрано: <b>1/2</b>');
+    expect(message).toContain('Выбрано: <b>1/3</b>');
     expect(extra.parse_mode).toBe('HTML');
     expect(buttonTexts.some((text) => text.startsWith('✅ '))).toBe(true);
   });
@@ -451,7 +451,7 @@ describe('Telegram router contract integration', () => {
 
     expect(telegramCtx.editMessageText).toHaveBeenCalledTimes(1);
     expect(telegramCtx.reply).toHaveBeenCalledWith(
-      expect.stringContaining('Выбрано: <b>1/2</b>'),
+      expect.stringContaining('Выбрано: <b>1/3</b>'),
       expect.objectContaining({ parse_mode: 'HTML' }),
     );
   });
@@ -505,7 +505,19 @@ describe('Telegram router contract integration', () => {
 
     expect(telegramCtx.deleteMessage).toHaveBeenCalledTimes(1);
     expect(telegramCtx.editMessageReplyMarkup).not.toHaveBeenCalled();
-    expect((telegramCtx.reply.mock.calls[0] as [string])[0]).toContain('Запись за сегодня сохранена');
+    const [message, extra] = telegramCtx.reply.mock.calls[0] as [
+      string,
+      { reply_markup?: { inline_keyboard?: Array<Array<{ callback_data: string; text: string }>> } },
+    ];
+    const buttons = extra.reply_markup?.inline_keyboard?.flat() ?? [];
+
+    expect(message).toContain('Запись за сегодня сохранена');
+    expect(buttons).toEqual([
+      expect.objectContaining({
+        callback_data: TELEGRAM_CALLBACKS.actionCancel,
+        text: telegramCopy.buttons.toMenu,
+      }),
+    ]);
     expect(await ctx.fsmService.getState(user.id)).toBe(FSM_STATES.idle);
   });
 

@@ -104,11 +104,11 @@ export const telegramCopy = {
     reminderLater: 'Настрою позже',
     addNote: 'Добавить заметку',
     chooseTags: 'Выбрать теги',
-    tagsDone: 'Готово',
+    tagsDone: '✅ Готово',
     addEvent: 'Добавить событие',
     reviewContinue: 'Продолжить',
     reviewEdit: 'Изменить ответы',
-    addMetricTagsSkip: 'Без тегов',
+    addMetricTagsSkip: '🚫 Без тегов',
     historyMore: 'Еще',
     stats7d: '7 дней',
     stats30d: '30 дней',
@@ -248,7 +248,7 @@ export const telegramCopy = {
     resumed:
       '<b>↩️ Продолжим текущий check-in</b>\n━━━━━━━━━━━━\nВернемся к последнему незавершенному шагу.',
     v2Onboarding: [
-      '<b>Check-in обновился</b>\n━━━━━━━━━━━━\nТеперь состояние отмечается словами, а не цифрами. После каждой оценки можно добавить до 2 уточняющих тегов.',
+      '<b>Check-in обновился</b>\n━━━━━━━━━━━━\nТеперь состояние отмечается словами, а не цифрами. После каждой оценки можно добавить до 3 уточняющих тегов.',
       '<b>Основные метрики</b>\n━━━━━━━━━━━━\nВ каждом check-in всегда есть:\n• Настроение\n• Энергия\n• Спокойствие',
       '<b>Дополнительные метрики</b>\n━━━━━━━━━━━━\nВ настройках можно включить мотивацию, общее состояние, ясность головы, желание общаться и физическое состояние.',
       '<b>Теги не обязательны</b>\n━━━━━━━━━━━━\nМожно пройти check-in быстро, а можно уточнить состояние тегами сразу после каждой оценки.',
@@ -440,7 +440,7 @@ export const telegramCopy = {
     immutableCoreMetric: 'Основные метрики check-in нельзя выключить.',
     tooManyOptionalMetrics:
       'Чтобы check-in оставался удобным, одновременно можно включить не больше 3 дополнительных метрик.',
-    tooManyMetricTags: 'Для одной метрики можно выбрать не больше 2 тегов.',
+    tooManyMetricTags: 'Для одной метрики можно выбрать не больше 3 тегов.',
     missingDailyMetricValue:
       'Нужно заполнить хотя бы одну ежедневную метрику, прежде чем завершать запись.',
   },
@@ -1092,7 +1092,7 @@ export function getTrackedMetricToggleButtonLabel(
 }
 
 export function getSettingsMetricToggleButtonLabel(label: string, enabled: boolean): string {
-  return `${label}: ${enabled ? 'вкл' : 'выкл'}`;
+  return `${enabled ? '✅' : '⬜'} ${label}`;
 }
 
 export function formatHistoryEntries(

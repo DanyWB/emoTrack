@@ -283,4 +283,32 @@ describe('Check-in flow integration', () => {
       selectedTagKeys: ['mood_calm'],
     });
   });
+
+  it('allows up to three scoped tags per metric and rejects the fourth tag', async () => {
+    const user = await createReadyUser({
+      id: 'user-checkin-v2-tag-limit',
+      telegramId: BigInt(6014),
+    });
+
+    await ctx.checkinsFlow.start(user);
+    await ctx.checkinsFlow.submitScore(user, '4');
+
+    expect(await ctx.checkinsFlow.toggleMetricTagSelection(user, 'mood_calm')).toMatchObject({
+      status: 'next',
+      selectedTagKeys: ['mood_calm'],
+    });
+    expect(await ctx.checkinsFlow.toggleMetricTagSelection(user, 'mood_light')).toMatchObject({
+      status: 'next',
+      selectedTagKeys: ['mood_calm', 'mood_light'],
+    });
+    expect(await ctx.checkinsFlow.toggleMetricTagSelection(user, 'mood_inspired')).toMatchObject({
+      status: 'next',
+      selectedTagKeys: ['mood_calm', 'mood_light', 'mood_inspired'],
+    });
+
+    expect(await ctx.checkinsFlow.toggleMetricTagSelection(user, 'mood_playful')).toMatchObject({
+      status: 'too_many_metric_tags',
+      selectedTagKeys: ['mood_calm', 'mood_light', 'mood_inspired'],
+    });
+  });
 });

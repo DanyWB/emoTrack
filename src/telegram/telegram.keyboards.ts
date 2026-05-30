@@ -289,9 +289,17 @@ export const telegramKeyboards = {
     return Markup.inlineKeyboard([
       ...chunkButtons(tagButtons, 2),
       [Markup.button.callback(telegramCopy.buttons.tagsDone, TELEGRAM_CALLBACKS.checkinMetricTagsDone)],
-      actionRow({ back: true, skip: true, skipLabel: telegramCopy.buttons.addMetricTagsSkip }),
+      [
+        Markup.button.callback(`↩️ ${telegramCopy.buttons.back}`, TELEGRAM_CALLBACKS.actionBack),
+        Markup.button.callback(telegramCopy.buttons.addMetricTagsSkip, TELEGRAM_CALLBACKS.actionSkip),
+      ],
     ]);
   },
+
+  checkinConfirmationActions: () =>
+    Markup.inlineKeyboard([
+      [Markup.button.callback(telegramCopy.buttons.toMenu, TELEGRAM_CALLBACKS.actionCancel)],
+    ]),
 
   checkinReview: () =>
     Markup.inlineKeyboard([
@@ -413,7 +421,7 @@ export const telegramKeyboards = {
       );
 
     return Markup.inlineKeyboard([
-      ...chunkButtons(metricButtons, 2),
+      ...chunkButtons(metricButtons, 1),
       [Markup.button.callback(telegramCopy.buttons.back, TELEGRAM_CALLBACKS.actionBack)],
     ]);
   },

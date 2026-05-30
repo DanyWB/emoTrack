@@ -1660,7 +1660,7 @@ export class TelegramRouter {
         eventAdded: result.eventAdded,
       };
 
-      await replyHtml(ctx, formatCheckinConfirmation(confirmation), telegramKeyboards.mainMenu());
+      await replyHtml(ctx, formatCheckinConfirmation(confirmation), telegramKeyboards.checkinConfirmationActions());
       if (result.showMenuAfterSave) {
         await this.replyNavigationMenu(ctx);
       }
@@ -1768,7 +1768,7 @@ export class TelegramRouter {
             tagsCount: this.getFinalizedTagIds(checkinPayload).length,
             eventAdded: true,
           }),
-          telegramKeyboards.mainMenu(),
+          telegramKeyboards.checkinConfirmationActions(),
         );
         if (checkinPayload.showMenuAfterSave) {
           await this.replyNavigationMenu(ctx);

@@ -469,7 +469,7 @@ Current check-in behavior is intentionally conservative:
 - `/checkin` resumes an active check-in instead of silently resetting progress
 - score prompts use semantic 1..5 labels, not visible numeric 1..10 scales
 - the fixed core metrics are `Настроение`, `Энергия`, and `Спокойствие`
-- each metric immediately opens its own predefined tag screen after the score; up to 2 tags can be selected per metric
+- each metric immediately opens its own predefined tag screen after the score; up to 3 tags can be selected per metric
 - `Back` is available on metric tag, review, sleep, note, and event branches where the FSM supports it
 - score-step prompts make the active metric explicit in the bold step title, for example `1/5 · Настроение`
 - after all active state metrics and sleep fields, the user sees a review screen before data is saved
@@ -478,6 +478,7 @@ Current check-in behavior is intentionally conservative:
 - final confirmation from an inline check-in callback removes the previous inline screen before sending the saved-entry confirmation
 - if a user returns to review or sleep steps after already saving optional note/event data in the same flow, the final confirmation still reflects saved optional data
 - final confirmation is compact and reports only values and optional data that were actually saved
+- final confirmation includes an inline `В меню` action so the user can return to navigation without typing `/menu`
 - draft metric-tag selections are not reported as saved until the user confirms them with `Готово`
 - metric-tag selection updates the existing inline message as tags are toggled, so the chat does not fill with duplicate tag prompts
 - if the check-in FSM loses context, the user gets a safe restart message instead of a raw or ambiguous error
@@ -589,6 +590,7 @@ Current `/settings` behavior stays within the original scope, but is clearer abo
 - when jobs are disabled locally, reminder preferences are still saved, but the bot explicitly distinguishes between “settings saved” and “background delivery unavailable in this environment”
 - tracked daily metrics are managed in a separate `Критерии check-in` submenu inside `/settings`
 - that submenu shows immutable core metrics, toggleable optional state metrics, and a separate sleep block
+- optional metric toggles are rendered one per row with the enabled/disabled marker first, so long metric names remain readable on mobile
 - optional state metric preferences are backed by `user_metric_preferences`; sleep still uses `trackSleep` and `sleepMode`
 - the settings layer rejects attempts to disable core metrics
 - the settings layer rejects enabling more than 3 optional state metrics at once

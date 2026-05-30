@@ -123,7 +123,11 @@ describe('Settings integration', () => {
     await (router as any).handleCallbackQuery(telegramCtx);
 
     const trackedMetrics = ctx.dailyMetricsRepository.listUserTrackedMetrics(user.id);
-    const submenuText = (telegramCtx.reply.mock.calls[0] as [string])[0];
+    const [submenuText, submenuExtra] = telegramCtx.reply.mock.calls[0] as [
+      string,
+      { reply_markup?: { inline_keyboard?: Array<Array<{ text: string }>> } },
+    ];
+    const metricRows = submenuExtra.reply_markup?.inline_keyboard?.slice(0, 5) ?? [];
     const session = await ctx.fsmService.getSession(user.id);
 
     expect(telegramCtx.reply).toHaveBeenCalledTimes(1);
@@ -135,6 +139,14 @@ describe('Settings integration', () => {
     expect(submenuText).toContain('• Спокойствие: всегда вкл');
     expect(submenuText).toContain('• Сон: вкл');
     expect(submenuText).toContain('Ясность головы');
+    expect(metricRows.every((row) => row.length === 1)).toBe(true);
+    expect(metricRows.map((row) => row[0]?.text)).toEqual([
+      '✅ Мотивация',
+      '✅ Общее состояние',
+      '⬜ Ясность головы',
+      '⬜ Желание общаться',
+      '⬜ Физическое состояние',
+    ]);
     expect(trackedMetrics).toHaveLength(9);
     expect(session?.payloadJson).toEqual({ settingsView: 'daily_metrics' });
   });

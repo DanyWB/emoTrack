@@ -36,7 +36,7 @@ export type CheckinV2MetricKey =
   | 'physical_state';
 
 export const CHECKIN_V2_MAX_OPTIONAL_METRICS = 3;
-export const CHECKIN_V2_DEFAULT_MAX_TAGS = 2;
+export const CHECKIN_V2_DEFAULT_MAX_TAGS = 3;
 
 export const CHECKIN_V2_CORE_METRIC_KEYS: CheckinV2MetricKey[] = ['mood', 'energy', 'calm'];
 export const CHECKIN_V2_OPTIONAL_METRIC_KEYS: CheckinV2MetricKey[] = [

@@ -83,9 +83,9 @@ Use this checklist before a local handoff or release candidate review.
 ### Sleep Mode: `hours`
 
 - `/checkin` shows semantic word buttons, not 1..10 numeric buttons
-- asks for `Настроение`, then immediately offers up to 2 mood tags
-- asks for `Энергия`, then immediately offers up to 2 energy tags
-- asks for `Спокойствие`, then immediately offers up to 2 calm tags
+- asks for `Настроение`, then immediately offers up to 3 mood tags
+- asks for `Энергия`, then immediately offers up to 3 energy tags
+- asks for `Спокойствие`, then immediately offers up to 3 calm tags
 - asks for enabled optional metrics such as `Мотивация` and `Общее состояние`
 - asks only for sleep hours
 - shows the review screen before saving
@@ -152,7 +152,7 @@ Use this checklist before a local handoff or release candidate review.
 - note step accepts a valid text note
 - note prompt explains that notes are free-form context attached to the daily check-in and gives a concrete example
 - too-long note is rejected
-- metric tag selection allows multi-select up to 2 tags per metric
+- metric tag selection allows multi-select up to 3 tags per metric
 - tapping metric tag buttons updates the existing tag-selection message instead of sending a new tag prompt each time
 - if Telegram cannot edit the old metric tag-selection message, the bot falls back to one normal reply
 - metric tag selection saves without duplicate relations
@@ -162,6 +162,7 @@ Use this checklist before a local handoff or release candidate review.
 - final confirmation reflects optional data correctly
 - when final confirmation is reached from an inline check-in callback, the previous inline prompt is removed where Telegram allows it
 - final confirmation stays compact and only lists saved/tracked values
+- final confirmation has a `В меню` inline button that returns to the navigation menu
 
 ## Standalone Event
 
@@ -253,6 +254,7 @@ Use this checklist before a local handoff or release candidate review.
 - current settings screen shows reminder state, reminder time, weekly digest runtime status, sleep mode, tracked daily metrics, and current auto-reminder runtime status
 - `Критерии check-in` opens as a separate submenu from the main settings screen
 - settings submenu buttons refresh the current inline settings message where possible
+- optional metric toggle buttons are one per row and show the enabled/disabled marker before the metric name
 - opening the submenu lazily syncs `user_metric_preferences` if they are missing for the user
 - the submenu shows immutable core metrics, optional metric toggles, and sleep separately
 - trying to disable a core metric shows `Основные метрики check-in нельзя выключить.`
