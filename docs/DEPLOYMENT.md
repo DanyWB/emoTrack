@@ -171,6 +171,9 @@ TELEGRAM_WEBHOOK_URL=
 TELEGRAM_WEBHOOK_SECRET=
 TELEGRAM_STARTUP_TIMEOUT_MS=10000
 
+ADMIN_TELEGRAM_IDS=
+SUPPORT_URL=
+
 DEFAULT_TIMEZONE=Europe/Moscow
 CHART_TEMP_DIR=/opt/emotrack/tmp/charts
 ```
@@ -179,6 +182,8 @@ Notes:
 
 - if the database password contains special URL characters, URL-encode it; the generated hex password above avoids that problem
 - `TELEGRAM_BOT_TOKEN` must be real, not the placeholder from `.env.example`
+- `ADMIN_TELEGRAM_IDS` enables the hidden `/admin` panel and feedback notifications for listed Telegram ids
+- `SUPPORT_URL` is optional and is shown by `/support` and the support menu button
 - `DEFAULT_TIMEZONE` should match the intended default audience; it is applied to newly created users
 - changing `DEFAULT_TIMEZONE` does not rewrite existing user rows; update `users.timezone` manually if early users were created with the wrong timezone
 - `TELEGRAM_STARTUP_TIMEOUT_MS` bounds Telegram command sync, webhook registration, and polling readiness; polling itself runs as a background long-polling loop and must not block HTTP startup
@@ -208,6 +213,8 @@ Important:
 - use `npx prisma migrate deploy` on the server
 - do not use `prisma migrate dev` as the production migration command
 - run `npm run prisma:seed` after migrations so predefined tags and daily metric definitions exist
+- the support/feedback polish release adds the `feedback_items` table and feedback enums; deploy the migration before restarting the bot
+- the announcements release adds `announcement_campaigns`, `announcement_deliveries`, `announcement_poll_options`, and `announcement_poll_votes`; deploy the migration before using `/admin -> Оповещения`
 
 ### 8. Create a systemd service
 
@@ -577,6 +584,12 @@ Run these steps before and during a manual release.
    - the configured secret matches `TELEGRAM_WEBHOOK_SECRET`
 10. Run one minimal product smoke path:
    - `/start` or `/help`
+11. For releases with admin announcements, run one admin smoke path:
+   - `/admin -> Оповещения`
+   - create a short draft
+   - preview it, including the image preview path if an image is attached
+   - with `REDIS_ENABLED=true` and `JOBS_ENABLED=true`, send it only in a controlled staging/manual-test audience and verify the queued confirmation plus delivery counters
+   - cancel it instead of sending when a controlled staging/manual-test audience is not available
 
 ## Operational Log Search
 
@@ -676,6 +689,15 @@ Database rollback:
   - `events.seriesPosition` is nullable
 - user-facing repeated standalone event creation is currently disabled; legacy series-backed rows are ignored in history and stats
   - legacy single-day and multi-day rows remain valid with both fields set to `null`
+- the announcements schema change is additive only:
+  - `announcement_campaigns` stores admin-created campaign metadata, optional Telegram image file ids, and status timestamps
+  - `announcement_deliveries` stores per-recipient delivery audit rows
+  - `announcement_poll_options` and `announcement_poll_votes` store in-bot poll options and one vote per user
+  - sending uses an atomic campaign claim and delivery `skipDuplicates`
+  - when Redis/jobs are enabled, the `announcements` BullMQ queue sends delivery jobs with retry/backoff and finalizes the campaign after pending deliveries finish
+  - the queue performance migration adds indexes on `users(consentGiven, id)` and `announcement_deliveries(campaignId, status, id)` for paged audience and delivery-job reads
+  - if a process stops while a campaign is `sending`, reopen the announcement detail after the recovery window and use `Продолжить отправку`; pending deliveries are requeued
+  - existing user/check-in/history/stats rows are not rewritten by this migration
 - recommended safety measure:
   - take a database backup before applying non-trivial migrations
 - if rollback is required after a migration:

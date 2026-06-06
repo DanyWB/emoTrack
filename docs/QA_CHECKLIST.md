@@ -11,6 +11,7 @@ Use this checklist before a local handoff or release candidate review.
 - `npm run prisma:seed` completed
 - app starts with `npm run start:dev`
 - if admin checks are needed, `ADMIN_TELEGRAM_IDS` contains the tester's numeric Telegram id
+- if support checks are needed, `SUPPORT_URL` contains a real HTTPS or Telegram support link
 
 ## Local Dev Safety
 
@@ -37,7 +38,9 @@ Use this checklist before a local handoff or release candidate review.
 - intro explains the difference between a check-in note and a separate event
 - user sees explicit consent prompt
 - `/terms` works before onboarding is complete
-- `/terms` shows the agreement text and offers acceptance
+- `/terms` shows the legal document package and offers separate buttons for the user agreement, privacy policy, and data processing/data transfer policy
+- each legal document button opens the document before consent is accepted
+- `Согласен` accepts the full document package, not only one agreement text
 - trying to open a product command before consent redirects back into the consent flow
 - `Согласен` moves to daily reminder setup by editing the current agreement/onboarding message where Telegram allows it
 - reminder setup offers `Настрою позже`
@@ -70,12 +73,14 @@ Use this checklist before a local handoff or release candidate review.
 
 - `/menu` works for an onboarded user
 - `/menu` is visually formatted with a clear heading, separator, and short navigation hint
-- `/menu` shows inline buttons for statistics, history, settings, help, and the user agreement
+- `/menu` shows inline buttons for statistics, history, settings, feedback, support, help, and the user agreement
 - `📊 Статистика` opens the stats period selector by editing the current `/menu` message
 - `📚 История` opens history by editing the current `/menu` message
 - `⚙️ Настройки` opens settings by editing the current `/menu` message
+- `💬 Обратная связь` opens feedback type selection by editing the current `/menu` message
+- `🛟 Поддержка` opens the support screen by editing the current `/menu` message
 - `❔ Помощь` opens help by editing the current `/menu` message
-- `📄 Соглашение` opens the agreement from the menu
+- `📄 Соглашение` opens the legal document package from the menu
 - product-only menu callbacks still redirect through consent/onboarding if the user is not ready
 
 ## Check-in by Sleep Mode
@@ -83,6 +88,7 @@ Use this checklist before a local handoff or release candidate review.
 ### Sleep Mode: `hours`
 
 - `/checkin` shows semantic word buttons, not 1..10 numeric buttons
+- `/yesterday` starts the same semantic check-in flow for yesterday
 - asks for `Настроение`, then immediately offers up to 3 mood tags
 - asks for `Энергия`, then immediately offers up to 3 energy tags
 - asks for `Спокойствие`, then immediately offers up to 3 calm tags
@@ -146,6 +152,9 @@ Use this checklist before a local handoff or release candidate review.
 - updated metric tags replace the previous same-day tags for the same metric
 - if an optional metric was recorded earlier today and then disabled before a repeated same-day check-in, the refreshed entry no longer keeps the stale optional metric row
 - if an optional metric was saved on an older day and later disabled in `Критерии check-in`, historical reads still show the old saved value
+- user runs `/yesterday` after missing the previous day
+- the saved history entry is dated as yesterday, not today
+- running `/yesterday` again updates the same yesterday `DailyEntry` instead of creating a duplicate
 
 ## Optional Check-in Data
 
@@ -297,11 +306,41 @@ Use this checklist before a local handoff or release candidate review.
 - user stats buttons for 7 days, 30 days, and all time generate the existing summary text for that target user
 - when the target user has enough data, admin stats also send the existing chart images
 - history opens for the target user and entry details show full notes, tags, extra metrics, and day events
+- feedback list opens from the admin panel
+- feedback detail shows type, status, user identity, id, and full message
+- unread feedback can be marked as reviewed
+- `Оповещения` opens from the admin panel
+- admin can create an `Обновление` announcement with title and body, skip image, preview it, and send it
+- admin can attach a Telegram image to an announcement before preview; preview shows both the text and the actual image, and the user receives it as a photo/caption when the text fits Telegram's caption limit
+- from announcement preview, `Изменить картинку` returns to the image step instead of the body step
+- admin can create an `Опрос` announcement with 2-6 options
+- poll option parsing keeps legitimate numeric prefixes such as `24/7 support` and strips only real list markers such as `1.`, `1)`, `-`, `*`, or `•`
+- announcement delivery targets only users who accepted the agreement, including users who have not completed onboarding yet
+- with `JOBS_ENABLED=true`, sending an announcement returns a queued confirmation while deliveries continue through the `announcements` BullMQ queue
+- announcement queue migrations include indexes for paged audience and delivery-job reads
+- repeated send callbacks do not create duplicate deliveries or send duplicate Telegram messages for the same announcement
+- a stale announcement stuck in `sending` can be reopened from `/admin -> Оповещения -> Последние оповещения` and continued with `Продолжить отправку`
+- user can vote in an announcement poll through inline buttons inside the bot
+- after a successful poll vote, the poll message is removed where Telegram allows deletion
+- poll voting is unavailable before the campaign is actively sending or already sent
+- pressing another poll option after the first vote does not create a second vote
+- announcement detail in `/admin` shows delivery counts and poll vote counts
 - admin callbacks work even if the admin account has not completed normal onboarding
+
+## Support and Feedback
+
+- `/support` opens the configured support link when `SUPPORT_URL` is set
+- `/support` shows a graceful fallback when `SUPPORT_URL` is empty
+- `/feedback` asks for one of `Ошибка`, `Идея`, `Вопрос`, `Отзыв`, or `Другое`
+- `Назад` from feedback message input returns to type selection
+- `Отмена` from feedback clears the FSM and returns to menu
+- valid feedback text is saved and the user sees a compact confirmation
+- empty or too-long feedback text is rejected without saving
+- configured admins receive a best-effort Telegram notification for new feedback
 
 ## Telegram Commands
 
-- Telegram command hints are registered for `/start`, `/menu`, `/help`, `/terms`, `/checkin`, `/event`, `/history`, `/stats`, and `/settings`
+- Telegram command hints are registered for `/start`, `/menu`, `/help`, `/terms`, `/checkin`, `/yesterday`, `/event`, `/history`, `/stats`, `/settings`, `/feedback`, and `/support`
 - `/menu` is the second command in the Telegram command list
 - command descriptions in Telegram's command menu include distinct icons
 - if Telegram command sync fails, app startup still continues
@@ -314,6 +353,9 @@ Run this section only when Redis is available and enabled.
 - app boots with `JOBS_ENABLED=true`
 - reminder scheduling does not crash startup
 - startup reconciles repeatable daily reminder and weekly digest jobs for users with completed onboarding, enabled reminders, and a saved reminder time
+- admin announcement sending registers the `announcements` queue and processes pending delivery jobs without blocking the admin callback until the whole audience is delivered
+- transient Telegram delivery failures are retried by BullMQ; blocked users are marked as `blocked` without wasting retries
+- announcement finalize jobs close the campaign only after pending delivery rows are no longer pending
 - per-user reconciliation failures log `event=reminder_job_reconcile_failed` and do not stop the remaining eligible users from being attempted
 - invalid persisted reminder times remove stale repeatable reminder and weekly digest jobs before the user is skipped
 - disabling reminders cancels scheduling path cleanly
@@ -327,6 +369,7 @@ Run this section only when Redis is available and enabled.
 - with fewer than 3 entries in the last 7 days, weekly digest is skipped
 - weekly digest stays disabled safely when jobs are unavailable locally
 - daily reminder behavior remains unchanged after weekly digest support is enabled
+- daily reminder text mentions `/yesterday` as the recovery path for a missed previous-day check-in
 
 ## Optional DB Smoke Tests
 
@@ -338,7 +381,7 @@ Run this section only when an isolated local PostgreSQL test database is availab
 - Prisma migrations were applied to the test database before running the smoke suite
 - `npm run test:db` passes when `DATABASE_URL_TEST` is configured
 - with no `DATABASE_URL_TEST`, `npm run test:db` skips the DB smoke suite instead of requiring Docker or PostgreSQL setup
-- the DB smoke suite verifies repository connectivity, same-day `DailyEntry` uniqueness, metric catalog reads, active-reminder user reads, and inclusive event overlap queries
+- the DB smoke suite verifies repository connectivity, same-day `DailyEntry` uniqueness, metric catalog reads, active-reminder user reads, admin feedback reads, announcement delivery/vote uniqueness, and inclusive event overlap queries
 
 ## Logging Checks
 

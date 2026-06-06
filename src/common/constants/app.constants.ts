@@ -1,5 +1,6 @@
 ﻿export const APP_QUEUES = {
   reminders: 'reminders',
+  announcements: 'announcements',
 } as const;
 
 export const TELEGRAM_MAIN_MENU_BUTTONS = [
@@ -11,6 +12,10 @@ export const TEXT_LIMITS = {
   note: 800,
   eventTitle: 120,
   eventDescription: 500,
+  feedbackMessage: 1000,
+  announcementTitle: 80,
+  announcementBody: 1200,
+  announcementPollOption: 80,
 } as const;
 
 export const TELEGRAM_CALLBACKS = {
@@ -24,6 +29,11 @@ export const TELEGRAM_CALLBACKS = {
   menuSettings: 'menu:settings',
   menuHelp: 'menu:help',
   menuTerms: 'menu:terms',
+  menuSupport: 'menu:support',
+  menuFeedback: 'menu:feedback',
+
+  termsDocuments: 'terms:documents',
+  termsDocumentPrefix: 'terms:doc:',
 
   adminMenu: 'admin:menu',
   adminOverview: 'admin:overview',
@@ -33,10 +43,23 @@ export const TELEGRAM_CALLBACKS = {
   adminUserHistoryPrefix: 'admin:uhist:',
   adminEntryOpenPrefix: 'admin:entry:',
   adminHistoryBackPrefix: 'admin:hback:',
+  adminFeedbackPrefix: 'admin:feedback:',
+  adminFeedbackOpenPrefix: 'admin:fbopen:',
+  adminFeedbackReviewPrefix: 'admin:fbreview:',
+  adminAnnouncementsMenu: 'admin:ann',
+  adminAnnouncementCreate: 'admin:ann:create',
+  adminAnnouncementListPrefix: 'admin:ann:list:',
+  adminAnnouncementOpenPrefix: 'admin:ann:open:',
+  adminAnnouncementTypePrefix: 'admin:ann:type:',
+  adminAnnouncementSendPrefix: 'admin:ann:send:',
+  adminAnnouncementCancelPrefix: 'admin:ann:cancel:',
 
   historyMorePrefix: 'history:more:',
   historyOpenPrefix: 'history:open:',
   historyBackPrefix: 'history:back:',
+
+  feedbackTypePrefix: 'feedback:type:',
+  announcementVotePrefix: 'ann:v:',
 
   scorePrefix: 'checkin:score:',
   checkinMetricTagsDone: 'checkin:metric-tags:done',

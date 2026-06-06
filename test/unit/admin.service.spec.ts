@@ -13,6 +13,9 @@ describe('admin access configuration', () => {
       listActiveUsers: jest.fn(),
       getUserDetail: jest.fn(),
       findEntryOwnerUserId: jest.fn(),
+      listFeedback: jest.fn(),
+      getFeedbackDetail: jest.fn(),
+      markFeedbackReviewed: jest.fn(),
     };
     const service = new AdminService(
       repository as never,

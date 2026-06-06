@@ -1,6 +1,6 @@
 ﻿import { TELEGRAM_CALLBACKS } from '../../src/common/constants/app.constants';
 import { FSM_STATES } from '../../src/fsm/fsm.types';
-import { telegramCopy } from '../../src/telegram/telegram.copy';
+import { TERMS_DOCUMENTS, telegramCopy } from '../../src/telegram/telegram.copy';
 import { TelegramRouter } from '../../src/telegram/telegram.router';
 import { buildUser } from '../helpers/in-memory';
 import { createIntegrationTestContext, type IntegrationTestContext } from '../helpers/test-context';
@@ -65,7 +65,14 @@ describe('Telegram access integration', () => {
     expect(message).toContain(telegramCopy.onboarding.disclaimer);
     expect(message).toContain(telegramCopy.onboarding.consentPrompt);
     expect(extra.parse_mode).toBe('HTML');
-    expect(extra.reply_markup?.inline_keyboard?.[0]?.[0]?.callback_data).toBe(TELEGRAM_CALLBACKS.consentAccept);
+    expect(extra.reply_markup?.inline_keyboard?.flat().map((button) => button.callback_data)).toEqual(
+      expect.arrayContaining([
+        `${TELEGRAM_CALLBACKS.termsDocumentPrefix}agreement`,
+        `${TELEGRAM_CALLBACKS.termsDocumentPrefix}privacy`,
+        `${TELEGRAM_CALLBACKS.termsDocumentPrefix}data_transfer`,
+        TELEGRAM_CALLBACKS.consentAccept,
+      ]),
+    );
 
     const user = await ctx.usersService.findByTelegramId(BigInt(8101));
     expect(user?.consentGiven).toBe(false);
@@ -92,10 +99,49 @@ describe('Telegram access integration', () => {
     expect(message).toContain(telegramCopy.terms.text);
     expect(message).toContain(telegramCopy.terms.acceptPrompt);
     expect(extra.parse_mode).toBe('HTML');
-    expect(extra.reply_markup?.inline_keyboard?.[0]?.[0]?.callback_data).toBe(TELEGRAM_CALLBACKS.consentAccept);
+    expect(extra.reply_markup?.inline_keyboard?.flat().map((button) => button.callback_data)).toEqual(
+      expect.arrayContaining([
+        `${TELEGRAM_CALLBACKS.termsDocumentPrefix}agreement`,
+        `${TELEGRAM_CALLBACKS.termsDocumentPrefix}privacy`,
+        `${TELEGRAM_CALLBACKS.termsDocumentPrefix}data_transfer`,
+        TELEGRAM_CALLBACKS.consentAccept,
+      ]),
+    );
 
     const user = await ctx.usersService.findByTelegramId(BigInt(8102));
     expect(await ctx.fsmService.getState(user!.id)).toBe(FSM_STATES.onboarding_consent);
+  });
+
+  it('opens legal document callbacks before consent is accepted', async () => {
+    await ctx.usersRepository.create(
+      buildUser({
+        id: 'user-access-terms-doc',
+        telegramId: BigInt(8112),
+        onboardingCompleted: false,
+        consentGiven: false,
+        reminderTime: null,
+      }),
+    );
+    await ctx.fsmService.setState('user-access-terms-doc', FSM_STATES.onboarding_consent, {});
+
+    const router = createRouter();
+    const telegramCtx = {
+      ...buildBaseContext(8112),
+      callbackQuery: {
+        data: `${TELEGRAM_CALLBACKS.termsDocumentPrefix}privacy`,
+      },
+      answerCbQuery: jest.fn().mockResolvedValue(undefined),
+      editMessageText: jest.fn().mockResolvedValue(undefined),
+      reply: jest.fn().mockResolvedValue(undefined),
+    };
+
+    await (router as any).handleCallbackQuery(telegramCtx);
+
+    expect(telegramCtx.editMessageText).toHaveBeenCalledWith(
+      TERMS_DOCUMENTS.privacy.text,
+      expect.objectContaining({ parse_mode: 'HTML' }),
+    );
+    expect(await ctx.fsmService.getState('user-access-terms-doc')).toBe(FSM_STATES.onboarding_consent);
   });
 
   it('blocks product commands before consent and redirects into the acceptance flow', async () => {
@@ -259,6 +305,8 @@ describe('Telegram access integration', () => {
       TELEGRAM_CALLBACKS.menuStats,
       TELEGRAM_CALLBACKS.menuHistory,
       TELEGRAM_CALLBACKS.menuSettings,
+      TELEGRAM_CALLBACKS.menuFeedback,
+      TELEGRAM_CALLBACKS.menuSupport,
       TELEGRAM_CALLBACKS.menuHelp,
       TELEGRAM_CALLBACKS.menuTerms,
     ]);

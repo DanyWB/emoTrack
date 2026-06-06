@@ -39,6 +39,49 @@ enum DailyMetricInputType {
   sleep_block
 }
 
+enum FeedbackType {
+  bug
+  idea
+  question
+  review
+  other
+}
+
+enum FeedbackStatus {
+  unread
+  reviewed
+  closed
+}
+
+enum AnnouncementType {
+  update
+  important
+  maintenance
+  poll
+  other
+}
+
+enum AnnouncementAudience {
+  consented
+}
+
+enum AnnouncementStatus {
+  draft
+  ready
+  sending
+  sent
+  partially_failed
+  failed
+  cancelled
+}
+
+enum AnnouncementDeliveryStatus {
+  pending
+  sent
+  failed
+  blocked
+}
+
 model User {
   id                           String                 @id @default(uuid())
   telegramId                   BigInt                 @unique @db.BigInt
@@ -68,7 +111,11 @@ model User {
   summaries                    Summary[]
   fsmSession                   FsmSession?
   productEvents                ProductEvent[]
+  feedbackItems                FeedbackItem[]
+  announcementDeliveries       AnnouncementDelivery[]
+  announcementPollVotes        AnnouncementPollVote[]
 
+  @@index([consentGiven, id])
   @@map("users")
 }
 
@@ -266,4 +313,97 @@ model ProductEvent {
 
   @@index([eventName, createdAt])
   @@map("product_events")
+}
+
+model FeedbackItem {
+  id           String         @id @default(uuid())
+  userId       String?
+  user         User?          @relation(fields: [userId], references: [id], onDelete: SetNull)
+  feedbackType FeedbackType
+  message      String
+  status       FeedbackStatus @default(unread)
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  @@index([status, createdAt])
+  @@index([userId, createdAt])
+  @@map("feedback_items")
+}
+
+model AnnouncementCampaign {
+  id                        String                       @id @default(uuid())
+  type                      AnnouncementType
+  title                     String                       @default("")
+  body                      String                       @default("")
+  audience                  AnnouncementAudience         @default(consented)
+  status                    AnnouncementStatus           @default(draft)
+  createdByAdminTelegramId  BigInt                       @db.BigInt
+  imageTelegramFileId       String?
+  imageTelegramFileUniqueId String?
+  imageAddedAt              DateTime?
+  pollToken                 String?                      @unique
+  createdAt                 DateTime                     @default(now())
+  updatedAt                 DateTime                     @updatedAt
+  confirmedAt               DateTime?
+  startedAt                 DateTime?
+  finishedAt                DateTime?
+  deliveries                AnnouncementDelivery[]
+  pollOptions               AnnouncementPollOption[]
+  pollVotes                 AnnouncementPollVote[]
+
+  @@index([status, createdAt])
+  @@index([createdAt])
+  @@map("announcement_campaigns")
+}
+
+model AnnouncementDelivery {
+  id                 String                     @id @default(uuid())
+  campaignId         String
+  campaign           AnnouncementCampaign       @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  userId             String
+  user               User                       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  telegramId         BigInt                     @db.BigInt
+  status             AnnouncementDeliveryStatus @default(pending)
+  telegramMessageIds Json?
+  errorCode          String?
+  errorMessage       String?
+  attempts           Int                        @default(0)
+  sentAt             DateTime?
+  createdAt          DateTime                   @default(now())
+  updatedAt          DateTime                   @updatedAt
+
+  @@unique([campaignId, userId])
+  @@index([campaignId, status])
+  @@index([campaignId, status, id])
+  @@index([userId, createdAt])
+  @@map("announcement_deliveries")
+}
+
+model AnnouncementPollOption {
+  id         String                 @id @default(uuid())
+  campaignId String
+  campaign   AnnouncementCampaign   @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  label      String
+  sortOrder  Int
+  createdAt  DateTime               @default(now())
+  votes      AnnouncementPollVote[]
+
+  @@unique([campaignId, sortOrder])
+  @@index([campaignId, sortOrder])
+  @@map("announcement_poll_options")
+}
+
+model AnnouncementPollVote {
+  id         String                     @id @default(uuid())
+  campaignId String
+  campaign   AnnouncementCampaign       @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  optionId   String
+  option     AnnouncementPollOption     @relation(fields: [optionId], references: [id], onDelete: Cascade)
+  userId     String
+  user       User                       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt  DateTime                   @default(now())
+
+  @@unique([campaignId, userId])
+  @@index([campaignId, optionId])
+  @@map("announcement_poll_votes")
 }

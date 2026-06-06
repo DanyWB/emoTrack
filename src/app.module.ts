@@ -10,6 +10,7 @@ import appConfig from './config/app.config';
 import { parseBooleanEnv } from './config/config.utils';
 import databaseConfig from './config/database.config';
 import redisConfig, { type RedisConfig } from './config/redis.config';
+import supportConfig from './config/support.config';
 import telegramConfig from './config/telegram.config';
 import { validateEnv } from './config/validation';
 import { PrismaModule } from './database/prisma.module';
@@ -26,7 +27,10 @@ import { SummariesModule } from './summaries/summaries.module';
 import { ChartsModule } from './charts/charts.module';
 import { RemindersModule } from './reminders/reminders.module';
 import { AnalyticsModule } from './analytics/analytics.module';
+import { AnnouncementsModule } from './announcements/announcements.module';
 import { HealthModule } from './health/health.module';
+import { FeedbackModule } from './feedback/feedback.module';
+import { SupportModule } from './support/support.module';
 
 const jobsEnabled = parseBooleanEnv(process.env.JOBS_ENABLED, false);
 
@@ -35,7 +39,7 @@ const jobsEnabled = parseBooleanEnv(process.env.JOBS_ENABLED, false);
     ConfigModule.forRoot({
       isGlobal: true,
       cache: true,
-      load: [appConfig, databaseConfig, redisConfig, telegramConfig, adminConfig],
+      load: [appConfig, databaseConfig, redisConfig, telegramConfig, adminConfig, supportConfig],
       validate: validateEnv,
     }),
     ...(jobsEnabled
@@ -77,6 +81,9 @@ const jobsEnabled = parseBooleanEnv(process.env.JOBS_ENABLED, false);
     ChartsModule,
     RemindersModule,
     AnalyticsModule,
+    AnnouncementsModule,
+    FeedbackModule,
+    SupportModule,
     HealthModule,
   ],
 })

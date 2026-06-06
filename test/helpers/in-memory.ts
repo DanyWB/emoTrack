@@ -64,6 +64,10 @@ export function createConfigService(overrides: PlainObject = {}): ConfigService 
       telegramIds: [],
       ...((overrides.admin as PlainObject | undefined) ?? {}),
     },
+    support: {
+      url: undefined,
+      ...((overrides.support as PlainObject | undefined) ?? {}),
+    },
     ...overrides,
   };
 

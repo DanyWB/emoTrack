@@ -134,6 +134,35 @@ describe('CheckinsService', () => {
     });
   });
 
+  it('builds and counts a yesterday entry date in the user timezone', async () => {
+    const { service, repository } = createService();
+    const now = new Date('2026-06-05T12:30:00.000Z');
+    const entryDate = service.buildRelativeEntryDate(-1, {
+      date: now,
+      timezone: 'Europe/Moscow',
+    });
+
+    expect(entryDate.toISOString()).toBe('2026-06-04T00:00:00.000Z');
+
+    await service.upsertEntryForDate(
+      'user-1',
+      {
+        v2MetricValues: [
+          { key: 'mood', ordinalValue: 4 },
+          { key: 'energy', ordinalValue: 3 },
+          { key: 'calm', ordinalValue: 4 },
+        ],
+      },
+      entryDate,
+    );
+
+    await expect(service.countYesterdayEntry('user-1', {
+      date: now,
+      timezone: 'Europe/Moscow',
+    })).resolves.toBe(1);
+    expect(repository.listEntries()).toHaveLength(1);
+  });
+
   it('attaches v2 optional metric values for period reads', async () => {
     const { service, repository } = createService();
 

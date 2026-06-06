@@ -1,4 +1,4 @@
-import type { User } from '@prisma/client';
+import type { FeedbackItem, FeedbackStatus, User } from '@prisma/client';
 
 export interface AdminOverview {
   totalUsers: number;
@@ -31,4 +31,19 @@ export interface AdminActiveUsersPage {
 export interface AdminUserDetail extends AdminActiveUserListItem {
   firstEntryDate: Date | null;
   summariesCount: number;
+}
+
+export interface AdminFeedbackListItem {
+  item: FeedbackItem;
+  user: User | null;
+}
+
+export interface AdminFeedbackPage {
+  items: AdminFeedbackListItem[];
+  total: number;
+  offset: number;
+  limit: number;
+  hasPrevious: boolean;
+  hasNext: boolean;
+  status?: FeedbackStatus;
 }

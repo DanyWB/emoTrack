@@ -26,6 +26,10 @@ export function buildDayKey(referenceDate: Date, timezoneName: string): string {
   return dayjs(referenceDate).tz(timezoneName).format('YYYY-MM-DD');
 }
 
+export function buildRelativeDayKey(referenceDate: Date, timezoneName: string, offsetDays: number): string {
+  return dayjs(referenceDate).tz(timezoneName).add(offsetDays, 'day').format('YYYY-MM-DD');
+}
+
 export function normalizeDayKeyToUtcDate(dayKey: string): Date {
   return dayjs.utc(`${dayKey}T00:00:00.000Z`).toDate();
 }

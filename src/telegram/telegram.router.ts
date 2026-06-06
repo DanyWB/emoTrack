@@ -1,9 +1,12 @@
 ﻿import { Injectable, Logger } from '@nestjs/common';
-import { SleepMode, SummaryPeriodType, type User } from '@prisma/client';
+import { Optional } from '@nestjs/common';
+import { AnnouncementType, SleepMode, SummaryPeriodType, type User } from '@prisma/client';
 import type { Context, Telegraf } from 'telegraf';
 
 import { AdminService } from '../admin/admin.service';
 import { AnalyticsService } from '../analytics/analytics.service';
+import { AnnouncementsService } from '../announcements/announcements.service';
+import { isAnnouncementTypeKey } from '../announcements/announcements.types';
 import { ChartsService } from '../charts/charts.service';
 import { CheckinsFlowService, type CheckinFlowResult } from '../checkins/checkins.flow';
 import { CheckinsService } from '../checkins/checkins.service';
@@ -19,10 +22,13 @@ import { formatErrorLogEvent, formatLogEvent, toLogErrorDetails } from '../commo
 import { isValidTimeFormat } from '../common/utils/validation.utils';
 import { type DailyMetricCatalogKey } from '../daily-metrics/daily-metrics.catalog';
 import { EventsFlowService, type EventFlowResult } from '../events/events.flow';
+import { FeedbackService } from '../feedback/feedback.service';
+import { isFeedbackTypeKey } from '../feedback/feedback.types';
 import { FsmService } from '../fsm/fsm.service';
 import { FSM_STATES, type CheckinDraftPayload, type FsmState } from '../fsm/fsm.types';
 import { OnboardingFlow, type OnboardingStepType } from '../onboarding/onboarding.flow';
 import { RemindersService } from '../reminders/reminders.service';
+import { SupportService } from '../support/support.service';
 import { SummariesService } from '../summaries/summaries.service';
 import { type PeriodStatsPayload, type SelectedMetricStatsPayload, type StatsSelectedMetricKey } from '../stats/stats.types';
 import { UsersService } from '../users/users.service';
@@ -31,7 +37,13 @@ import {
   formatCheckinV2MetricTagsPrompt,
   formatCheckinV2Review,
   formatCheckinV2ReviewEdit,
+  formatAdminAnnouncementDetail,
+  formatAdminAnnouncementPreview,
+  formatAdminAnnouncementSendReport,
+  formatAdminAnnouncementsPage,
   formatAdminActiveUsersPage,
+  formatAdminFeedbackDetail,
+  formatAdminFeedbackPage,
   formatAdminOverview,
   formatAdminUserButtonLabel,
   formatAdminUserDetail,
@@ -48,11 +60,14 @@ import {
   formatStandaloneEventSaved,
   getDailyMetricLabel,
   getCheckinV2MetricPrompt,
+  isTermsDocumentKey,
+  TERMS_DOCUMENTS,
   telegramCopy,
   type CheckinMetricDisplayData,
   type CheckinConfirmationData,
   type CheckinReviewData,
   type SettingsMetricOptionData,
+  type TermsDocumentKey,
 } from './telegram.copy';
 import { extractTelegramProfile, getCallbackData, normalizeTelegramText } from './telegram.helpers';
 import { telegramKeyboards } from './telegram.keyboards';
@@ -73,6 +88,8 @@ import {
 const HISTORY_PAGE_SIZE = 5;
 const HISTORY_ROOT_CURSOR_TOKEN = 'root';
 const ADMIN_ACTIVE_USERS_PAGE_SIZE = 5;
+const ADMIN_FEEDBACK_PAGE_SIZE = 5;
+const ADMIN_ANNOUNCEMENTS_PAGE_SIZE = 5;
 
 interface MessageRenderOptions {
   preferEdit?: boolean;
@@ -99,6 +116,21 @@ interface AdminEntryCallback {
   pageCursorToken: string;
 }
 
+interface AdminFeedbackCallback {
+  feedbackId: string;
+  pageOffset: number;
+}
+
+interface AdminAnnouncementCallback {
+  campaignId: string;
+  pageOffset: number;
+}
+
+interface AnnouncementVoteCallback {
+  token: string;
+  sortOrder: number;
+}
+
 @Injectable()
 export class TelegramRouter {
   private readonly logger = new Logger(TelegramRouter.name);
@@ -115,6 +147,9 @@ export class TelegramRouter {
     private readonly fsmService: FsmService,
     private readonly analyticsService: AnalyticsService,
     private readonly adminService: AdminService,
+    @Optional() private readonly supportService?: SupportService,
+    @Optional() private readonly feedbackService?: FeedbackService,
+    @Optional() private readonly announcementsService?: AnnouncementsService,
   ) {}
 
   register(bot: Telegraf<Context>): void {
@@ -123,16 +158,20 @@ export class TelegramRouter {
     bot.command('menu', (ctx) => this.runSafely(ctx, () => this.handleMenuCommand(ctx), 'menu'));
     bot.command('terms', (ctx) => this.runSafely(ctx, () => this.handleTermsCommand(ctx), 'terms'));
     bot.command('checkin', (ctx) => this.runSafely(ctx, () => this.handleCheckinCommand(ctx), 'checkin'));
+    bot.command('yesterday', (ctx) => this.runSafely(ctx, () => this.handleYesterdayCheckinCommand(ctx), 'yesterday'));
     bot.command('event', (ctx) => this.runSafely(ctx, () => this.handleEventCommand(ctx), 'event'));
     bot.command('stats', (ctx) => this.runSafely(ctx, () => this.handleStatsCommand(ctx), 'stats'));
     bot.command('history', (ctx) => this.runSafely(ctx, () => this.handleHistoryCommand(ctx), 'history'));
     bot.command('settings', (ctx) => this.runSafely(ctx, () => this.handleSettingsCommand(ctx), 'settings'));
+    bot.command('feedback', (ctx) => this.runSafely(ctx, () => this.handleFeedbackCommand(ctx), 'feedback'));
+    bot.command('support', (ctx) => this.runSafely(ctx, () => this.handleSupportCommand(ctx), 'support'));
     bot.command('help', (ctx) => this.runSafely(ctx, () => this.handleHelpCommand(ctx), 'help'));
 
     bot.hears(TELEGRAM_MAIN_MENU_BUTTONS[0], (ctx) => this.runSafely(ctx, () => this.handleCheckinCommand(ctx), 'menu:checkin'));
     bot.hears(TELEGRAM_MAIN_MENU_BUTTONS[1], (ctx) => this.runSafely(ctx, () => this.handleEventCommand(ctx), 'menu:event'));
 
     bot.on('callback_query', (ctx) => this.runSafely(ctx, () => this.handleCallbackQuery(ctx), 'callback_query'));
+    bot.on('photo', (ctx) => this.runSafely(ctx, () => this.handlePhotoMessage(ctx), 'photo'));
     bot.on('text', (ctx) => this.runSafely(ctx, () => this.handleTextMessage(ctx), 'text'));
   }
 
@@ -165,18 +204,27 @@ export class TelegramRouter {
   }
 
   private async handleCheckinCommand(ctx: Context): Promise<void> {
+    await this.startCheckinCommand(ctx, 'today');
+  }
+
+  private async handleYesterdayCheckinCommand(ctx: Context): Promise<void> {
+    await this.startCheckinCommand(ctx, 'yesterday');
+  }
+
+  private async startCheckinCommand(ctx: Context, target: 'today' | 'yesterday'): Promise<void> {
     const user = await this.getOrCreateUserFromContext(ctx);
     if (!user || !(await this.ensureProductAccess(ctx, user))) {
       return;
     }
 
     if (!user.checkinV2OnboardingCompleted) {
-      await this.startCheckinV2Onboarding(ctx, user);
+      await this.startCheckinV2Onboarding(ctx, user, {}, target);
       return;
     }
 
-    const result = await this.checkinsFlow.start(user);
-    await replyHtml(ctx, result.resumed ? telegramCopy.checkin.resumed : telegramCopy.checkin.started);
+    const result = await this.checkinsFlow.start(user, { target });
+    const startedCopy = target === 'yesterday' ? telegramCopy.checkin.startedYesterday : telegramCopy.checkin.started;
+    await replyHtml(ctx, result.resumed ? telegramCopy.checkin.resumed : startedCopy);
 
     if (result.nextState && this.isEventState(result.nextState)) {
       await this.replyEventPromptByState(ctx, user, result.nextState, 'checkin');
@@ -228,6 +276,25 @@ export class TelegramRouter {
     await this.replyHelp(ctx);
   }
 
+  private async handleSupportCommand(ctx: Context): Promise<void> {
+    const user = await this.getOrCreateUserFromContext(ctx);
+
+    if (user) {
+      await this.analyticsService.track('support_opened', {}, user.id);
+    }
+
+    await this.openSupport(ctx);
+  }
+
+  private async handleFeedbackCommand(ctx: Context): Promise<void> {
+    const user = await this.getOrCreateUserFromContext(ctx);
+    if (!user || !(await this.ensureProductAccess(ctx, user))) {
+      return;
+    }
+
+    await this.openFeedbackTypePicker(ctx, user);
+  }
+
   private async handleTermsCommand(ctx: Context): Promise<void> {
     const user = await this.getOrCreateUserFromContext(ctx);
     if (!user) {
@@ -243,17 +310,43 @@ export class TelegramRouter {
     if (!user.consentGiven) {
       await this.fsmService.setState(user.id, FSM_STATES.onboarding_consent, {});
       lines.push('', `<i>${telegramCopy.terms.acceptPrompt}</i>`);
-      await this.sendHtml(ctx, lines.join('\n'), telegramKeyboards.consent(), options);
+      await this.sendHtml(ctx, lines.join('\n'), telegramKeyboards.termsDocuments({ showAccept: true }), options);
       return;
     }
 
     lines.push('', telegramCopy.terms.alreadyAccepted);
+    await this.sendHtml(ctx, lines.join('\n'), telegramKeyboards.termsDocuments({
+      showAccept: false,
+      showMenu: true,
+    }), options);
+  }
+
+  private async openTermsDocument(
+    ctx: Context,
+    documentKey: TermsDocumentKey,
+    options: MessageRenderOptions = {},
+  ): Promise<void> {
+    await this.sendHtml(ctx, TERMS_DOCUMENTS[documentKey].text, telegramKeyboards.termsDocument(), options);
+  }
+
+  private async openSupport(ctx: Context, options: MessageRenderOptions = {}): Promise<void> {
+    const supportUrl = this.supportService?.getSupportUrl();
     await this.sendHtml(
       ctx,
-      lines.join('\n'),
-      options.preferEdit ? telegramKeyboards.navigationMenu() : telegramKeyboards.mainMenu(),
+      supportUrl ? telegramCopy.support.text : telegramCopy.support.missingUrl,
+      telegramKeyboards.supportActions(supportUrl),
       options,
     );
+  }
+
+  private async openFeedbackTypePicker(
+    ctx: Context,
+    user: User,
+    options: MessageRenderOptions = {},
+  ): Promise<void> {
+    await this.fsmService.setState(user.id, FSM_STATES.feedback_type, {});
+    await this.analyticsService.track('feedback_started', {}, user.id);
+    await this.sendHtml(ctx, telegramCopy.feedback.typePrompt, telegramKeyboards.feedbackTypePicker(), options);
   }
 
   private async sendHtml(
@@ -392,9 +485,15 @@ export class TelegramRouter {
     await this.replySettingsMenu(ctx, user, options);
   }
 
-  private async startCheckinV2Onboarding(ctx: Context, user: User, options: MessageRenderOptions = {}): Promise<void> {
+  private async startCheckinV2Onboarding(
+    ctx: Context,
+    user: User,
+    options: MessageRenderOptions = {},
+    target: 'today' | 'yesterday' = 'today',
+  ): Promise<void> {
     await this.fsmService.setState(user.id, FSM_STATES.checkin_v2_onboarding, {
       checkinV2OnboardingStep: 0,
+      checkinTarget: target,
     });
     await this.replyCheckinV2Onboarding(ctx, 0, options);
   }
@@ -439,9 +538,92 @@ export class TelegramRouter {
       return;
     }
 
+    if (callbackData === TELEGRAM_CALLBACKS.adminAnnouncementsMenu) {
+      await this.replyAdminAnnouncementsMenu(ctx);
+      return;
+    }
+
+    if (callbackData === TELEGRAM_CALLBACKS.adminAnnouncementCreate) {
+      await this.startAdminAnnouncementCreate(ctx);
+      return;
+    }
+
+    if (callbackData.startsWith(TELEGRAM_CALLBACKS.adminAnnouncementTypePrefix)) {
+      const type = callbackData.slice(TELEGRAM_CALLBACKS.adminAnnouncementTypePrefix.length);
+      await this.handleAdminAnnouncementType(ctx, type);
+      return;
+    }
+
+    if (callbackData.startsWith(TELEGRAM_CALLBACKS.adminAnnouncementListPrefix)) {
+      const offset = this.parseAdminOffset(callbackData.slice(TELEGRAM_CALLBACKS.adminAnnouncementListPrefix.length));
+      await this.replyAdminAnnouncementsPage(ctx, offset);
+      return;
+    }
+
+    const adminAnnouncementOpenPayload = this.parseAdminAnnouncementCallback(
+      callbackData,
+      TELEGRAM_CALLBACKS.adminAnnouncementOpenPrefix,
+    );
+
+    if (adminAnnouncementOpenPayload) {
+      await this.replyAdminAnnouncementDetail(
+        ctx,
+        adminAnnouncementOpenPayload.campaignId,
+        adminAnnouncementOpenPayload.pageOffset,
+      );
+      return;
+    }
+
+    if (callbackData.startsWith(TELEGRAM_CALLBACKS.adminAnnouncementSendPrefix)) {
+      const campaignId = callbackData.slice(TELEGRAM_CALLBACKS.adminAnnouncementSendPrefix.length);
+      await this.sendAdminAnnouncement(ctx, campaignId);
+      return;
+    }
+
+    if (callbackData.startsWith(TELEGRAM_CALLBACKS.adminAnnouncementCancelPrefix)) {
+      const campaignId = callbackData.slice(TELEGRAM_CALLBACKS.adminAnnouncementCancelPrefix.length);
+      await this.cancelAdminAnnouncement(ctx, campaignId);
+      return;
+    }
+
     if (callbackData.startsWith(TELEGRAM_CALLBACKS.adminActiveUsersPrefix)) {
       const offset = this.parseAdminOffset(callbackData.slice(TELEGRAM_CALLBACKS.adminActiveUsersPrefix.length));
       await this.replyAdminActiveUsers(ctx, offset);
+      return;
+    }
+
+    if (callbackData.startsWith(TELEGRAM_CALLBACKS.adminFeedbackPrefix)) {
+      const offset = this.parseAdminOffset(callbackData.slice(TELEGRAM_CALLBACKS.adminFeedbackPrefix.length));
+      await this.replyAdminFeedbackPage(ctx, offset);
+      return;
+    }
+
+    const adminFeedbackOpenPayload = this.parseAdminFeedbackCallback(
+      callbackData,
+      TELEGRAM_CALLBACKS.adminFeedbackOpenPrefix,
+    );
+
+    if (adminFeedbackOpenPayload) {
+      await this.replyAdminFeedbackDetail(
+        ctx,
+        adminFeedbackOpenPayload.feedbackId,
+        adminFeedbackOpenPayload.pageOffset,
+      );
+      return;
+    }
+
+    const adminFeedbackReviewPayload = this.parseAdminFeedbackCallback(
+      callbackData,
+      TELEGRAM_CALLBACKS.adminFeedbackReviewPrefix,
+    );
+
+    if (adminFeedbackReviewPayload) {
+      await this.adminService.markFeedbackReviewed(adminFeedbackReviewPayload.feedbackId);
+      await this.replyAdminFeedbackDetail(
+        ctx,
+        adminFeedbackReviewPayload.feedbackId,
+        adminFeedbackReviewPayload.pageOffset,
+      );
       return;
     }
 
@@ -492,22 +674,204 @@ export class TelegramRouter {
     return false;
   }
 
+  private async ensureAnnouncementsService(ctx: Context): Promise<AnnouncementsService | null> {
+    if (this.announcementsService) {
+      return this.announcementsService;
+    }
+
+    await replyHtml(ctx, telegramCopy.common.unexpectedError, telegramKeyboards.adminMenu());
+    return null;
+  }
+
   private isAdminCallback(callbackData: string): boolean {
     return (
       callbackData === TELEGRAM_CALLBACKS.adminMenu ||
       callbackData === TELEGRAM_CALLBACKS.adminOverview ||
+      callbackData === TELEGRAM_CALLBACKS.adminAnnouncementsMenu ||
+      callbackData === TELEGRAM_CALLBACKS.adminAnnouncementCreate ||
+      callbackData.startsWith(TELEGRAM_CALLBACKS.adminAnnouncementListPrefix) ||
+      callbackData.startsWith(TELEGRAM_CALLBACKS.adminAnnouncementOpenPrefix) ||
+      callbackData.startsWith(TELEGRAM_CALLBACKS.adminAnnouncementTypePrefix) ||
+      callbackData.startsWith(TELEGRAM_CALLBACKS.adminAnnouncementSendPrefix) ||
+      callbackData.startsWith(TELEGRAM_CALLBACKS.adminAnnouncementCancelPrefix) ||
       callbackData.startsWith(TELEGRAM_CALLBACKS.adminActiveUsersPrefix) ||
       callbackData.startsWith(TELEGRAM_CALLBACKS.adminUserPrefix) ||
       callbackData.startsWith(TELEGRAM_CALLBACKS.adminUserStatsPrefix) ||
       callbackData.startsWith(TELEGRAM_CALLBACKS.adminUserHistoryPrefix) ||
       callbackData.startsWith(TELEGRAM_CALLBACKS.adminEntryOpenPrefix) ||
-      callbackData.startsWith(TELEGRAM_CALLBACKS.adminHistoryBackPrefix)
+      callbackData.startsWith(TELEGRAM_CALLBACKS.adminHistoryBackPrefix) ||
+      callbackData.startsWith(TELEGRAM_CALLBACKS.adminFeedbackPrefix) ||
+      callbackData.startsWith(TELEGRAM_CALLBACKS.adminFeedbackOpenPrefix) ||
+      callbackData.startsWith(TELEGRAM_CALLBACKS.adminFeedbackReviewPrefix)
     );
   }
 
   private async replyAdminOverview(ctx: Context): Promise<void> {
     const overview = await this.adminService.getOverview();
     await editOrReplyHtml(ctx, formatAdminOverview(overview), telegramKeyboards.adminOverview());
+  }
+
+  private async replyAdminAnnouncementsMenu(ctx: Context): Promise<void> {
+    await editOrReplyHtml(
+      ctx,
+      telegramCopy.admin.announcementsMenu,
+      telegramKeyboards.adminAnnouncementsMenu(),
+    );
+  }
+
+  private async startAdminAnnouncementCreate(ctx: Context): Promise<void> {
+    const adminUser = await this.getOrCreateUserFromContext(ctx);
+
+    if (!adminUser) {
+      return;
+    }
+
+    await this.fsmService.setState(adminUser.id, FSM_STATES.announcement_type, {});
+    await editOrReplyHtml(
+      ctx,
+      telegramCopy.admin.announcementTypePrompt,
+      telegramKeyboards.adminAnnouncementTypePicker(),
+    );
+  }
+
+  private async handleAdminAnnouncementType(ctx: Context, type: string): Promise<void> {
+    const adminUser = await this.getOrCreateUserFromContext(ctx);
+
+    if (!adminUser || !isAnnouncementTypeKey(type)) {
+      await replyHtml(ctx, telegramCopy.common.actionNotAllowed);
+      return;
+    }
+
+    const service = await this.ensureAnnouncementsService(ctx);
+
+    if (!service) {
+      return;
+    }
+
+    const campaign = await service.createDraft(type, BigInt(ctx.from?.id ?? 0));
+
+    await this.fsmService.setState(adminUser.id, FSM_STATES.announcement_title, {
+      announcementCampaignId: campaign.id,
+      announcementType: type,
+    });
+    await this.sendHtml(
+      ctx,
+      telegramCopy.admin.announcementTitlePrompt,
+      telegramKeyboards.adminAnnouncementTextActions(),
+      { preferEdit: true },
+    );
+  }
+
+  private async replyAdminAnnouncementsPage(ctx: Context, offset: number): Promise<void> {
+    const service = await this.ensureAnnouncementsService(ctx);
+
+    if (!service) {
+      return;
+    }
+
+    const page = await service.listCampaigns({
+      offset,
+      limit: ADMIN_ANNOUNCEMENTS_PAGE_SIZE,
+    });
+
+    await editOrReplyHtml(
+      ctx,
+      formatAdminAnnouncementsPage(page),
+      telegramKeyboards.adminAnnouncementsPage(page.items, {
+        offset: page.offset,
+        limit: page.limit,
+        hasPrevious: page.hasPrevious,
+        hasNext: page.hasNext,
+      }),
+    );
+  }
+
+  private async replyAdminAnnouncementDetail(
+    ctx: Context,
+    campaignId: string,
+    pageOffset: number,
+  ): Promise<void> {
+    const service = await this.ensureAnnouncementsService(ctx);
+
+    if (!service) {
+      return;
+    }
+
+    const campaign = await service.getCampaignDetail(campaignId);
+
+    if (!campaign) {
+      await editOrReplyHtml(ctx, telegramCopy.admin.announcementNotFound, telegramKeyboards.adminAnnouncementsMenu());
+      return;
+    }
+
+    const deliveryCounts = await service.getDeliveryCounts(campaignId);
+    const pollVoteCounts = campaign.type === AnnouncementType.poll
+      ? await service.getPollVoteCounts(campaignId)
+      : undefined;
+
+    await editOrReplyHtml(
+      ctx,
+      formatAdminAnnouncementDetail({
+        campaign,
+        deliveryCounts,
+        pollVoteCounts,
+      }),
+      telegramKeyboards.adminAnnouncementDetail(campaign, pageOffset),
+    );
+  }
+
+  private async sendAdminAnnouncement(ctx: Context, campaignId: string): Promise<void> {
+    const service = await this.ensureAnnouncementsService(ctx);
+
+    if (!service) {
+      return;
+    }
+
+    await editOrReplyHtml(ctx, telegramCopy.admin.announcementSending);
+    const report = await service.sendCampaign(campaignId);
+
+    if (!report) {
+      await replyHtml(
+        ctx,
+        telegramCopy.admin.announcementSendUnavailable,
+        telegramKeyboards.adminAnnouncementsMenu(),
+      );
+      return;
+    }
+
+    const adminUser = await this.getOrCreateUserFromContext(ctx);
+
+    if (adminUser) {
+      await this.fsmService.setIdle(adminUser.id);
+    }
+
+    await replyHtml(
+      ctx,
+      formatAdminAnnouncementSendReport(report),
+      telegramKeyboards.adminAnnouncementsMenu(),
+    );
+  }
+
+  private async cancelAdminAnnouncement(ctx: Context, campaignId: string): Promise<void> {
+    const service = await this.ensureAnnouncementsService(ctx);
+
+    if (!service) {
+      return;
+    }
+
+    await service.cancelCampaign(campaignId);
+
+    const adminUser = await this.getOrCreateUserFromContext(ctx);
+
+    if (adminUser) {
+      await this.fsmService.setIdle(adminUser.id);
+    }
+
+    await editOrReplyHtml(
+      ctx,
+      telegramCopy.admin.announcementCancelled,
+      telegramKeyboards.adminAnnouncementsMenu(),
+    );
   }
 
   private async replyAdminActiveUsers(ctx: Context, offset: number): Promise<void> {
@@ -531,6 +895,43 @@ export class TelegramRouter {
           hasNext: page.hasNext,
         },
       ),
+    );
+  }
+
+  private async replyAdminFeedbackPage(ctx: Context, offset: number): Promise<void> {
+    const page = await this.adminService.listFeedback({
+      offset,
+      limit: ADMIN_FEEDBACK_PAGE_SIZE,
+    });
+
+    await editOrReplyHtml(
+      ctx,
+      formatAdminFeedbackPage(page),
+      telegramKeyboards.adminFeedbackPage(page.items, {
+        offset: page.offset,
+        limit: page.limit,
+        hasPrevious: page.hasPrevious,
+        hasNext: page.hasNext,
+      }),
+    );
+  }
+
+  private async replyAdminFeedbackDetail(
+    ctx: Context,
+    feedbackId: string,
+    pageOffset: number,
+  ): Promise<void> {
+    const detail = await this.adminService.getFeedbackDetail(feedbackId);
+
+    if (!detail) {
+      await editOrReplyHtml(ctx, telegramCopy.admin.feedbackNotFound, telegramKeyboards.adminMenu());
+      return;
+    }
+
+    await editOrReplyHtml(
+      ctx,
+      formatAdminFeedbackDetail(detail),
+      telegramKeyboards.adminFeedbackDetail(detail, pageOffset),
     );
   }
 
@@ -652,6 +1053,20 @@ export class TelegramRouter {
       return;
     }
 
+    const announcementVotePayload = this.parseAnnouncementVoteCallback(callbackData);
+
+    if (announcementVotePayload) {
+      const user = await this.getOrCreateUserFromContext(ctx);
+
+      if (!user) {
+        await ctx.answerCbQuery().catch(() => undefined);
+        return;
+      }
+
+      await this.handleAnnouncementVote(ctx, user, announcementVotePayload);
+      return;
+    }
+
     await ctx.answerCbQuery().catch(() => undefined);
 
     if (this.isAdminCallback(callbackData)) {
@@ -665,6 +1080,15 @@ export class TelegramRouter {
     }
 
     const state = await this.fsmService.getState(user.id);
+
+    if (
+      this.isAnnouncementState(state) &&
+      this.adminService.isAdminTelegramId(ctx.from?.id) &&
+      this.isAnnouncementFlowAction(callbackData)
+    ) {
+      await this.handleAdminAnnouncementFlowCallback(ctx, user, state, callbackData);
+      return;
+    }
 
     if (!user.consentGiven && !this.isAllowedPreConsentCallback(callbackData)) {
       await this.replyPreConsentRedirect(ctx, user);
@@ -698,6 +1122,21 @@ export class TelegramRouter {
       return;
     }
 
+    if (callbackData === TELEGRAM_CALLBACKS.menuFeedback) {
+      if (!(await this.ensureProductAccess(ctx, user))) {
+        return;
+      }
+
+      await this.openFeedbackTypePicker(ctx, user, { preferEdit: true });
+      return;
+    }
+
+    if (callbackData === TELEGRAM_CALLBACKS.menuSupport) {
+      await this.analyticsService.track('support_opened', { source: 'menu' }, user.id);
+      await this.openSupport(ctx, { preferEdit: true });
+      return;
+    }
+
     if (callbackData === TELEGRAM_CALLBACKS.menuHelp) {
       await this.replyHelp(ctx, { preferEdit: true });
       return;
@@ -705,6 +1144,25 @@ export class TelegramRouter {
 
     if (callbackData === TELEGRAM_CALLBACKS.menuTerms) {
       await this.openTerms(ctx, user, { preferEdit: true });
+      return;
+    }
+
+    if (callbackData === TELEGRAM_CALLBACKS.termsDocuments) {
+      await this.openTerms(ctx, user, { preferEdit: true });
+      return;
+    }
+
+    const termsDocumentKey = this.parseTermsDocumentCallback(callbackData);
+
+    if (termsDocumentKey) {
+      await this.openTermsDocument(ctx, termsDocumentKey, { preferEdit: true });
+      return;
+    }
+
+    if (callbackData.startsWith(TELEGRAM_CALLBACKS.termsDocumentPrefix)) {
+      await this.sendHtml(ctx, telegramCopy.terms.documentNotFound, telegramKeyboards.termsDocument(), {
+        preferEdit: true,
+      });
       return;
     }
 
@@ -754,6 +1212,12 @@ export class TelegramRouter {
         return;
       }
 
+      if (this.isFeedbackState(state)) {
+        await this.fsmService.setIdle(user.id);
+        await this.returnToNavigationMenu(ctx, { preferEdit: true });
+        return;
+      }
+
       if (state === FSM_STATES.settings_menu || this.isStatsState(state)) {
         if (this.isStatsState(state)) {
           await this.cleanupStatsChartMessages(ctx, user.id);
@@ -768,6 +1232,11 @@ export class TelegramRouter {
     }
 
     if (callbackData === TELEGRAM_CALLBACKS.actionBack) {
+      if (state === FSM_STATES.feedback_message) {
+        await this.openFeedbackTypePicker(ctx, user, { preferEdit: true });
+        return;
+      }
+
       if (state === FSM_STATES.stats_metric_select) {
         const payload = await this.getSessionPayload(user.id);
         const periodType = this.parseSummaryPeriod(payload.statsPeriodType ?? '');
@@ -911,11 +1380,35 @@ export class TelegramRouter {
         return;
       }
 
+      const payload = await this.getSessionPayload(user.id);
+      const target = payload.checkinTarget === 'yesterday' ? 'yesterday' : 'today';
       const updatedUser = await this.usersService.setCheckinV2OnboardingCompleted(user.id, true);
       await this.fsmService.setIdle(user.id);
       await editOrReplyHtml(ctx, telegramCopy.checkin.v2OnboardingDone);
-      const result = await this.checkinsFlow.start(updatedUser);
+      const result = await this.checkinsFlow.start(updatedUser, { target });
       await this.replyCheckinResult(ctx, updatedUser, result);
+      return;
+    }
+
+    if (callbackData.startsWith(TELEGRAM_CALLBACKS.feedbackTypePrefix)) {
+      if (state !== FSM_STATES.feedback_type) {
+        await ctx.reply(telegramCopy.common.actionNotAllowed);
+        return;
+      }
+
+      const type = callbackData.slice(TELEGRAM_CALLBACKS.feedbackTypePrefix.length);
+
+      if (!isFeedbackTypeKey(type)) {
+        await ctx.reply(telegramCopy.common.actionNotAllowed);
+        return;
+      }
+
+      await this.fsmService.setState(user.id, FSM_STATES.feedback_message, {
+        feedbackType: type,
+      });
+      await this.sendHtml(ctx, telegramCopy.feedback.messagePrompt, telegramKeyboards.feedbackMessageActions(), {
+        preferEdit: true,
+      });
       return;
     }
 
@@ -1192,6 +1685,234 @@ export class TelegramRouter {
     await ctx.reply(telegramCopy.common.actionNotAllowed);
   }
 
+  private async handleAnnouncementVote(
+    ctx: Context,
+    user: User,
+    payload: AnnouncementVoteCallback,
+  ): Promise<void> {
+    const service = await this.ensureAnnouncementsService(ctx);
+
+    if (!service) {
+      await ctx.answerCbQuery(telegramCopy.announcements.voteUnavailable).catch(() => undefined);
+      return;
+    }
+
+    const result = await service.recordPollVote(user, payload.token, payload.sortOrder);
+
+    switch (result.status) {
+      case 'voted':
+        await ctx.answerCbQuery(telegramCopy.announcements.voteSaved).catch(() => undefined);
+        await deleteCurrentMessage(ctx);
+        await this.analyticsService.track('announcement_poll_voted', {
+          token: payload.token,
+          option: payload.sortOrder,
+        }, user.id);
+        return;
+      case 'already_voted':
+        await ctx.answerCbQuery(telegramCopy.announcements.voteAlreadySaved).catch(() => undefined);
+        return;
+      case 'not_allowed':
+      case 'not_found':
+        await ctx.answerCbQuery(telegramCopy.announcements.voteUnavailable).catch(() => undefined);
+        return;
+    }
+  }
+
+  private async handleAdminAnnouncementFlowCallback(
+    ctx: Context,
+    user: User,
+    state: FsmState,
+    callbackData: string,
+  ): Promise<void> {
+    const payload = await this.getSessionPayload(user.id);
+    const campaignId = payload.announcementCampaignId;
+
+    if (callbackData === TELEGRAM_CALLBACKS.actionCancel) {
+      if (campaignId && this.announcementsService) {
+        await this.announcementsService.cancelCampaign(campaignId);
+      }
+
+      await this.fsmService.setIdle(user.id);
+      await editOrReplyHtml(
+        ctx,
+        telegramCopy.admin.announcementCancelled,
+        telegramKeyboards.adminAnnouncementsMenu(),
+      );
+      return;
+    }
+
+    if (callbackData === TELEGRAM_CALLBACKS.actionBack) {
+      await this.goBackAdminAnnouncementFlow(ctx, user, state, payload);
+      return;
+    }
+
+    if (callbackData === TELEGRAM_CALLBACKS.actionSkip && state === FSM_STATES.announcement_image && campaignId) {
+      const service = await this.ensureAnnouncementsService(ctx);
+
+      if (!service) {
+        return;
+      }
+
+      await service.clearImage(campaignId);
+      await this.replyAdminAnnouncementPreview(ctx, user, campaignId, { preferEdit: true });
+      return;
+    }
+
+    await ctx.reply(telegramCopy.common.actionNotAllowed);
+  }
+
+  private async goBackAdminAnnouncementFlow(
+    ctx: Context,
+    user: User,
+    state: FsmState,
+    payload: CheckinDraftPayload,
+  ): Promise<void> {
+    const campaignId = payload.announcementCampaignId;
+    const announcementType = payload.announcementType;
+
+    if (state === FSM_STATES.announcement_title) {
+      await this.fsmService.setState(user.id, FSM_STATES.announcement_type, {});
+      await this.sendHtml(
+        ctx,
+        telegramCopy.admin.announcementTypePrompt,
+        telegramKeyboards.adminAnnouncementTypePicker(),
+        { preferEdit: true },
+      );
+      return;
+    }
+
+    if (!campaignId) {
+      await this.fsmService.setIdle(user.id);
+      await this.replyAdminAnnouncementsMenu(ctx);
+      return;
+    }
+
+    if (state === FSM_STATES.announcement_body) {
+      await this.fsmService.setState(user.id, FSM_STATES.announcement_title, {
+        announcementCampaignId: campaignId,
+        announcementType,
+      });
+      await this.sendHtml(
+        ctx,
+        telegramCopy.admin.announcementTitlePrompt,
+        telegramKeyboards.adminAnnouncementTextActions(),
+        { preferEdit: true },
+      );
+      return;
+    }
+
+    if (state === FSM_STATES.announcement_poll_options) {
+      await this.fsmService.setState(user.id, FSM_STATES.announcement_body, {
+        announcementCampaignId: campaignId,
+        announcementType,
+      });
+      await this.sendHtml(
+        ctx,
+        telegramCopy.admin.announcementBodyPrompt,
+        telegramKeyboards.adminAnnouncementTextActions(),
+        { preferEdit: true },
+      );
+      return;
+    }
+
+    if (state === FSM_STATES.announcement_preview) {
+      await this.fsmService.setState(user.id, FSM_STATES.announcement_image, {
+        announcementCampaignId: campaignId,
+        announcementType,
+      });
+      await this.sendHtml(
+        ctx,
+        telegramCopy.admin.announcementImagePrompt,
+        telegramKeyboards.adminAnnouncementImageActions(),
+        { preferEdit: true },
+      );
+      return;
+    }
+
+    if (state === FSM_STATES.announcement_image && announcementType === AnnouncementType.poll) {
+      await this.fsmService.setState(user.id, FSM_STATES.announcement_poll_options, {
+        announcementCampaignId: campaignId,
+        announcementType,
+      });
+      await this.sendHtml(
+        ctx,
+        telegramCopy.admin.announcementPollOptionsPrompt,
+        telegramKeyboards.adminAnnouncementTextActions(),
+        { preferEdit: true },
+      );
+      return;
+    }
+
+    if (state === FSM_STATES.announcement_image) {
+      await this.fsmService.setState(user.id, FSM_STATES.announcement_body, {
+        announcementCampaignId: campaignId,
+        announcementType,
+      });
+      await this.sendHtml(
+        ctx,
+        telegramCopy.admin.announcementBodyPrompt,
+        telegramKeyboards.adminAnnouncementTextActions(),
+        { preferEdit: true },
+      );
+      return;
+    }
+
+    await this.replyAdminAnnouncementsMenu(ctx);
+  }
+
+  private async replyAdminAnnouncementPreview(
+    ctx: Context,
+    user: User,
+    campaignId: string,
+    options: MessageRenderOptions = {},
+  ): Promise<void> {
+    const service = await this.ensureAnnouncementsService(ctx);
+
+    if (!service) {
+      return;
+    }
+
+    const preview = await service.preparePreview(campaignId);
+
+    if (!preview) {
+      await this.sendHtml(
+        ctx,
+        telegramCopy.admin.announcementPreviewNotReady,
+        telegramKeyboards.adminAnnouncementTextActions(),
+        options,
+      );
+      return;
+    }
+
+    await this.fsmService.setState(user.id, FSM_STATES.announcement_preview, {
+      announcementCampaignId: campaignId,
+      announcementType: preview.campaign.type,
+    });
+    await this.sendHtml(
+      ctx,
+      formatAdminAnnouncementPreview({
+        campaign: preview.campaign,
+        audienceCount: preview.audienceCount,
+      }),
+      telegramKeyboards.adminAnnouncementPreview(campaignId),
+      options,
+    );
+
+    if (preview.campaign.imageTelegramFileId) {
+      await this.replyAdminAnnouncementPreviewImage(ctx, preview.campaign.imageTelegramFileId);
+    }
+  }
+
+  private async replyAdminAnnouncementPreviewImage(ctx: Context, fileId: string): Promise<void> {
+    try {
+      await ctx.replyWithPhoto(fileId, {
+        caption: telegramCopy.admin.announcementImagePreviewCaption,
+      });
+    } catch (error) {
+      this.logger.warn(formatErrorLogEvent('admin_announcement_preview_image_failed', error));
+    }
+  }
+
   private async handleTextMessage(ctx: Context): Promise<void> {
     const message = ctx.message;
 
@@ -1222,7 +1943,7 @@ export class TelegramRouter {
         await this.handleReminderTimeInput(ctx, user, text);
         return;
       case FSM_STATES.onboarding_consent:
-        await replyHtml(ctx, telegramCopy.onboarding.consentPrompt, telegramKeyboards.consent());
+        await replyHtml(ctx, telegramCopy.onboarding.consentPrompt, telegramKeyboards.termsDocuments({ showAccept: true }));
         return;
       case FSM_STATES.onboarding_first_checkin:
         await replyHtml(ctx, telegramCopy.onboarding.firstCheckinOffer, telegramKeyboards.onboardingFirstCheckin());
@@ -1265,6 +1986,51 @@ export class TelegramRouter {
       case FSM_STATES.event_repeat_count:
         await this.handleEventTextByState(ctx, user, state, text);
         return;
+      case FSM_STATES.feedback_type:
+        await this.openFeedbackTypePicker(ctx, user);
+        return;
+      case FSM_STATES.feedback_message:
+        await this.handleFeedbackMessageInput(ctx, user, text);
+        return;
+      case FSM_STATES.announcement_type:
+        if (this.adminService.isAdminTelegramId(ctx.from?.id)) {
+          await this.sendHtml(ctx, telegramCopy.admin.announcementTypePrompt, telegramKeyboards.adminAnnouncementTypePicker());
+          return;
+        }
+        break;
+      case FSM_STATES.announcement_title:
+        if (this.adminService.isAdminTelegramId(ctx.from?.id)) {
+          await this.handleAdminAnnouncementTitleInput(ctx, user, text);
+          return;
+        }
+        break;
+      case FSM_STATES.announcement_body:
+        if (this.adminService.isAdminTelegramId(ctx.from?.id)) {
+          await this.handleAdminAnnouncementBodyInput(ctx, user, text);
+          return;
+        }
+        break;
+      case FSM_STATES.announcement_poll_options:
+        if (this.adminService.isAdminTelegramId(ctx.from?.id)) {
+          await this.handleAdminAnnouncementPollOptionsInput(ctx, user, text);
+          return;
+        }
+        break;
+      case FSM_STATES.announcement_image:
+        if (this.adminService.isAdminTelegramId(ctx.from?.id)) {
+          await replyHtml(ctx, telegramCopy.validation.invalidAnnouncementImage, telegramKeyboards.adminAnnouncementImageActions());
+          return;
+        }
+        break;
+      case FSM_STATES.announcement_preview:
+        if (this.adminService.isAdminTelegramId(ctx.from?.id)) {
+          const payload = await this.getSessionPayload(user.id);
+          if (payload.announcementCampaignId) {
+            await this.replyAdminAnnouncementPreview(ctx, user, payload.announcementCampaignId);
+            return;
+          }
+        }
+        break;
       case FSM_STATES.settings_menu:
         await this.handleSettingsTextInput(ctx, user, text);
         return;
@@ -1573,6 +2339,167 @@ export class TelegramRouter {
     await this.replyEventResult(ctx, user, result, this.withFlowMessageCleanup(user.id));
   }
 
+  private async handleFeedbackMessageInput(ctx: Context, user: User, text: string): Promise<void> {
+    const payload = await this.getSessionPayload(user.id);
+    const feedbackType = payload.feedbackType;
+
+    if (!feedbackType || !isFeedbackTypeKey(feedbackType)) {
+      await this.openFeedbackTypePicker(ctx, user);
+      return;
+    }
+
+    if (!this.feedbackService) {
+      await ctx.reply(telegramCopy.common.unexpectedError, telegramKeyboards.mainMenu());
+      await this.fsmService.setIdle(user.id);
+      return;
+    }
+
+    const feedback = await this.feedbackService.submit(user, feedbackType, text);
+
+    if (!feedback) {
+      await ctx.reply(telegramCopy.validation.invalidFeedbackMessage, telegramKeyboards.feedbackMessageActions());
+      return;
+    }
+
+    await this.fsmService.setIdle(user.id);
+    await replyHtml(ctx, telegramCopy.feedback.saved, telegramKeyboards.feedbackSaved());
+  }
+
+  private async handleAdminAnnouncementTitleInput(ctx: Context, user: User, text: string): Promise<void> {
+    const service = await this.ensureAnnouncementsService(ctx);
+    const payload = await this.getSessionPayload(user.id);
+    const campaignId = payload.announcementCampaignId;
+
+    if (!service || !campaignId) {
+      await this.replyAdminAnnouncementsMenu(ctx);
+      return;
+    }
+
+    const campaign = await service.setTitle(campaignId, text);
+
+    if (!campaign) {
+      await ctx.reply(telegramCopy.validation.invalidAnnouncementTitle, telegramKeyboards.adminAnnouncementTextActions());
+      return;
+    }
+
+    await this.fsmService.setState(user.id, FSM_STATES.announcement_body, {
+      announcementCampaignId: campaignId,
+      announcementType: campaign.type,
+    });
+    await replyHtml(
+      ctx,
+      telegramCopy.admin.announcementBodyPrompt,
+      telegramKeyboards.adminAnnouncementTextActions(),
+    );
+  }
+
+  private async handleAdminAnnouncementBodyInput(ctx: Context, user: User, text: string): Promise<void> {
+    const service = await this.ensureAnnouncementsService(ctx);
+    const payload = await this.getSessionPayload(user.id);
+    const campaignId = payload.announcementCampaignId;
+
+    if (!service || !campaignId) {
+      await this.replyAdminAnnouncementsMenu(ctx);
+      return;
+    }
+
+    const campaign = await service.setBody(campaignId, text);
+
+    if (!campaign) {
+      await ctx.reply(telegramCopy.validation.invalidAnnouncementBody, telegramKeyboards.adminAnnouncementTextActions());
+      return;
+    }
+
+    if (campaign.type === AnnouncementType.poll) {
+      await this.fsmService.setState(user.id, FSM_STATES.announcement_poll_options, {
+        announcementCampaignId: campaignId,
+        announcementType: campaign.type,
+      });
+      await replyHtml(
+        ctx,
+        telegramCopy.admin.announcementPollOptionsPrompt,
+        telegramKeyboards.adminAnnouncementTextActions(),
+      );
+      return;
+    }
+
+    await this.fsmService.setState(user.id, FSM_STATES.announcement_image, {
+      announcementCampaignId: campaignId,
+      announcementType: campaign.type,
+    });
+    await replyHtml(
+      ctx,
+      telegramCopy.admin.announcementImagePrompt,
+      telegramKeyboards.adminAnnouncementImageActions(),
+    );
+  }
+
+  private async handleAdminAnnouncementPollOptionsInput(ctx: Context, user: User, text: string): Promise<void> {
+    const service = await this.ensureAnnouncementsService(ctx);
+    const payload = await this.getSessionPayload(user.id);
+    const campaignId = payload.announcementCampaignId;
+
+    if (!service || !campaignId) {
+      await this.replyAdminAnnouncementsMenu(ctx);
+      return;
+    }
+
+    const options = await service.setPollOptions(campaignId, text);
+
+    if (!options) {
+      await ctx.reply(
+        telegramCopy.validation.invalidAnnouncementPollOptions,
+        telegramKeyboards.adminAnnouncementTextActions(),
+      );
+      return;
+    }
+
+    await this.fsmService.setState(user.id, FSM_STATES.announcement_image, {
+      announcementCampaignId: campaignId,
+      announcementType: AnnouncementType.poll,
+    });
+    await replyHtml(
+      ctx,
+      telegramCopy.admin.announcementImagePrompt,
+      telegramKeyboards.adminAnnouncementImageActions(),
+    );
+  }
+
+  private async handlePhotoMessage(ctx: Context): Promise<void> {
+    if (!this.adminService.isAdminTelegramId(ctx.from?.id)) {
+      return;
+    }
+
+    const user = await this.getOrCreateUserFromContext(ctx);
+
+    if (!user) {
+      return;
+    }
+
+    const state = await this.fsmService.getState(user.id);
+
+    if (state !== FSM_STATES.announcement_image) {
+      return;
+    }
+
+    const service = await this.ensureAnnouncementsService(ctx);
+    const payload = await this.getSessionPayload(user.id);
+    const campaignId = payload.announcementCampaignId;
+    const photo = this.extractLargestTelegramPhoto(ctx);
+
+    if (!service || !campaignId || !photo) {
+      await replyHtml(
+        ctx,
+        telegramCopy.validation.invalidAnnouncementImage,
+        telegramKeyboards.adminAnnouncementImageActions(),
+      );
+      return;
+    }
+
+    await service.setImage(campaignId, photo.file_id, photo.file_unique_id);
+    await this.replyAdminAnnouncementPreview(ctx, user, campaignId);
+  }
+
   private async handleReminderTimeInput(ctx: Context, user: User, reminderTime: string): Promise<void> {
     const result = await this.onboardingFlow.submitReminderTime(user, reminderTime);
 
@@ -1607,7 +2534,7 @@ export class TelegramRouter {
           ].join('\n')
         : telegramCopy.onboarding.consentPrompt;
 
-      await this.sendHtml(ctx, text, telegramKeyboards.consent(), options);
+      await this.sendHtml(ctx, text, telegramKeyboards.termsDocuments({ showAccept: true }), options);
       return;
     }
 
@@ -1658,6 +2585,7 @@ export class TelegramRouter {
         noteAdded: result.noteAdded,
         tagsCount: result.tagsCount,
         eventAdded: result.eventAdded,
+        entryDateLabel: this.formatCheckinEntryDateLabel(result.checkinTarget, result.entryDateKey),
       };
 
       await replyHtml(ctx, formatCheckinConfirmation(confirmation), telegramKeyboards.checkinConfirmationActions());
@@ -1767,6 +2695,10 @@ export class TelegramRouter {
             noteAdded: !!checkinPayload.noteText,
             tagsCount: this.getFinalizedTagIds(checkinPayload).length,
             eventAdded: true,
+            entryDateLabel: this.formatCheckinEntryDateLabel(
+              checkinPayload.checkinTarget,
+              checkinPayload.entryDateKey,
+            ),
           }),
           telegramKeyboards.checkinConfirmationActions(),
         );
@@ -2321,6 +3253,21 @@ export class TelegramRouter {
     return [...new Set(values.filter((value): value is string => typeof value === 'string'))];
   }
 
+  private formatCheckinEntryDateLabel(
+    target?: 'today' | 'yesterday',
+    entryDateKey?: string,
+  ): string {
+    if (target === 'yesterday') {
+      return 'вчера';
+    }
+
+    if (target === 'today' || !entryDateKey) {
+      return 'сегодня';
+    }
+
+    return entryDateKey;
+  }
+
   private buildReviewEditItems(data: CheckinReviewData): Array<{ key: string; label: string }> {
     const items = data.metrics.map((metric) => ({
       key: metric.key,
@@ -2387,8 +3334,40 @@ export class TelegramRouter {
     return state === FSM_STATES.stats_period_select || state === FSM_STATES.stats_metric_select;
   }
 
+  private isFeedbackState(state: FsmState): boolean {
+    return state === FSM_STATES.feedback_type || state === FSM_STATES.feedback_message;
+  }
+
+  private isAnnouncementState(state: FsmState): boolean {
+    return (
+      state === FSM_STATES.announcement_type ||
+      state === FSM_STATES.announcement_title ||
+      state === FSM_STATES.announcement_body ||
+      state === FSM_STATES.announcement_poll_options ||
+      state === FSM_STATES.announcement_image ||
+      state === FSM_STATES.announcement_preview
+    );
+  }
+
+  private isAnnouncementFlowAction(callbackData: string): boolean {
+    return (
+      callbackData === TELEGRAM_CALLBACKS.actionCancel ||
+      callbackData === TELEGRAM_CALLBACKS.actionBack ||
+      callbackData === TELEGRAM_CALLBACKS.actionSkip
+    );
+  }
+
   private shouldEditCheckinCallbackScreen(state: FsmState): boolean {
     return this.isCheckinState(state);
+  }
+
+  private parseTermsDocumentCallback(callbackData: string): TermsDocumentKey | null {
+    if (!callbackData.startsWith(TELEGRAM_CALLBACKS.termsDocumentPrefix)) {
+      return null;
+    }
+
+    const documentKey = callbackData.slice(TELEGRAM_CALLBACKS.termsDocumentPrefix.length);
+    return isTermsDocumentKey(documentKey) ? documentKey : null;
   }
 
   private parseDailyMetricCallback(callbackData: string): DailyMetricCatalogKey | null {
@@ -2580,6 +3559,95 @@ export class TelegramRouter {
     return { userId, pageCursorToken };
   }
 
+  private parseAdminFeedbackCallback(callbackData: string, prefix: string): AdminFeedbackCallback | null {
+    if (!callbackData.startsWith(prefix)) {
+      return null;
+    }
+
+    const raw = callbackData.slice(prefix.length);
+    const separatorIndex = raw.lastIndexOf(':');
+
+    if (separatorIndex <= 0 || separatorIndex === raw.length - 1) {
+      return null;
+    }
+
+    const feedbackId = raw.slice(0, separatorIndex);
+    const pageOffset = this.parseAdminOffset(raw.slice(separatorIndex + 1));
+
+    if (!feedbackId) {
+      return null;
+    }
+
+    return { feedbackId, pageOffset };
+  }
+
+  private parseAdminAnnouncementCallback(callbackData: string, prefix: string): AdminAnnouncementCallback | null {
+    if (!callbackData.startsWith(prefix)) {
+      return null;
+    }
+
+    const raw = callbackData.slice(prefix.length);
+    const separatorIndex = raw.lastIndexOf(':');
+
+    if (separatorIndex <= 0 || separatorIndex === raw.length - 1) {
+      return null;
+    }
+
+    const campaignId = raw.slice(0, separatorIndex);
+    const pageOffset = this.parseAdminOffset(raw.slice(separatorIndex + 1));
+
+    if (!campaignId) {
+      return null;
+    }
+
+    return { campaignId, pageOffset };
+  }
+
+  private parseAnnouncementVoteCallback(callbackData: string): AnnouncementVoteCallback | null {
+    if (!callbackData.startsWith(TELEGRAM_CALLBACKS.announcementVotePrefix)) {
+      return null;
+    }
+
+    const raw = callbackData.slice(TELEGRAM_CALLBACKS.announcementVotePrefix.length);
+    const [token, sortOrderRaw] = raw.split(':');
+    const sortOrder = Number(sortOrderRaw);
+
+    if (!token || !Number.isInteger(sortOrder) || sortOrder < 1) {
+      return null;
+    }
+
+    return { token, sortOrder };
+  }
+
+  private extractLargestTelegramPhoto(ctx: Context): { file_id: string; file_unique_id?: string } | null {
+    const message = ctx.message as
+      | {
+          photo?: Array<{
+            file_id: string;
+            file_unique_id?: string;
+            file_size?: number;
+            width?: number;
+            height?: number;
+          }>;
+        }
+      | undefined;
+    const photos = message?.photo;
+
+    if (!photos || photos.length === 0) {
+      return null;
+    }
+
+    return [...photos].sort((left, right) => this.getTelegramPhotoWeight(right) - this.getTelegramPhotoWeight(left))[0] ?? null;
+  }
+
+  private getTelegramPhotoWeight(photo: { file_size?: number; width?: number; height?: number }): number {
+    if (typeof photo.file_size === 'number') {
+      return photo.file_size;
+    }
+
+    return (photo.width ?? 0) * (photo.height ?? 0);
+  }
+
   private async getStatsPeriodFromSession(userId: string): Promise<SummaryPeriodType | null> {
     const payload = await this.getSessionPayload(userId);
     return this.parseSummaryPeriod(payload.statsPeriodType ?? '');
@@ -2710,7 +3778,10 @@ export class TelegramRouter {
       callbackData === TELEGRAM_CALLBACKS.consentAccept ||
       callbackData === TELEGRAM_CALLBACKS.actionCancel ||
       callbackData === TELEGRAM_CALLBACKS.menuTerms ||
-      callbackData === TELEGRAM_CALLBACKS.menuHelp
+      callbackData === TELEGRAM_CALLBACKS.termsDocuments ||
+      this.parseTermsDocumentCallback(callbackData) !== null ||
+      callbackData === TELEGRAM_CALLBACKS.menuHelp ||
+      callbackData === TELEGRAM_CALLBACKS.menuSupport
     );
   }
 

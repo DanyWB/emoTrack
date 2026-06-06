@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { EventType, PrismaClient, SleepMode } from '@prisma/client';
 
 import { AdminRepository } from '../../src/admin/admin.repository';
+import { AnnouncementsRepository } from '../../src/announcements/announcements.repository';
 import { CheckinsRepository } from '../../src/checkins/checkins.repository';
 import { DailyMetricsRepository } from '../../src/daily-metrics/daily-metrics.repository';
 import { DAILY_METRIC_CATALOG } from '../../src/daily-metrics/daily-metrics.catalog';
@@ -134,6 +135,7 @@ describe('Prisma database smoke', () => {
   let dailyMetricsRepository: DailyMetricsRepository;
   let eventsRepository: EventsRepository;
   let adminRepository: AdminRepository;
+  let announcementsRepository: AnnouncementsRepository;
 
   beforeAll(async () => {
     prisma = new PrismaClient({
@@ -154,6 +156,7 @@ describe('Prisma database smoke', () => {
     dailyMetricsRepository = new DailyMetricsRepository(prismaService);
     eventsRepository = new EventsRepository(prismaService);
     adminRepository = new AdminRepository(prismaService);
+    announcementsRepository = new AnnouncementsRepository(prismaService);
   });
 
   afterEach(async () => {
@@ -173,6 +176,20 @@ describe('Prisma database smoke', () => {
   });
 
   async function cleanupRunUsers(): Promise<void> {
+    await prisma.announcementCampaign.deleteMany({
+      where: {
+        title: {
+          startsWith: runId,
+        },
+      },
+    });
+    await prisma.feedbackItem.deleteMany({
+      where: {
+        message: {
+          startsWith: runId,
+        },
+      },
+    });
     await prisma.user.deleteMany({
       where: {
         username: {
@@ -330,14 +347,23 @@ describe('Prisma database smoke', () => {
       title: 'Admin smoke event',
       eventScore: 6,
     });
+    const feedback = await prisma.feedbackItem.create({
+      data: {
+        userId: user.id,
+        feedbackType: 'bug',
+        message: `${runId} admin smoke feedback`,
+      },
+    });
 
-    const [after, page, detail, ownerUserId] = await Promise.all([
+    const [after, page, detail, ownerUserId, feedbackPage] = await Promise.all([
       adminRepository.getOverview(),
       adminRepository.listActiveUsers({ offset: 0, limit: 20 }),
       adminRepository.getUserDetail(user.id),
       adminRepository.findEntryOwnerUserId(firstEntry.id),
+      adminRepository.listFeedback({ offset: 0, limit: 20 }),
     ]);
     const activeItem = page.items.find((item) => item.user.id === user.id);
+    const feedbackItem = feedbackPage.items.find((item) => item.item.id === feedback.id);
 
     expect(after.totalUsers).toBeGreaterThanOrEqual(before.totalUsers + 1);
     expect(after.activeUsers).toBeGreaterThanOrEqual(before.activeUsers + 1);
@@ -353,6 +379,81 @@ describe('Prisma database smoke', () => {
       summariesCount: 0,
     });
     expect(ownerUserId).toBe(user.id);
+    expect(feedbackItem).toMatchObject({
+      item: {
+        id: feedback.id,
+        feedbackType: 'bug',
+        status: 'unread',
+      },
+      user: {
+        id: user.id,
+      },
+    });
+
+    await adminRepository.markFeedbackReviewed(feedback.id);
+    await expect(adminRepository.getFeedbackDetail(feedback.id)).resolves.toMatchObject({
+      item: {
+        status: 'reviewed',
+      },
+    });
+  });
+
+  it('keeps announcement deliveries and poll votes unique in the real schema', async () => {
+    const user = await createTestUser('announcement');
+    const campaign = await prisma.announcementCampaign.create({
+      data: {
+        type: 'poll',
+        title: `${runId} announcement smoke`,
+        body: 'DB smoke announcement body',
+        createdByAdminTelegramId: 1n,
+        pollToken: `${runId}-poll-token`,
+      },
+    });
+
+    const options = await announcementsRepository.replacePollOptions(campaign.id, ['Да', 'Нет']);
+
+    await announcementsRepository.createAudienceDeliveries(campaign.id, [
+      {
+        id: user.id,
+        telegramId: user.telegramId,
+      },
+    ]);
+    await announcementsRepository.createAudienceDeliveries(campaign.id, [
+      {
+        id: user.id,
+        telegramId: user.telegramId,
+      },
+    ]);
+
+    const deliveries = await prisma.announcementDelivery.findMany({
+      where: {
+        campaignId: campaign.id,
+      },
+    });
+
+    expect(deliveries).toHaveLength(1);
+    expect(deliveries[0]).toMatchObject({
+      userId: user.id,
+      telegramId: user.telegramId,
+      status: 'pending',
+    });
+
+    await announcementsRepository.createPollVote({
+      campaignId: campaign.id,
+      optionId: options[0].id,
+      userId: user.id,
+    });
+    await expect(
+      announcementsRepository.createPollVote({
+        campaignId: campaign.id,
+        optionId: options[1].id,
+        userId: user.id,
+      }),
+    ).rejects.toThrow();
+
+    const voteCounts = await announcementsRepository.getPollVoteCounts(campaign.id);
+
+    expect(voteCounts.get(options[0].id)).toBe(1);
   });
 
   it('keeps event overlap reads inclusive and ignores legacy series rows', async () => {

@@ -2,14 +2,22 @@
 import { Markup } from 'telegraf';
 
 import { TELEGRAM_CALLBACKS, TELEGRAM_MAIN_MENU_BUTTONS } from '../common/constants/app.constants';
+import { ANNOUNCEMENT_TYPES, type AnnouncementTypeKey } from '../announcements/announcements.types';
 import type { CheckinV2ScaleOption, CheckinV2TagDefinition } from '../checkins/checkins-v2.catalog';
+import { FEEDBACK_TYPES, type FeedbackTypeKey } from '../feedback/feedback.types';
 import {
   EVENT_TYPE_LABELS,
   SLEEP_MODE_LABELS,
+  formatAdminAnnouncementButtonLabel,
+  formatAdminFeedbackButtonLabel,
   getSettingsMetricToggleButtonLabel,
   getSettingsToggleButtonLabel,
+  TERMS_DOCUMENTS,
   telegramCopy,
+  type AdminAnnouncementCampaignData,
+  type AdminFeedbackItemData,
   type SettingsMetricOptionData,
+  type TermsDocumentKey,
 } from './telegram.copy';
 
 type CallbackButton = ReturnType<typeof Markup.button.callback>;
@@ -62,6 +70,28 @@ function eventTypeButtons(): CallbackButton[][] {
   return chunkButtons(buttons, 2);
 }
 
+function getFeedbackTypeButtonLabel(type: FeedbackTypeKey): string {
+  switch (type) {
+    case 'bug':
+      return telegramCopy.buttons.feedbackBug;
+    case 'idea':
+      return telegramCopy.buttons.feedbackIdea;
+    case 'question':
+      return telegramCopy.buttons.feedbackQuestion;
+    case 'review':
+      return telegramCopy.buttons.feedbackReview;
+    case 'other':
+      return telegramCopy.buttons.feedbackOther;
+  }
+}
+
+function getAnnouncementTypeButtonLabel(type: AnnouncementTypeKey): string {
+  const definition = ANNOUNCEMENT_TYPES.find((item) => item.key === type);
+  return definition ? `${definition.icon} ${definition.label}` : type;
+}
+
+const TERMS_DOCUMENT_KEYS = Object.keys(TERMS_DOCUMENTS) as TermsDocumentKey[];
+
 export const telegramKeyboards = {
   mainMenu: () =>
     Markup.keyboard([
@@ -78,6 +108,10 @@ export const telegramKeyboards = {
       ],
       [
         Markup.button.callback(telegramCopy.buttons.menuSettings, TELEGRAM_CALLBACKS.menuSettings),
+        Markup.button.callback(telegramCopy.buttons.menuFeedback, TELEGRAM_CALLBACKS.menuFeedback),
+      ],
+      [
+        Markup.button.callback(telegramCopy.buttons.menuSupport, TELEGRAM_CALLBACKS.menuSupport),
         Markup.button.callback(telegramCopy.buttons.menuHelp, TELEGRAM_CALLBACKS.menuHelp),
       ],
       [Markup.button.callback(telegramCopy.buttons.menuTerms, TELEGRAM_CALLBACKS.menuTerms)],
@@ -87,13 +121,195 @@ export const telegramKeyboards = {
     Markup.inlineKeyboard([
       [Markup.button.callback(telegramCopy.buttons.adminOverview, TELEGRAM_CALLBACKS.adminOverview)],
       [Markup.button.callback(telegramCopy.buttons.adminActiveUsers, `${TELEGRAM_CALLBACKS.adminActiveUsersPrefix}0`)],
+      [Markup.button.callback(telegramCopy.buttons.adminFeedback, `${TELEGRAM_CALLBACKS.adminFeedbackPrefix}0`)],
+      [Markup.button.callback(telegramCopy.buttons.adminAnnouncements, TELEGRAM_CALLBACKS.adminAnnouncementsMenu)],
     ]),
 
   adminOverview: () =>
     Markup.inlineKeyboard([
       [Markup.button.callback(telegramCopy.buttons.adminActiveUsers, `${TELEGRAM_CALLBACKS.adminActiveUsersPrefix}0`)],
+      [Markup.button.callback(telegramCopy.buttons.adminFeedback, `${TELEGRAM_CALLBACKS.adminFeedbackPrefix}0`)],
+      [Markup.button.callback(telegramCopy.buttons.adminAnnouncements, TELEGRAM_CALLBACKS.adminAnnouncementsMenu)],
       [Markup.button.callback(telegramCopy.buttons.adminBackToPanel, TELEGRAM_CALLBACKS.adminMenu)],
     ]),
+
+  adminFeedbackPage: (
+    items: AdminFeedbackItemData[],
+    options: { offset: number; limit: number; hasPrevious: boolean; hasNext: boolean },
+  ) => {
+    const rows: CallbackButton[][] = items.map((item) => [
+      Markup.button.callback(
+        formatAdminFeedbackButtonLabel(item),
+        `${TELEGRAM_CALLBACKS.adminFeedbackOpenPrefix}${item.item.id}:${options.offset}`,
+      ),
+    ]);
+    const paginationRow: CallbackButton[] = [];
+
+    if (options.hasPrevious) {
+      paginationRow.push(
+        Markup.button.callback(
+          telegramCopy.buttons.back,
+          `${TELEGRAM_CALLBACKS.adminFeedbackPrefix}${Math.max(0, options.offset - options.limit)}`,
+        ),
+      );
+    }
+
+    if (options.hasNext) {
+      paginationRow.push(
+        Markup.button.callback(
+          telegramCopy.buttons.historyMore,
+          `${TELEGRAM_CALLBACKS.adminFeedbackPrefix}${options.offset + options.limit}`,
+        ),
+      );
+    }
+
+    if (paginationRow.length > 0) {
+      rows.push(paginationRow);
+    }
+
+    rows.push([Markup.button.callback(telegramCopy.buttons.adminBackToPanel, TELEGRAM_CALLBACKS.adminMenu)]);
+    return Markup.inlineKeyboard(rows);
+  },
+
+  adminFeedbackDetail: (item: AdminFeedbackItemData, pageOffset: number) => {
+    const rows: CallbackButton[][] = [];
+
+    if (item.item.status === 'unread') {
+      rows.push([
+        Markup.button.callback(
+          telegramCopy.buttons.adminMarkFeedbackReviewed,
+          `${TELEGRAM_CALLBACKS.adminFeedbackReviewPrefix}${item.item.id}:${pageOffset}`,
+        ),
+      ]);
+    }
+
+    rows.push([
+      Markup.button.callback(
+        telegramCopy.buttons.adminBackToFeedback,
+        `${TELEGRAM_CALLBACKS.adminFeedbackPrefix}${pageOffset}`,
+      ),
+    ]);
+    rows.push([Markup.button.callback(telegramCopy.buttons.adminBackToPanel, TELEGRAM_CALLBACKS.adminMenu)]);
+    return Markup.inlineKeyboard(rows);
+  },
+
+  adminAnnouncementsMenu: () =>
+    Markup.inlineKeyboard([
+      [Markup.button.callback(telegramCopy.buttons.adminAnnouncementCreate, TELEGRAM_CALLBACKS.adminAnnouncementCreate)],
+      [Markup.button.callback(telegramCopy.buttons.adminAnnouncementList, `${TELEGRAM_CALLBACKS.adminAnnouncementListPrefix}0`)],
+      [Markup.button.callback(telegramCopy.buttons.adminBackToPanel, TELEGRAM_CALLBACKS.adminMenu)],
+    ]),
+
+  adminAnnouncementTypePicker: () =>
+    Markup.inlineKeyboard([
+      ...chunkButtons(
+        ANNOUNCEMENT_TYPES.map((type) =>
+          Markup.button.callback(
+            getAnnouncementTypeButtonLabel(type.key),
+            `${TELEGRAM_CALLBACKS.adminAnnouncementTypePrefix}${type.key}`,
+          ),
+        ),
+        1,
+      ),
+      [Markup.button.callback(telegramCopy.buttons.adminBackToAnnouncements, TELEGRAM_CALLBACKS.adminAnnouncementsMenu)],
+    ]),
+
+  adminAnnouncementTextActions: () =>
+    Markup.inlineKeyboard([
+      [
+        Markup.button.callback(`↩️ ${telegramCopy.buttons.back}`, TELEGRAM_CALLBACKS.actionBack),
+        Markup.button.callback(telegramCopy.buttons.cancel, TELEGRAM_CALLBACKS.actionCancel),
+      ],
+    ]),
+
+  adminAnnouncementImageActions: () =>
+    Markup.inlineKeyboard([
+      [Markup.button.callback(telegramCopy.buttons.adminAnnouncementSkipImage, TELEGRAM_CALLBACKS.actionSkip)],
+      [
+        Markup.button.callback(`↩️ ${telegramCopy.buttons.back}`, TELEGRAM_CALLBACKS.actionBack),
+        Markup.button.callback(telegramCopy.buttons.cancel, TELEGRAM_CALLBACKS.actionCancel),
+      ],
+    ]),
+
+  adminAnnouncementPreview: (campaignId: string) =>
+    Markup.inlineKeyboard([
+      [Markup.button.callback(telegramCopy.buttons.adminAnnouncementSend, `${TELEGRAM_CALLBACKS.adminAnnouncementSendPrefix}${campaignId}`)],
+      [
+        Markup.button.callback(telegramCopy.buttons.adminAnnouncementEditImage, TELEGRAM_CALLBACKS.actionBack),
+        Markup.button.callback(telegramCopy.buttons.cancel, TELEGRAM_CALLBACKS.actionCancel),
+      ],
+    ]),
+
+  adminAnnouncementsPage: (
+    items: AdminAnnouncementCampaignData[],
+    options: { offset: number; limit: number; hasPrevious: boolean; hasNext: boolean },
+  ) => {
+    const rows: CallbackButton[][] = items.map((item) => [
+      Markup.button.callback(
+        formatAdminAnnouncementButtonLabel(item),
+        `${TELEGRAM_CALLBACKS.adminAnnouncementOpenPrefix}${item.id}:${options.offset}`,
+      ),
+    ]);
+    const paginationRow: CallbackButton[] = [];
+
+    if (options.hasPrevious) {
+      paginationRow.push(
+        Markup.button.callback(
+          telegramCopy.buttons.back,
+          `${TELEGRAM_CALLBACKS.adminAnnouncementListPrefix}${Math.max(0, options.offset - options.limit)}`,
+        ),
+      );
+    }
+
+    if (options.hasNext) {
+      paginationRow.push(
+        Markup.button.callback(
+          telegramCopy.buttons.historyMore,
+          `${TELEGRAM_CALLBACKS.adminAnnouncementListPrefix}${options.offset + options.limit}`,
+        ),
+      );
+    }
+
+    if (paginationRow.length > 0) {
+      rows.push(paginationRow);
+    }
+
+    rows.push([Markup.button.callback(telegramCopy.buttons.adminBackToAnnouncements, TELEGRAM_CALLBACKS.adminAnnouncementsMenu)]);
+    rows.push([Markup.button.callback(telegramCopy.buttons.adminBackToPanel, TELEGRAM_CALLBACKS.adminMenu)]);
+    return Markup.inlineKeyboard(rows);
+  },
+
+  adminAnnouncementDetail: (campaign: AdminAnnouncementCampaignData, pageOffset: number) => {
+    const rows: CallbackButton[][] = [];
+
+    if (campaign.status === 'ready') {
+      rows.push([
+        Markup.button.callback(
+          telegramCopy.buttons.adminAnnouncementSend,
+          `${TELEGRAM_CALLBACKS.adminAnnouncementSendPrefix}${campaign.id}`,
+        ),
+      ]);
+    }
+
+    if (campaign.status === 'sending') {
+      rows.push([
+        Markup.button.callback(
+          telegramCopy.buttons.adminAnnouncementResume,
+          `${TELEGRAM_CALLBACKS.adminAnnouncementSendPrefix}${campaign.id}`,
+        ),
+      ]);
+    }
+
+    rows.push([
+        Markup.button.callback(
+          telegramCopy.buttons.adminBackToAnnouncements,
+          `${TELEGRAM_CALLBACKS.adminAnnouncementListPrefix}${pageOffset}`,
+        ),
+    ]);
+    rows.push([Markup.button.callback(telegramCopy.buttons.adminBackToPanel, TELEGRAM_CALLBACKS.adminMenu)]);
+
+    return Markup.inlineKeyboard(rows);
+  },
 
   adminActiveUsers: (
     users: Array<{ userId: string; label: string }>,
@@ -208,6 +424,31 @@ export const telegramKeyboards = {
       ],
     ]),
 
+  termsDocuments: (options: { showAccept: boolean; showMenu?: boolean }) => {
+    const rows: CallbackButton[][] = TERMS_DOCUMENT_KEYS.map((key) => [
+      Markup.button.callback(
+        TERMS_DOCUMENTS[key].buttonLabel,
+        `${TELEGRAM_CALLBACKS.termsDocumentPrefix}${key}`,
+      ),
+    ]);
+
+    if (options.showAccept) {
+      rows.push([
+        Markup.button.callback(telegramCopy.buttons.consentAccept, TELEGRAM_CALLBACKS.consentAccept),
+        Markup.button.callback(telegramCopy.buttons.cancel, TELEGRAM_CALLBACKS.actionCancel),
+      ]);
+    } else if (options.showMenu) {
+      rows.push([Markup.button.callback(telegramCopy.buttons.toMenu, TELEGRAM_CALLBACKS.actionCancel)]);
+    }
+
+    return Markup.inlineKeyboard(rows);
+  },
+
+  termsDocument: () =>
+    Markup.inlineKeyboard([
+      [Markup.button.callback(telegramCopy.buttons.termsBackToDocuments, TELEGRAM_CALLBACKS.termsDocuments)],
+    ]),
+
   onboardingFirstCheckin: () =>
     Markup.inlineKeyboard([
       [Markup.button.callback(telegramCopy.buttons.firstCheckinStart, TELEGRAM_CALLBACKS.onboardingStartFirstCheckin)],
@@ -297,6 +538,42 @@ export const telegramKeyboards = {
   },
 
   checkinConfirmationActions: () =>
+    Markup.inlineKeyboard([
+      [Markup.button.callback(telegramCopy.buttons.toMenu, TELEGRAM_CALLBACKS.actionCancel)],
+    ]),
+
+  supportActions: (supportUrl?: string) => {
+    const rows: Array<Array<CallbackButton | ReturnType<typeof Markup.button.url>>> = [];
+
+    if (supportUrl) {
+      rows.push([Markup.button.url(telegramCopy.buttons.supportOpen, supportUrl)]);
+    }
+
+    rows.push([Markup.button.callback(telegramCopy.buttons.menuFeedback, TELEGRAM_CALLBACKS.menuFeedback)]);
+    rows.push([Markup.button.callback(telegramCopy.buttons.toMenu, TELEGRAM_CALLBACKS.actionCancel)]);
+    return Markup.inlineKeyboard(rows);
+  },
+
+  feedbackTypePicker: () =>
+    Markup.inlineKeyboard([
+      ...chunkButtons(
+        FEEDBACK_TYPES.map((type) =>
+          Markup.button.callback(getFeedbackTypeButtonLabel(type.key), `${TELEGRAM_CALLBACKS.feedbackTypePrefix}${type.key}`),
+        ),
+        1,
+      ),
+      [Markup.button.callback(telegramCopy.buttons.cancel, TELEGRAM_CALLBACKS.actionCancel)],
+    ]),
+
+  feedbackMessageActions: () =>
+    Markup.inlineKeyboard([
+      [
+        Markup.button.callback(`↩️ ${telegramCopy.buttons.back}`, TELEGRAM_CALLBACKS.actionBack),
+        Markup.button.callback(telegramCopy.buttons.cancel, TELEGRAM_CALLBACKS.actionCancel),
+      ],
+    ]),
+
+  feedbackSaved: () =>
     Markup.inlineKeyboard([
       [Markup.button.callback(telegramCopy.buttons.toMenu, TELEGRAM_CALLBACKS.actionCancel)],
     ]),

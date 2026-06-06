@@ -3,7 +3,13 @@ import { ConfigService } from '@nestjs/config';
 import type { DailyEntry, EventType } from '@prisma/client';
 
 import { TEXT_LIMITS } from '../common/constants/app.constants';
-import { buildNormalizedEntryDate, formatDateKey, normalizeDayKeyToUtcDate } from '../common/utils/date.utils';
+import {
+  buildNormalizedEntryDate,
+  buildRelativeDayKey,
+  formatDateKey,
+  normalizeDayKeyToUtcDate,
+  resolveTimezone,
+} from '../common/utils/date.utils';
 import {
   CHECKIN_V2_METRIC_BY_KEY,
   getScaleLabel,
@@ -137,8 +143,23 @@ export class CheckinsService {
     );
   }
 
+  buildRelativeEntryDate(offsetDays: number, options: TodayEntryOptions = {}): Date {
+    const timezoneName = resolveTimezone(options.timezone, this.defaultTimezone);
+    const dayKey = buildRelativeDayKey(options.date ?? new Date(), timezoneName, offsetDays);
+    return normalizeDayKeyToUtcDate(dayKey);
+  }
+
+  buildEntryDateFromDayKey(dayKey: string): Date {
+    return normalizeDayKeyToUtcDate(dayKey);
+  }
+
   getTodayEntry(userId: string, options: TodayEntryOptions = {}) {
     const entryDate = this.buildEntryDate(options);
+    return this.checkinsRepository.findByUserAndDate(userId, entryDate);
+  }
+
+  getYesterdayEntry(userId: string, options: TodayEntryOptions = {}) {
+    const entryDate = this.buildRelativeEntryDate(-1, options);
     return this.checkinsRepository.findByUserAndDate(userId, entryDate);
   }
 
@@ -148,6 +169,14 @@ export class CheckinsService {
     options: TodayEntryOptions = {},
   ): Promise<CheckinUpsertResult> {
     const entryDate = this.buildEntryDate(options);
+    return this.upsertEntryForDate(userId, payload, entryDate);
+  }
+
+  async upsertEntryForDate(
+    userId: string,
+    payload: UpsertDailyEntryDto,
+    entryDate: Date,
+  ): Promise<CheckinUpsertResult> {
     const existing = await this.checkinsRepository.findByUserAndDate(userId, entryDate);
 
     const entry = await this.checkinsRepository.upsertByUserAndDate(userId, entryDate, {
@@ -320,6 +349,11 @@ export class CheckinsService {
 
   async countTodayEntry(userId: string, options: TodayEntryOptions = {}): Promise<number> {
     const current = await this.getTodayEntry(userId, options);
+    return current ? 1 : 0;
+  }
+
+  async countYesterdayEntry(userId: string, options: TodayEntryOptions = {}): Promise<number> {
+    const current = await this.getYesterdayEntry(userId, options);
     return current ? 1 : 0;
   }
 

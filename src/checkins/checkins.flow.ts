@@ -33,6 +33,8 @@ export interface CheckinFlowResult {
   nextState?: FsmState;
   isUpdate?: boolean;
   entryPayload?: UpsertDailyEntryDto;
+  entryDateKey?: string;
+  checkinTarget?: 'today' | 'yesterday';
   selectedTagKeys?: string[];
   noteAdded?: boolean;
   tagsCount?: number;
@@ -50,7 +52,10 @@ export class CheckinsFlowService {
     private readonly analyticsService: AnalyticsService,
   ) {}
 
-  async start(user: User): Promise<CheckinFlowResult> {
+  async start(
+    user: User,
+    options: { target?: 'today' | 'yesterday' } = {},
+  ): Promise<CheckinFlowResult> {
     const session = await this.fsmService.getSession(user.id);
     const state = (session?.state as FsmState | undefined) ?? FSM_STATES.idle;
     const payload = this.extractPayload(session?.payloadJson);
@@ -64,6 +69,11 @@ export class CheckinsFlowService {
       };
     }
 
+    const checkinTarget = options.target ?? 'today';
+    const entryDate = checkinTarget === 'yesterday'
+      ? this.checkinsService.buildRelativeEntryDate(-1, { timezone: user.timezone })
+      : this.checkinsService.buildEntryDate({ timezone: user.timezone });
+    const entryDateKey = formatDateKey(entryDate);
     const metricKeys = await this.getEnabledStateMetricKeys(user);
     const firstMetricKey = metricKeys[0];
 
@@ -77,13 +87,17 @@ export class CheckinsFlowService {
       activeMetricKey: firstMetricKey,
       metricScores: {},
       metricTags: {},
+      entryDateKey,
+      checkinTarget,
     });
-    await this.analyticsService.track('checkin_started', { version: 'v2' }, user.id);
+    await this.analyticsService.track('checkin_started', { version: 'v2', target: checkinTarget }, user.id);
 
     return {
       status: 'next',
       nextState: FSM_STATES.checkin_metric_score,
       resumed: false,
+      entryDateKey,
+      checkinTarget,
     };
   }
 
@@ -518,13 +532,14 @@ export class CheckinsFlowService {
     }
 
     const entryPayload = this.buildEntryPayload(payload);
-    const result = await this.checkinsService.upsertTodayEntry(user.id, entryPayload, {
-      timezone: user.timezone,
-    });
+    const entryDate = payload.entryDateKey
+      ? this.checkinsService.buildEntryDateFromDayKey(payload.entryDateKey)
+      : this.checkinsService.buildEntryDate({ timezone: user.timezone });
+    const result = await this.checkinsService.upsertEntryForDate(user.id, entryPayload, entryDate);
 
     await this.analyticsService.track(
       result.isUpdate ? 'checkin_updated' : 'checkin_completed',
-      { entryId: result.entry.id, version: 'v2' },
+      { entryId: result.entry.id, version: 'v2', target: payload.checkinTarget ?? 'today' },
       user.id,
     );
 
@@ -532,6 +547,7 @@ export class CheckinsFlowService {
       ...payload,
       entryId: result.entry.id,
       entryDateKey: formatDateKey(result.entry.entryDate),
+      checkinTarget: payload.checkinTarget ?? 'today',
       isUpdate: result.isUpdate,
     });
 
@@ -555,6 +571,8 @@ export class CheckinsFlowService {
         ...this.buildEntryPayload(payload),
         noteText: payload.noteText,
       },
+      entryDateKey: payload.entryDateKey,
+      checkinTarget: payload.checkinTarget,
       noteAdded: !!payload.noteText,
       tagsCount: this.countMetricTags(payload),
       eventAdded: !!payload.eventAdded,

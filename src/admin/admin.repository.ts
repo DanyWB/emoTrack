@@ -4,6 +4,8 @@ import { PrismaService } from '../database/prisma.service';
 import type {
   AdminActiveUserListItem,
   AdminActiveUsersPage,
+  AdminFeedbackListItem,
+  AdminFeedbackPage,
   AdminOverview,
   AdminUserDetail,
 } from './admin.types';
@@ -156,5 +158,58 @@ export class AdminRepository {
     });
 
     return entry?.userId ?? null;
+  }
+
+  async listFeedback(options: { offset: number; limit: number }): Promise<AdminFeedbackPage> {
+    const offset = Math.max(0, options.offset);
+    const limit = Math.min(Math.max(1, options.limit), 20);
+    const [items, total] = await this.prisma.$transaction([
+      this.prisma.feedbackItem.findMany({
+        include: {
+          user: true,
+        },
+        orderBy: [{ status: 'asc' }, { createdAt: 'desc' }],
+        skip: offset,
+        take: limit,
+      }),
+      this.prisma.feedbackItem.count(),
+    ]);
+
+    return {
+      items: items.map((item): AdminFeedbackListItem => ({
+        item,
+        user: item.user,
+      })),
+      total,
+      offset,
+      limit,
+      hasPrevious: offset > 0,
+      hasNext: offset + limit < total,
+    };
+  }
+
+  async getFeedbackDetail(feedbackId: string): Promise<AdminFeedbackListItem | null> {
+    const item = await this.prisma.feedbackItem.findUnique({
+      where: { id: feedbackId },
+      include: {
+        user: true,
+      },
+    });
+
+    if (!item) {
+      return null;
+    }
+
+    return {
+      item,
+      user: item.user,
+    };
+  }
+
+  async markFeedbackReviewed(feedbackId: string): Promise<void> {
+    await this.prisma.feedbackItem.update({
+      where: { id: feedbackId },
+      data: { status: 'reviewed' },
+    });
   }
 }

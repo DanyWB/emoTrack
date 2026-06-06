@@ -3,7 +3,7 @@ import { ConfigService } from '@nestjs/config';
 
 import type { AdminConfig } from '../config/admin.config';
 import { AdminRepository } from './admin.repository';
-import type { AdminActiveUsersPage, AdminOverview, AdminUserDetail } from './admin.types';
+import type { AdminActiveUsersPage, AdminFeedbackListItem, AdminFeedbackPage, AdminOverview, AdminUserDetail } from './admin.types';
 
 @Injectable()
 export class AdminService {
@@ -37,6 +37,18 @@ export class AdminService {
 
   findEntryOwnerUserId(entryId: string): Promise<string | null> {
     return this.adminRepository.findEntryOwnerUserId(entryId);
+  }
+
+  listFeedback(options: { offset: number; limit: number }): Promise<AdminFeedbackPage> {
+    return this.adminRepository.listFeedback(options);
+  }
+
+  getFeedbackDetail(feedbackId: string): Promise<AdminFeedbackListItem | null> {
+    return this.adminRepository.getFeedbackDetail(feedbackId);
+  }
+
+  markFeedbackReviewed(feedbackId: string): Promise<void> {
+    return this.adminRepository.markFeedbackReviewed(feedbackId);
   }
 
   private normalizeTelegramId(telegramId: number | bigint | string | undefined | null): string | null {

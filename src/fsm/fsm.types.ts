@@ -29,6 +29,14 @@ export const FSM_STATES = {
   event_end_date: 'event_end_date',
   event_repeat_mode: 'event_repeat_mode',
   event_repeat_count: 'event_repeat_count',
+  feedback_type: 'feedback_type',
+  feedback_message: 'feedback_message',
+  announcement_type: 'announcement_type',
+  announcement_title: 'announcement_title',
+  announcement_body: 'announcement_body',
+  announcement_poll_options: 'announcement_poll_options',
+  announcement_image: 'announcement_image',
+  announcement_preview: 'announcement_preview',
   settings_menu: 'settings_menu',
   stats_period_select: 'stats_period_select',
   stats_metric_select: 'stats_metric_select',
@@ -70,6 +78,11 @@ export interface CheckinDraftPayload extends FsmPayload {
   eventRepeatMode?: EventRepeatMode;
   eventRepeatCount?: number;
   eventSeriesId?: string;
+  checkinTarget?: 'today' | 'yesterday';
+  feedbackType?: string;
+  announcementCampaignId?: string;
+  announcementType?: string;
+  announcementPageOffset?: number;
   checkinV2OnboardingStep?: number;
   settingsAwaiting?: 'reminder_time' | 'sleep_mode';
   settingsView?: 'main' | 'daily_metrics';

@@ -4,15 +4,18 @@ import { Telegraf, type Context } from 'telegraf';
 
 import { AdminModule } from '../admin/admin.module';
 import { AnalyticsModule } from '../analytics/analytics.module';
+import { AnnouncementsModule } from '../announcements/announcements.module';
 import { ChartsModule } from '../charts/charts.module';
 import { CheckinsModule } from '../checkins/checkins.module';
 import type { TelegramConfig } from '../config/telegram.config';
 import { EventsModule } from '../events/events.module';
+import { FeedbackModule } from '../feedback/feedback.module';
 import { FsmModule } from '../fsm/fsm.module';
 import { OnboardingModule } from '../onboarding/onboarding.module';
 import { RemindersModule } from '../reminders/reminders.module';
 import { SummariesModule } from '../summaries/summaries.module';
 import { TagsModule } from '../tags/tags.module';
+import { SupportModule } from '../support/support.module';
 import { UsersModule } from '../users/users.module';
 import { TelegramRouter } from './telegram.router';
 import { TelegramRuntimeStatusService } from './telegram.runtime-status';
@@ -23,12 +26,15 @@ import { TelegramWebhookController } from './telegram.webhook.controller';
 @Module({
   imports: [
     AdminModule,
+    AnnouncementsModule,
     UsersModule,
     OnboardingModule,
     FsmModule,
     CheckinsModule,
     EventsModule,
+    FeedbackModule,
     TagsModule,
+    SupportModule,
     AnalyticsModule,
     SummariesModule,
     ChartsModule,

@@ -1,4 +1,5 @@
 import { Logger } from '@nestjs/common';
+import { AnnouncementType } from '@prisma/client';
 
 import { TELEGRAM_CALLBACKS, TELEGRAM_MAIN_MENU_BUTTONS } from '../../src/common/constants/app.constants';
 import { FSM_STATES } from '../../src/fsm/fsm.types';
@@ -18,7 +19,12 @@ describe('Telegram router contract integration', () => {
     await ctx.moduleRef.close();
   });
 
-  function createRouter(overrides: { checkinsFlow?: unknown } = {}): TelegramRouter {
+  function createRouter(overrides: {
+    checkinsFlow?: unknown;
+    supportService?: unknown;
+    feedbackService?: unknown;
+    announcementsService?: unknown;
+  } = {}): TelegramRouter {
     return new TelegramRouter(
       ctx.usersService,
       ctx.onboardingFlow,
@@ -35,6 +41,9 @@ describe('Telegram router contract integration', () => {
       ctx.fsmService,
       ctx.analyticsService,
       ctx.adminService,
+      overrides.supportService as never,
+      overrides.feedbackService as never,
+      overrides.announcementsService as never,
     );
   }
 
@@ -113,27 +122,33 @@ describe('Telegram router contract integration', () => {
         'admin',
         'checkin',
         'event',
+        'feedback',
         'help',
         'history',
         'menu',
         'settings',
         'stats',
+        'support',
         'terms',
+        'yesterday',
       ]);
       expect(TELEGRAM_COMMANDS[1]?.command).toBe('menu');
-      expect(TELEGRAM_COMMANDS.map((command) => command.description)).toEqual([
-        '👋 Старт и вход в бота',
-        '🧭 Меню навигации',
-        '❔ Краткая помощь',
-        '📄 Пользовательское соглашение',
-        '🌤 Отметить состояние',
-        '🗂 Добавить событие',
-        '📚 Последние записи',
-        '📊 Сводка и графики',
-        '⚙️ Настройки',
+      expect(TELEGRAM_COMMANDS.map((command) => command.command)).toEqual([
+        'start',
+        'menu',
+        'help',
+        'terms',
+        'checkin',
+        'yesterday',
+        'event',
+        'history',
+        'stats',
+        'settings',
+        'feedback',
+        'support',
       ]);
       expect(Object.keys(handlers.hears)).toEqual([...TELEGRAM_MAIN_MENU_BUTTONS]);
-      expect(Object.keys(handlers.events).sort()).toEqual(['callback_query', 'text']);
+      expect(Object.keys(handlers.events).sort()).toEqual(['callback_query', 'photo', 'text']);
       expect(checkinsFlow.start).toHaveBeenCalledTimes(1);
       expect(errorSpy).toHaveBeenCalledWith(
         expect.stringContaining('event=telegram_route_failed routeKey=checkin updateType=message'),
@@ -175,6 +190,8 @@ describe('Telegram router contract integration', () => {
       TELEGRAM_CALLBACKS.menuStats,
       TELEGRAM_CALLBACKS.menuHistory,
       TELEGRAM_CALLBACKS.menuSettings,
+      TELEGRAM_CALLBACKS.menuFeedback,
+      TELEGRAM_CALLBACKS.menuSupport,
       TELEGRAM_CALLBACKS.menuHelp,
       TELEGRAM_CALLBACKS.menuTerms,
     ]);
@@ -213,10 +230,12 @@ describe('Telegram router contract integration', () => {
 
     expect(message).toBe(telegramCopy.admin.menu);
     expect(extra.parse_mode).toBe('HTML');
-    expect(callbacks).toEqual([
-      TELEGRAM_CALLBACKS.adminOverview,
-      `${TELEGRAM_CALLBACKS.adminActiveUsersPrefix}0`,
-    ]);
+      expect(callbacks).toEqual([
+        TELEGRAM_CALLBACKS.adminOverview,
+        `${TELEGRAM_CALLBACKS.adminActiveUsersPrefix}0`,
+        `${TELEGRAM_CALLBACKS.adminFeedbackPrefix}0`,
+        TELEGRAM_CALLBACKS.adminAnnouncementsMenu,
+      ]);
   });
 
   it('opens admin overview and active users through callbacks', async () => {
@@ -295,6 +314,189 @@ describe('Telegram router contract integration', () => {
     expect(message).toContain('Active');
     expect(message).toContain('check-in: <b>4</b>');
     expect(callbacks).toContain(`${TELEGRAM_CALLBACKS.adminUserPrefix}${activeUser.id}`);
+  });
+
+  it('opens feedback items in the admin panel and can mark them reviewed', async () => {
+    await ctx.moduleRef.close();
+    ctx = await createIntegrationTestContext({ admin: { telegramIds: [BigInt(9004)] } });
+
+    const targetUser = await ctx.usersRepository.create(
+      buildUser({
+        id: 'admin-feedback-user-1',
+        telegramId: BigInt(9005),
+        firstName: 'Feedback User',
+        onboardingCompleted: true,
+        consentGiven: true,
+      }),
+    );
+    const feedbackItem = {
+      id: 'feedback-admin-contract-1',
+      userId: targetUser.id,
+      feedbackType: 'question' as const,
+      message: 'Как отметить состояние за вчера?',
+      status: 'unread' as const,
+      createdAt: new Date('2026-06-05T10:00:00.000Z'),
+      updatedAt: new Date('2026-06-05T10:00:00.000Z'),
+    };
+    const feedbackDetail = {
+      item: feedbackItem,
+      user: targetUser,
+    };
+    ctx.adminRepository.listFeedback.mockResolvedValue({
+      items: [feedbackDetail],
+      total: 1,
+      offset: 0,
+      limit: 5,
+      hasPrevious: false,
+      hasNext: false,
+    });
+    ctx.adminRepository.getFeedbackDetail.mockResolvedValue(feedbackDetail);
+
+    const router = createRouter();
+    const listCtx = {
+      ...buildBaseContext(9004),
+      callbackQuery: { data: `${TELEGRAM_CALLBACKS.adminFeedbackPrefix}0` },
+      answerCbQuery: jest.fn().mockResolvedValue(undefined),
+      editMessageText: jest.fn().mockResolvedValue(undefined),
+      reply: jest.fn().mockResolvedValue(undefined),
+    };
+
+    await (router as any).handleCallbackQuery(listCtx);
+
+    expect(listCtx.editMessageText).toHaveBeenCalledWith(
+      expect.stringContaining(telegramCopy.admin.feedbackTitle),
+      expect.objectContaining({ parse_mode: 'HTML' }),
+    );
+
+    const detailCtx = {
+      ...buildBaseContext(9004),
+      callbackQuery: { data: `${TELEGRAM_CALLBACKS.adminFeedbackOpenPrefix}${feedbackItem.id}:0` },
+      answerCbQuery: jest.fn().mockResolvedValue(undefined),
+      editMessageText: jest.fn().mockResolvedValue(undefined),
+      reply: jest.fn().mockResolvedValue(undefined),
+    };
+
+    await (router as any).handleCallbackQuery(detailCtx);
+
+    expect(detailCtx.editMessageText).toHaveBeenCalledWith(
+      expect.stringContaining(feedbackItem.message),
+      expect.objectContaining({ parse_mode: 'HTML' }),
+    );
+
+    const reviewCtx = {
+      ...buildBaseContext(9004),
+      callbackQuery: { data: `${TELEGRAM_CALLBACKS.adminFeedbackReviewPrefix}${feedbackItem.id}:0` },
+      answerCbQuery: jest.fn().mockResolvedValue(undefined),
+      editMessageText: jest.fn().mockResolvedValue(undefined),
+      reply: jest.fn().mockResolvedValue(undefined),
+    };
+
+    await (router as any).handleCallbackQuery(reviewCtx);
+
+    expect(ctx.adminRepository.markFeedbackReviewed).toHaveBeenCalledWith(feedbackItem.id);
+  });
+
+  it('starts the admin announcement creation flow and stores the draft campaign id in FSM', async () => {
+    await ctx.moduleRef.close();
+    ctx = await createIntegrationTestContext({ admin: { telegramIds: [BigInt(9006)] } });
+
+    const announcementsService = {
+      createDraft: jest.fn().mockResolvedValue({
+        id: 'announcement-draft-1',
+        type: AnnouncementType.poll,
+      }),
+      setTitle: jest.fn().mockResolvedValue({
+        id: 'announcement-draft-1',
+        type: AnnouncementType.poll,
+      }),
+    };
+    const router = createRouter({ announcementsService });
+    const createCtx = {
+      ...buildBaseContext(9006),
+      callbackQuery: { data: TELEGRAM_CALLBACKS.adminAnnouncementCreate },
+      answerCbQuery: jest.fn().mockResolvedValue(undefined),
+      editMessageText: jest.fn().mockResolvedValue(undefined),
+      reply: jest.fn().mockResolvedValue(undefined),
+    };
+
+    await (router as any).handleCallbackQuery(createCtx);
+
+    expect(createCtx.editMessageText).toHaveBeenCalledWith(
+      telegramCopy.admin.announcementTypePrompt,
+      expect.objectContaining({ parse_mode: 'HTML' }),
+    );
+
+    const adminUser = await ctx.usersRepository.findByTelegramId(BigInt(9006));
+
+    expect(adminUser).not.toBeNull();
+    expect(await ctx.fsmService.getState(adminUser!.id)).toBe(FSM_STATES.announcement_type);
+
+    const typeCtx = {
+      ...buildBaseContext(9006),
+      callbackQuery: { data: `${TELEGRAM_CALLBACKS.adminAnnouncementTypePrefix}poll` },
+      answerCbQuery: jest.fn().mockResolvedValue(undefined),
+      editMessageText: jest.fn().mockResolvedValue(undefined),
+      reply: jest.fn().mockResolvedValue(undefined),
+    };
+
+    await (router as any).handleCallbackQuery(typeCtx);
+
+    expect(announcementsService.createDraft).toHaveBeenCalledWith(AnnouncementType.poll, BigInt(9006));
+    expect(typeCtx.editMessageText).toHaveBeenCalledWith(
+      telegramCopy.admin.announcementTitlePrompt,
+      expect.objectContaining({ parse_mode: 'HTML' }),
+    );
+    expect((await ctx.fsmService.getSession(adminUser!.id))?.payloadJson).toMatchObject({
+      announcementCampaignId: 'announcement-draft-1',
+      announcementType: AnnouncementType.poll,
+    });
+
+    const textCtx = {
+      ...buildBaseContext(9006),
+      message: {
+        text: 'Новый опрос',
+      },
+      reply: jest.fn().mockResolvedValue(undefined),
+    };
+
+    await (router as any).handleTextMessage(textCtx);
+
+    expect(announcementsService.setTitle).toHaveBeenCalledWith('announcement-draft-1', 'Новый опрос');
+    expect(textCtx.reply).toHaveBeenCalledWith(
+      telegramCopy.admin.announcementBodyPrompt,
+      expect.objectContaining({ parse_mode: 'HTML' }),
+    );
+    expect(await ctx.fsmService.getState(adminUser!.id)).toBe(FSM_STATES.announcement_body);
+  });
+
+  it('records announcement poll votes through short user callback data', async () => {
+    const user = await createReadyUser('user-router-contract-announcement-vote', 9007);
+    const announcementsService = {
+      recordPollVote: jest.fn().mockResolvedValue({
+        status: 'voted',
+        optionLabel: 'Статистика',
+      }),
+    };
+    const router = createRouter({ announcementsService });
+    const telegramCtx = {
+      ...buildBaseContext(9007),
+      callbackQuery: {
+        data: `${TELEGRAM_CALLBACKS.announcementVotePrefix}abc123:2`,
+      },
+      answerCbQuery: jest.fn().mockResolvedValue(undefined),
+      deleteMessage: jest.fn().mockResolvedValue(undefined),
+      reply: jest.fn().mockResolvedValue(undefined),
+    };
+
+    await (router as any).handleCallbackQuery(telegramCtx);
+
+    expect(announcementsService.recordPollVote).toHaveBeenCalledWith(
+      expect.objectContaining({ id: user.id }),
+      'abc123',
+      2,
+    );
+    expect(telegramCtx.answerCbQuery).toHaveBeenCalledWith(telegramCopy.announcements.voteSaved);
+    expect(telegramCtx.deleteMessage).toHaveBeenCalled();
   });
 
   it('lets admin open a target user stats summary without target-user FSM state', async () => {
@@ -381,6 +583,19 @@ describe('Telegram router contract integration', () => {
     expect((settingsCtx.editMessageText.mock.calls[0] as [string])[0]).toContain(telegramCopy.settings.title);
     expect(await ctx.fsmService.getState('user-router-contract-menu')).toBe(FSM_STATES.settings_menu);
 
+    const feedbackCtx = await runMenuCallback(TELEGRAM_CALLBACKS.menuFeedback);
+    expect(feedbackCtx.editMessageText).toHaveBeenCalledWith(
+      telegramCopy.feedback.typePrompt,
+      expect.objectContaining({ parse_mode: 'HTML' }),
+    );
+    expect(await ctx.fsmService.getState('user-router-contract-menu')).toBe(FSM_STATES.feedback_type);
+
+    const supportCtx = await runMenuCallback(TELEGRAM_CALLBACKS.menuSupport);
+    expect(supportCtx.editMessageText).toHaveBeenCalledWith(
+      telegramCopy.support.missingUrl,
+      expect.objectContaining({ parse_mode: 'HTML' }),
+    );
+
     const helpCtx = await runMenuCallback(TELEGRAM_CALLBACKS.menuHelp);
     expect(helpCtx.editMessageText).toHaveBeenCalledWith(
       telegramCopy.help.text,
@@ -389,6 +604,114 @@ describe('Telegram router contract integration', () => {
 
     const termsCtx = await runMenuCallback(TELEGRAM_CALLBACKS.menuTerms);
     expect((termsCtx.editMessageText.mock.calls[0] as [string])[0]).toContain(telegramCopy.terms.title);
+  });
+
+  it('opens the configured support link without requiring a product flow', async () => {
+    const router = createRouter({
+      supportService: {
+        getSupportUrl: jest.fn().mockReturnValue('https://t.me/emotrack_support'),
+      },
+    });
+    const telegramCtx = {
+      ...buildBaseContext(8920),
+      reply: jest.fn().mockResolvedValue(undefined),
+    };
+
+    await (router as any).handleSupportCommand(telegramCtx);
+
+    const [message, extra] = telegramCtx.reply.mock.calls[0] as [
+      string,
+      { reply_markup?: { inline_keyboard?: Array<Array<{ text: string; url?: string }>> } },
+    ];
+    const buttons = extra.reply_markup?.inline_keyboard?.flat() ?? [];
+
+    expect(message).toBe(telegramCopy.support.text);
+    expect(buttons).toContainEqual(expect.objectContaining({
+      text: telegramCopy.buttons.supportOpen,
+      url: 'https://t.me/emotrack_support',
+    }));
+  });
+
+  it('runs the feedback flow and saves the typed message', async () => {
+    const user = await createReadyUser('user-router-contract-feedback', 8921);
+    const feedbackService = {
+      submit: jest.fn().mockResolvedValue({
+        id: 'feedback-router-contract-1',
+      }),
+    };
+    const router = createRouter({ feedbackService });
+    const startCtx = {
+      ...buildBaseContext(8921),
+      reply: jest.fn().mockResolvedValue(undefined),
+    };
+
+    await (router as any).handleFeedbackCommand(startCtx);
+
+    expect(startCtx.reply).toHaveBeenCalledWith(
+      telegramCopy.feedback.typePrompt,
+      expect.objectContaining({ parse_mode: 'HTML' }),
+    );
+    expect(await ctx.fsmService.getState(user.id)).toBe(FSM_STATES.feedback_type);
+
+    const typeCtx = {
+      ...buildBaseContext(8921),
+      callbackQuery: { data: `${TELEGRAM_CALLBACKS.feedbackTypePrefix}question` },
+      answerCbQuery: jest.fn().mockResolvedValue(undefined),
+      editMessageText: jest.fn().mockResolvedValue(undefined),
+      reply: jest.fn().mockResolvedValue(undefined),
+    };
+
+    await (router as any).handleCallbackQuery(typeCtx);
+
+    expect(typeCtx.editMessageText).toHaveBeenCalledWith(
+      telegramCopy.feedback.messagePrompt,
+      expect.objectContaining({ parse_mode: 'HTML' }),
+    );
+    expect(await ctx.fsmService.getState(user.id)).toBe(FSM_STATES.feedback_message);
+
+    const textCtx = {
+      ...buildBaseContext(8921),
+      message: {
+        text: 'Можно ли восстановить запись за вчера?',
+      },
+      reply: jest.fn().mockResolvedValue(undefined),
+    };
+
+    await (router as any).handleTextMessage(textCtx);
+
+    expect(feedbackService.submit).toHaveBeenCalledWith(
+      expect.objectContaining({ id: user.id }),
+      'question',
+      'Можно ли восстановить запись за вчера?',
+    );
+    expect(textCtx.reply).toHaveBeenCalledWith(
+      telegramCopy.feedback.saved,
+      expect.objectContaining({ parse_mode: 'HTML' }),
+    );
+    expect(await ctx.fsmService.getState(user.id)).toBe(FSM_STATES.idle);
+  });
+
+  it('starts a check-in targeted at yesterday from /yesterday', async () => {
+    const user = await createReadyUser('user-router-contract-yesterday', 8922);
+    const router = createRouter();
+    const telegramCtx = {
+      ...buildBaseContext(8922),
+      reply: jest.fn().mockResolvedValue(undefined),
+    };
+
+    await (router as any).handleYesterdayCheckinCommand(telegramCtx);
+
+    const session = await ctx.fsmService.getSession(user.id);
+
+    expect(telegramCtx.reply).toHaveBeenNthCalledWith(
+      1,
+      telegramCopy.checkin.startedYesterday,
+      expect.objectContaining({ parse_mode: 'HTML' }),
+    );
+    expect(session?.state).toBe(FSM_STATES.checkin_metric_score);
+    expect(session?.payloadJson).toMatchObject({
+      checkinTarget: 'yesterday',
+    });
   });
 
   it('updates the metric tag selection callback screen instead of sending a new message', async () => {
@@ -562,6 +885,8 @@ describe('Telegram router contract integration', () => {
       TELEGRAM_CALLBACKS.menuStats,
       TELEGRAM_CALLBACKS.menuHistory,
       TELEGRAM_CALLBACKS.menuSettings,
+      TELEGRAM_CALLBACKS.menuFeedback,
+      TELEGRAM_CALLBACKS.menuSupport,
       TELEGRAM_CALLBACKS.menuHelp,
       TELEGRAM_CALLBACKS.menuTerms,
     ]);

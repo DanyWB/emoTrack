@@ -104,6 +104,11 @@ class EnvironmentVariables {
   @IsOptional()
   @IsString()
   ADMIN_TELEGRAM_IDS?: string;
+
+  @Transform(({ value }) => toOptionalString(value))
+  @IsOptional()
+  @IsString()
+  SUPPORT_URL?: string;
 }
 
 function validateConditionalRules(env: EnvironmentVariables): string[] {

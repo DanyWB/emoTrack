@@ -65,7 +65,16 @@ export interface IntegrationTestContext {
   statsService: StatsService;
   summariesService: SummariesService;
   summariesFormatter: SummariesFormatter;
-  adminRepository: jest.Mocked<Pick<AdminRepository, 'getOverview' | 'listActiveUsers' | 'getUserDetail' | 'findEntryOwnerUserId'>>;
+  adminRepository: jest.Mocked<Pick<
+    AdminRepository,
+    | 'getOverview'
+    | 'listActiveUsers'
+    | 'getUserDetail'
+    | 'findEntryOwnerUserId'
+    | 'listFeedback'
+    | 'getFeedbackDetail'
+    | 'markFeedbackReviewed'
+  >>;
   adminService: AdminService;
 }
 
@@ -104,6 +113,16 @@ export async function createIntegrationTestContext(
     }),
     getUserDetail: jest.fn().mockResolvedValue(null),
     findEntryOwnerUserId: jest.fn().mockResolvedValue(null),
+    listFeedback: jest.fn().mockResolvedValue({
+      items: [],
+      total: 0,
+      offset: 0,
+      limit: 5,
+      hasPrevious: false,
+      hasNext: false,
+    }),
+    getFeedbackDetail: jest.fn().mockResolvedValue(null),
+    markFeedbackReviewed: jest.fn().mockResolvedValue(undefined),
   };
 
   const moduleRef = await Test.createTestingModule({

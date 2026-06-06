@@ -1,5 +1,13 @@
 ﻿import type { EventType, SleepMode, SummaryPeriodType } from '@prisma/client';
 
+import type { FeedbackStatus, FeedbackType } from '@prisma/client';
+import type { AnnouncementStatus, AnnouncementType } from '@prisma/client';
+
+import {
+  ANNOUNCEMENT_STATUS_LABELS,
+  ANNOUNCEMENT_TYPE_BY_KEY,
+  type AnnouncementDeliveryCounts,
+} from '../announcements/announcements.types';
 import {
   getCoreCheckinStepPosition,
   type CheckinStepConfig,
@@ -15,6 +23,11 @@ import {
   DAILY_METRIC_LABELS_BY_KEY,
   type DailyMetricCatalogKey,
 } from '../daily-metrics/daily-metrics.catalog';
+import {
+  FEEDBACK_STATUS_LABELS,
+  FEEDBACK_TYPE_BY_KEY,
+  type FeedbackTypeKey,
+} from '../feedback/feedback.types';
 
 export const EVENT_TYPE_LABELS: Record<EventType, string> = {
   work: 'Работа',
@@ -58,10 +71,13 @@ export const TELEGRAM_COMMANDS = [
   { command: 'help', description: '❔ Краткая помощь' },
   { command: 'terms', description: '📄 Пользовательское соглашение' },
   { command: 'checkin', description: '🌤 Отметить состояние' },
+  { command: 'yesterday', description: '↩️ Отметить состояние за вчера' },
   { command: 'event', description: '🗂 Добавить событие' },
   { command: 'history', description: '📚 Последние записи' },
   { command: 'stats', description: '📊 Сводка и графики' },
   { command: 'settings', description: '⚙️ Настройки' },
+  { command: 'feedback', description: '💬 Обратная связь' },
+  { command: 'support', description: '🛟 Поддержка' },
 ] as const;
 
 export const DAILY_TRACKING_LABELS = {
@@ -89,9 +105,116 @@ export const WEEKDAY_LABELS = {
   6: 'суббота',
 } as const;
 
+export const TERMS_DOCUMENTS = {
+  agreement: {
+    title: '📄 Пользовательское соглашение',
+    buttonLabel: '📄 Соглашение',
+    text: [
+      '<b>📄 Пользовательское соглашение emoTrack</b>',
+      'Редакция от <b>06.06.2026</b>',
+      '',
+      '<b>1. Что такое сервис</b>',
+      'emoTrack - Telegram-бот для самонаблюдения: пользователь отмечает состояние, сон, события, заметки, смотрит историю, статистику и получает напоминания.',
+      'Сервис не является медицинским, психологическим или экстренным сервисом, не ставит диагнозы, не назначает лечение и не заменяет специалиста.',
+      '',
+      '<b>2. Начало использования</b>',
+      'Использование сервиса возможно после принятия этого соглашения, политики конфиденциальности и политики обработки и передачи данных.',
+      'Нажимая «✅ Согласен», пользователь подтверждает, что ознакомился с документами, понимает их смысл и принимает их полностью.',
+      '',
+      '<b>3. Данные и записи</b>',
+      'Пользователь сам выбирает, какие сведения отправлять боту. Записи могут включать оценки состояния, теги, сон, события, заметки, обращения в поддержку и ответы в опросах.',
+      'Не отправляйте чужие персональные данные, медицинские документы, пароли, платежные данные и другую информацию, которую нельзя безопасно хранить в дневнике самонаблюдения.',
+      '',
+      '<b>4. Обязанности пользователя</b>',
+      'Пользователь обязуется пользоваться сервисом законно, не отправлять вредоносный или незаконный контент, не пытаться нарушать работу бота и защищать доступ к своему Telegram-аккаунту.',
+      '',
+      '<b>5. Ограничение ответственности</b>',
+      'Сервис предоставляется в рабочем состоянии, но без гарантии непрерывной доступности, полного отсутствия ошибок или пригодности для медицинских решений.',
+      'В экстренной ситуации нужно обращаться в местные экстренные службы или к профильному специалисту.',
+      '',
+      '<b>6. Изменения документов</b>',
+      'Актуальная редакция документов доступна в /terms. Пользователь обязуется самостоятельно следить за обновлениями.',
+      'Администрация может дополнительно уведомлять о важных изменениях через бот, но отсутствие отдельного уведомления не отменяет обязанность проверять актуальную редакцию.',
+      'Продолжение использования сервиса после публикации изменений означает согласие с новой редакцией.',
+      '',
+      '<b>7. Контакты</b>',
+      'По вопросам работы сервиса, данных и удаления записей используйте /support или /feedback.',
+    ].join('\n'),
+  },
+  privacy: {
+    title: '🔒 Политика конфиденциальности',
+    buttonLabel: '🔒 Конфиденциальность',
+    text: [
+      '<b>🔒 Политика конфиденциальности emoTrack</b>',
+      'Редакция от <b>06.06.2026</b>',
+      '',
+      '<b>1. Какие данные обрабатываются</b>',
+      'Сервис может обрабатывать Telegram ID, username, имя из Telegram, язык, часовой пояс, настройки, факт принятия соглашения и технические даты создания/обновления.',
+      'Также обрабатываются пользовательские записи: check-in оценки, теги, сон, события, заметки, история, статистика, обращения обратной связи, обращения в поддержку и ответы в опросах.',
+      '',
+      '<b>2. Зачем это нужно</b>',
+      'Данные используются, чтобы сохранять дневник, показывать историю и статистику, строить графики, отправлять напоминания, обрабатывать обратную связь, поддерживать безопасность и улучшать сервис.',
+      '',
+      '<b>3. Принцип минимальности</b>',
+      'Мы не требуем медицинских документов, паспортных данных, платежных данных или сведений о третьих лицах. Если пользователь сам добавляет чувствительную информацию в заметки, она хранится как часть его записи.',
+      '',
+      '<b>4. Доступ к данным</b>',
+      'Доступ к данным имеют только администраторы и технические процессы сервиса в объеме, необходимом для работы бота, поддержки пользователей, исправления ошибок и соблюдения закона.',
+      'Данные не продаются и не публикуются как открытая информация.',
+      '',
+      '<b>5. Хранение и безопасность</b>',
+      'Данные хранятся в базе сервиса и защищаются разумными организационными и техническими мерами: ограничением доступа, серверной обработкой, логированием технических событий и резервными процедурами при необходимости.',
+      'Ни один цифровой сервис не может гарантировать абсолютную безопасность, поэтому не отправляйте в бот сведения, которые требуют специального режима хранения.',
+      '',
+      '<b>6. Срок хранения</b>',
+      'Данные хранятся, пока аккаунт используется или пока они нужны для работы сервиса. Пользователь может запросить удаление или уточнение данных через /support или /feedback.',
+      '',
+      '<b>7. Права пользователя</b>',
+      'Пользователь может запросить информацию об обработке данных, исправление неточных данных, удаление данных или прекращение использования сервиса.',
+    ].join('\n'),
+  },
+  data_transfer: {
+    title: '🔁 Политика обработки и передачи данных',
+    buttonLabel: '🔁 Передача данных',
+    text: [
+      '<b>🔁 Политика обработки и передачи данных emoTrack</b>',
+      'Редакция от <b>06.06.2026</b>',
+      '',
+      '<b>1. Что считается передачей</b>',
+      'Передача данных - это предоставление или техническая доступность данных тем, кто помогает сервису работать: Telegram, серверной инфраструктуре, базе данных, очередям задач, администраторам и поддержке.',
+      '',
+      '<b>2. Кому могут быть доступны данные</b>',
+      'Данные могут быть доступны:',
+      '• Telegram - для доставки сообщений, кнопок, изображений и команд бота;',
+      '• хостингу, серверу, базе данных и очередям задач - для хранения записей, напоминаний, оповещений и технической обработки;',
+      '• администраторам сервиса - для поддержки, модерации обратной связи, диагностики ошибок и отправки оповещений;',
+      '• уполномоченным органам - если передача обязательна по закону.',
+      '',
+      '<b>3. Трансграничная обработка</b>',
+      'Из-за работы Telegram и инфраструктурных провайдеров отдельные технические операции могут выполняться вне страны пользователя. Используя сервис, пользователь соглашается с такой технической передачей, когда она нужна для работы бота.',
+      '',
+      '<b>4. Что не делается</b>',
+      'Сервис не продает персональные данные, не передает записи рекламным сетям и не делает личные записи публичными.',
+      '',
+      '<b>5. Оповещения и опросы</b>',
+      'Сервис может отправлять служебные и продуктовые оповещения пользователям, которые приняли документы. Если в оповещении есть опрос, выбранный вариант сохраняется внутри сервиса для анализа обратной связи.',
+      '',
+      '<b>6. Запросы по данным</b>',
+      'Вопросы о передаче, хранении, удалении или ограничении обработки данных можно отправить через /support или /feedback.',
+    ].join('\n'),
+  },
+} as const;
+
+export type TermsDocumentKey = keyof typeof TERMS_DOCUMENTS;
+
+export function isTermsDocumentKey(value: string): value is TermsDocumentKey {
+  return Object.prototype.hasOwnProperty.call(TERMS_DOCUMENTS, value);
+}
+
 export const telegramCopy = {
   buttons: {
     consentAccept: '✅ Согласен',
+    termsBackToDocuments: 'К документам',
     cancel: 'Отмена',
     toMenu: 'В меню',
     back: 'Назад',
@@ -134,16 +257,35 @@ export const telegramCopy = {
     menuStats: '📊 Статистика',
     menuHistory: '📚 История',
     menuSettings: '⚙️ Настройки',
+    menuFeedback: '💬 Обратная связь',
+    menuSupport: '🛟 Поддержка',
     menuHelp: '❔ Помощь',
     menuTerms: '📄 Соглашение',
     adminOverview: '📊 Общая статистика',
     adminActiveUsers: '👥 Активные пользователи',
+    adminFeedback: '💬 Обратная связь',
+    adminAnnouncements: '📣 Оповещения',
+    adminAnnouncementCreate: 'Создать оповещение',
+    adminAnnouncementList: 'Последние оповещения',
+    adminAnnouncementSend: '🚀 Отправить',
+    adminAnnouncementResume: '🔁 Продолжить отправку',
+    adminAnnouncementEditImage: '🖼 Изменить картинку',
+    adminAnnouncementSkipImage: 'Без картинки',
+    adminBackToAnnouncements: 'К оповещениям',
     adminBackToPanel: 'К админке',
     adminBackToUser: 'К пользователю',
+    adminBackToFeedback: 'К обращениям',
+    adminMarkFeedbackReviewed: 'Отметить просмотренным',
     adminUserStats7d: 'Статистика 7 дней',
     adminUserStats30d: 'Статистика 30 дней',
     adminUserStatsAll: 'Статистика вся',
     adminUserHistory: 'История и заметки',
+    feedbackBug: '🐞 Ошибка',
+    feedbackIdea: '💡 Идея',
+    feedbackQuestion: '❔ Вопрос',
+    feedbackReview: '⭐ Отзыв',
+    feedbackOther: '📝 Другое',
+    supportOpen: 'Открыть поддержку',
   },
   startup: {
     alreadyReady:
@@ -218,19 +360,24 @@ export const telegramCopy = {
     incompleteRedirect: 'Сначала завершим настройку. Продолжим с текущего шага.',
   },
   terms: {
-    title: '📄 Пользовательское соглашение',
+    title: '📄 Документы и согласие',
     text: [
-      'Это временный текст соглашения для текущего этапа разработки.',
+      '<b>Редакция документов:</b> 06.06.2026',
       '',
-      'Сейчас важно следующее:',
-      '- бот хранит ваши записи, события и настройки, чтобы показывать историю, статистику и напоминания',
-      '- emoTrack не является медицинским инструментом и не заменяет специалиста',
-      '- вы управляете тем, какие данные отмечаете в ежедневном check-in',
+      'Перед использованием emoTrack нужно ознакомиться и согласиться с документами ниже:',
+      '• Пользовательское соглашение',
+      '• Политика конфиденциальности',
+      '• Политика обработки и передачи данных',
+      '',
+      'Нажимая «✅ Согласен», ты принимаешь все три документа и даешь согласие на обработку данных для работы бота.',
+      '',
+      '<i>emoTrack - инструмент самонаблюдения. Он не заменяет врача, психолога, психотерапевта или экстренную помощь.</i>',
     ].join('\n'),
-    acceptPrompt: 'Если условия подходят, нажми «Согласен».',
+    acceptPrompt: 'Если условия подходят, нажми «✅ Согласен».',
     accessRequired:
-      'Чтобы пользоваться ботом, сначала нужно принять пользовательское соглашение. Открой /terms и нажми «Согласен».',
-    alreadyAccepted: '✅ Соглашение уже принято.',
+      'Чтобы пользоваться ботом, сначала нужно принять документы сервиса. Открой /terms, прочитай документы и нажми «✅ Согласен».',
+    alreadyAccepted: '✅ Документы уже приняты. Актуальная редакция всегда доступна в /terms.',
+    documentNotFound: 'Документ не найден. Открой список документов через /terms.',
   },
   menu: {
     text: [
@@ -245,6 +392,8 @@ export const telegramCopy = {
   },
   checkin: {
     started: '<b>🌤 Check-in за сегодня</b>\n━━━━━━━━━━━━\nОтметим состояние короткими шагами.',
+    startedYesterday:
+      '<b>↩️ Check-in за вчера</b>\n━━━━━━━━━━━━\nЕсли вчера не успел отметить состояние, можно аккуратно восстановить запись сейчас.',
     resumed:
       '<b>↩️ Продолжим текущий check-in</b>\n━━━━━━━━━━━━\nВернемся к последнему незавершенному шагу.',
     v2Onboarding: [
@@ -349,6 +498,31 @@ export const telegramCopy = {
     statsLoading: '📊 Собираю статистику пользователя…',
     historyTitle: '📚 История пользователя',
     historyEmpty: 'У этого пользователя пока нет записей истории.',
+    feedbackTitle: '💬 Обратная связь',
+    feedbackEmpty: 'Пока нет обращений от пользователей.',
+    feedbackNotFound: 'Обращение не найдено или уже недоступно.',
+    announcementsTitle: '📣 Оповещения',
+    announcementsMenu:
+      '<b>📣 Оповещения</b>\n━━━━━━━━━━━━\nСоздание и отправка сообщений пользователям, которые приняли соглашение.',
+    announcementsEmpty: 'Оповещений пока нет.',
+    announcementTypePrompt:
+      '<b>📣 Тип оповещения</b>\n━━━━━━━━━━━━\nВыбери тип. Для опроса после текста нужно будет добавить варианты ответа.',
+    announcementTitlePrompt:
+      '<b>✍️ Заголовок оповещения</b>\n━━━━━━━━━━━━\nОтправь короткий заголовок одним сообщением. Максимум 80 символов.',
+    announcementBodyPrompt:
+      '<b>📝 Текст оповещения</b>\n━━━━━━━━━━━━\nОтправь основной текст одним сообщением. HTML-разметка не применяется, текст будет экранирован.',
+    announcementPollOptionsPrompt:
+      '<b>🗳 Варианты опроса</b>\n━━━━━━━━━━━━\nОтправь от 2 до 6 вариантов, каждый с новой строки.',
+    announcementImagePrompt:
+      '<b>🖼 Картинка</b>\n━━━━━━━━━━━━\nМожно отправить картинку для оповещения или продолжить без нее.',
+    announcementPreviewNotReady:
+      'Оповещение еще не готово к отправке. Проверь заголовок, текст и варианты опроса.',
+    announcementSending: '📣 Отправляю оповещение. Это может занять немного времени.',
+    announcementSendUnavailable:
+      'Оповещение уже отправляется или недоступно для отправки. Открой последние оповещения и проверь статус.',
+    announcementImagePreviewCaption: '🖼 Картинка для оповещения',
+    announcementNotFound: 'Оповещение не найдено или уже недоступно.',
+    announcementCancelled: 'Оповещение отменено.',
   },
   settings: {
     title: '⚙️ Настройки:',
@@ -393,6 +567,8 @@ export const telegramCopy = {
       'Как ты сегодня?',
       'Отметь настроение, энергию, сон и важные события дня.',
       '',
+      'Если вчера не успел — можно восстановить запись командой /yesterday.',
+      '',
       'Это займет около минуты',
       '',
       '👉 /checkin',
@@ -409,12 +585,15 @@ export const telegramCopy = {
       '<b>Основная навигация</b>',
       '/menu — разделы и быстрые ссылки',
       '/checkin — отметить состояние',
+      '/yesterday — отметить состояние за вчера',
       '/event — добавить событие',
       '',
       '<b>Разделы</b>',
       '/history — последние записи',
       '/stats — сводка и графики',
       '/settings — настройки',
+      '/feedback — сообщить об ошибке, задать вопрос или оставить отзыв',
+      '/support — ссылка на поддержку',
       '/terms — пользовательское соглашение',
       '',
       '<b>Заметки и события</b>',
@@ -423,6 +602,41 @@ export const telegramCopy = {
       '',
       '<i>Это не диагностика и не замена специалиста.</i>',
     ].join('\n'),
+  },
+  support: {
+    text: [
+      '<b>🛟 Поддержка</b>',
+      '━━━━━━━━━━━━',
+      'Если нужен прямой контакт, открой аккаунт поддержки по кнопке ниже.',
+    ].join('\n'),
+    missingUrl: [
+      '<b>🛟 Поддержка</b>',
+      '━━━━━━━━━━━━',
+      'Ссылка на поддержку пока не настроена. Можно оставить вопрос через /feedback.',
+    ].join('\n'),
+  },
+  feedback: {
+    typePrompt: [
+      '<b>💬 Обратная связь</b>',
+      '━━━━━━━━━━━━',
+      'Выбери тип обращения. Это поможет быстрее разобрать сообщение.',
+    ].join('\n'),
+    messagePrompt: [
+      '<b>✍️ Текст обращения</b>',
+      '━━━━━━━━━━━━',
+      'Отправь одно сообщение: что случилось, какой вопрос возник или что можно улучшить.',
+    ].join('\n'),
+    saved: [
+      '<b>✅ Спасибо, сообщение сохранено</b>',
+      '━━━━━━━━━━━━',
+      'Я передал его администратору проекта.',
+    ].join('\n'),
+    cancelled: 'Обратная связь отменена.',
+  },
+  announcements: {
+    voteSaved: 'Голос сохранен.',
+    voteAlreadySaved: 'Голос уже был сохранен.',
+    voteUnavailable: 'Опрос уже недоступен.',
   },
   validation: {
     invalidTime: 'Некорректное время. Используй формат HH:mm, например 09:15.',
@@ -434,6 +648,12 @@ export const telegramCopy = {
     invalidEventTitle: 'Укажи название события короче.',
     invalidEventScore: 'Оценка события должна быть целым числом от 0 до 10.',
     invalidEventDescription: 'Описание слишком длинное или пустое. Отправь более короткий текст.',
+    invalidFeedbackMessage: 'Сообщение пустое или слишком длинное. Отправь текст короче 1000 символов.',
+    invalidAnnouncementTitle: 'Заголовок пустой или длиннее 80 символов. Отправь более короткий заголовок.',
+    invalidAnnouncementBody: 'Текст пустой или длиннее 1200 символов. Отправь более короткое сообщение.',
+    invalidAnnouncementPollOptions:
+      'Нужно от 2 до 6 вариантов, каждый с новой строки. Дубли и варианты длиннее 80 символов не принимаются.',
+    invalidAnnouncementImage: 'Отправь картинку или нажми «Без картинки».',
     invalidEventEndDate:
       'Некорректная дата окончания. Используй формат YYYY-MM-DD, и дата не должна быть раньше даты начала события.',
     invalidDailyTrackingConfiguration: 'Нужно оставить хотя бы одну ежедневную метрику.',
@@ -462,6 +682,7 @@ export interface CheckinConfirmationData {
   noteAdded?: boolean;
   tagsCount?: number;
   eventAdded?: boolean;
+  entryDateLabel?: string;
 }
 
 export interface HistoryEntryData {
@@ -591,6 +812,63 @@ export interface AdminUserDetailData extends AdminActiveUserItemData {
   summariesCount: number;
 }
 
+export interface AdminFeedbackItemData {
+  item: {
+    id: string;
+    feedbackType: FeedbackType;
+    message: string;
+    status: FeedbackStatus;
+    createdAt: Date;
+  };
+  user: AdminUserIdentityData | null;
+}
+
+export interface AdminFeedbackPageData {
+  items: AdminFeedbackItemData[];
+  total: number;
+  offset: number;
+  limit: number;
+}
+
+export interface AdminAnnouncementCampaignData {
+  id: string;
+  type: AnnouncementType;
+  title: string;
+  body: string;
+  status: AnnouncementStatus;
+  imageTelegramFileId?: string | null;
+  pollToken?: string | null;
+  createdAt: Date;
+  finishedAt?: Date | null;
+  pollOptions: Array<{
+    id: string;
+    label: string;
+    sortOrder: number;
+  }>;
+  _count?: {
+    deliveries: number;
+    pollVotes: number;
+  };
+}
+
+export interface AdminAnnouncementPageData {
+  items: AdminAnnouncementCampaignData[];
+  total: number;
+  offset: number;
+  limit: number;
+}
+
+export interface AdminAnnouncementPreviewData {
+  campaign: AdminAnnouncementCampaignData;
+  audienceCount: number;
+}
+
+export interface AdminAnnouncementDetailData {
+  campaign: AdminAnnouncementCampaignData;
+  deliveryCounts: AnnouncementDeliveryCounts;
+  pollVoteCounts?: Map<string, number>;
+}
+
 export function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (char) => {
     switch (char) {
@@ -683,9 +961,181 @@ export function formatAdminUserDetail(data: AdminUserDetailData): string {
   ].join('\n');
 }
 
+export function formatAdminFeedbackPage(data: AdminFeedbackPageData): string {
+  if (data.items.length === 0) {
+    return [
+      `<b>${telegramCopy.admin.feedbackTitle}</b>`,
+      '━━━━━━━━━━━━',
+      telegramCopy.admin.feedbackEmpty,
+    ].join('\n');
+  }
+
+  const from = data.offset + 1;
+  const to = data.offset + data.items.length;
+  const lines = [
+    `<b>${telegramCopy.admin.feedbackTitle}</b>`,
+    '━━━━━━━━━━━━',
+    `Показаны <b>${from}-${to}</b> из <b>${data.total}</b>.`,
+    '',
+  ];
+
+  for (const item of data.items) {
+    lines.push(
+      `• <b>${formatFeedbackTypeLabel(item.item.feedbackType)}</b> · ${formatFeedbackStatus(item.item.status)} · ${formatAdminDateTime(item.item.createdAt)}`,
+      `  ${formatAdminFeedbackUser(item.user)}`,
+      `  ${escapeHtml(formatFeedbackExcerpt(item.item.message))}`,
+    );
+  }
+
+  return lines.join('\n');
+}
+
+export function formatAdminFeedbackDetail(data: AdminFeedbackItemData): string {
+  return [
+    `<b>${telegramCopy.admin.feedbackTitle}</b>`,
+    '━━━━━━━━━━━━',
+    `• Тип: <b>${formatFeedbackTypeLabel(data.item.feedbackType)}</b>`,
+    `• Статус: ${formatFeedbackStatus(data.item.status)}`,
+    `• Создано: ${formatAdminDateTime(data.item.createdAt)}`,
+    `• Пользователь: ${formatAdminFeedbackUser(data.user)}`,
+    `• ID: <code>${escapeHtml(data.item.id)}</code>`,
+    '',
+    '<b>Сообщение</b>',
+    escapeHtml(data.item.message),
+  ].join('\n');
+}
+
+export function formatAdminAnnouncementsPage(data: AdminAnnouncementPageData): string {
+  if (data.items.length === 0) {
+    return [
+      `<b>${telegramCopy.admin.announcementsTitle}</b>`,
+      '━━━━━━━━━━━━',
+      telegramCopy.admin.announcementsEmpty,
+    ].join('\n');
+  }
+
+  const from = data.offset + 1;
+  const to = data.offset + data.items.length;
+  const lines = [
+    `<b>${telegramCopy.admin.announcementsTitle}</b>`,
+    '━━━━━━━━━━━━',
+    `Показаны ${from}–${to} из ${data.total}.`,
+    '',
+  ];
+
+  for (const item of data.items) {
+    lines.push(
+      `• ${formatAnnouncementStatus(item.status)} · ${formatAnnouncementTypeLabel(item.type)} · ${formatAdminDateTime(item.createdAt)}`,
+      `  ${escapeHtml(item.title || 'без заголовка')}`,
+      `  доставок: <b>${item._count?.deliveries ?? 0}</b>, голосов: <b>${item._count?.pollVotes ?? 0}</b>`,
+    );
+  }
+
+  return lines.join('\n');
+}
+
+export function formatAdminAnnouncementPreview(data: AdminAnnouncementPreviewData): string {
+  const campaign = data.campaign;
+  const lines = [
+    '<b>Предпросмотр оповещения</b>',
+    '━━━━━━━━━━━━',
+    `• Тип: <b>${formatAnnouncementTypeLabel(campaign.type)}</b>`,
+    `• Получателей: <b>${data.audienceCount}</b>`,
+    `• Картинка: ${campaign.imageTelegramFileId ? 'есть' : 'нет'}`,
+  ];
+
+  if (campaign.type === 'poll') {
+    lines.push(`• Вариантов опроса: <b>${campaign.pollOptions.length}</b>`);
+  }
+
+  lines.push('', '<b>Сообщение для пользователя</b>', '━━━━━━━━━━━━', formatAnnouncementUserMessage(campaign));
+  return lines.join('\n');
+}
+
+export function formatAdminAnnouncementDetail(data: AdminAnnouncementDetailData): string {
+  const campaign = data.campaign;
+  const counts = data.deliveryCounts;
+  const lines = [
+    `<b>${telegramCopy.admin.announcementsTitle}</b>`,
+    '━━━━━━━━━━━━',
+    `• Тип: <b>${formatAnnouncementTypeLabel(campaign.type)}</b>`,
+    `• Статус: ${formatAnnouncementStatus(campaign.status)}`,
+    `• Создано: ${formatAdminDateTime(campaign.createdAt)}`,
+    `• ID: <code>${escapeHtml(campaign.id)}</code>`,
+    '',
+    '<b>Доставки</b>',
+    `• В очереди: <b>${counts.pending}</b>`,
+    `• Доставлено: <b>${counts.sent}</b>`,
+    `• Ошибки: <b>${counts.failed}</b>`,
+    `• Бот заблокирован: <b>${counts.blocked}</b>`,
+  ];
+
+  if (campaign.type === 'poll' && campaign.pollOptions.length > 0) {
+    lines.push('', '<b>Опрос</b>');
+
+    for (const option of campaign.pollOptions) {
+      const votes = data.pollVoteCounts?.get(option.id) ?? 0;
+      lines.push(`• ${escapeHtml(option.label)}: <b>${votes}</b>`);
+    }
+  }
+
+  lines.push('', '<b>Сообщение</b>', formatAnnouncementUserMessage(campaign));
+  return lines.join('\n');
+}
+
+export function formatAnnouncementUserMessage(campaign: AdminAnnouncementCampaignData): string {
+  const type = ANNOUNCEMENT_TYPE_BY_KEY.get(campaign.type);
+  const typeLabel = type ? `${type.icon} ${type.label}` : '📣 Оповещение';
+  const lines = [
+    `<b>${typeLabel}: ${escapeHtml(campaign.title)}</b>`,
+    '━━━━━━━━━━━━',
+    escapeHtml(campaign.body),
+  ];
+
+  if (campaign.type === 'poll' && campaign.pollOptions.length > 0) {
+    lines.push('', '<b>Опрос</b>', 'Выбери один вариант кнопкой ниже.');
+  }
+
+  return lines.join('\n');
+}
+
+export function formatAdminAnnouncementSendReport(data: {
+  audienceCount: number;
+  deliveryCounts: AnnouncementDeliveryCounts;
+  queued?: boolean;
+}): string {
+  if (data.queued) {
+    return [
+      '<b>📣 Оповещение поставлено в очередь</b>',
+      '━━━━━━━━━━━━',
+      `• Получателей: <b>${data.audienceCount}</b>`,
+      `• В очереди: <b>${data.deliveryCounts.pending}</b>`,
+      '',
+      'Статус доставки можно проверить в последних оповещениях.',
+    ].join('\n');
+  }
+
+  return [
+    '<b>📣 Оповещение отправлено</b>',
+    '━━━━━━━━━━━━',
+    `• Получателей: <b>${data.audienceCount}</b>`,
+    `• Доставлено: <b>${data.deliveryCounts.sent}</b>`,
+    `• Ошибки: <b>${data.deliveryCounts.failed}</b>`,
+    `• Бот заблокирован: <b>${data.deliveryCounts.blocked}</b>`,
+  ].join('\n');
+}
+
 export function formatAdminUserButtonLabel(item: AdminActiveUserItemData): string {
   const primary = getAdminUserPrimaryLabel(item.user);
   return `${primary} • ${item.entriesCount}`;
+}
+
+export function formatAdminFeedbackButtonLabel(item: AdminFeedbackItemData): string {
+  return `${formatFeedbackStatusShort(item.item.status)} ${formatFeedbackTypeLabel(item.item.feedbackType)} • ${formatAdminFeedbackUserButton(item.user)}`;
+}
+
+export function formatAdminAnnouncementButtonLabel(item: AdminAnnouncementCampaignData): string {
+  return `${formatAnnouncementStatusShort(item.status)} ${formatAnnouncementTypeLabel(item.type)} • ${formatAnnouncementTitleExcerpt(item.title)}`;
 }
 
 export function formatAdminUserStatsTitle(user: AdminUserIdentityData, periodType: SummaryPeriodType): string {
@@ -733,6 +1183,76 @@ function getAdminUserPrimaryLabel(user: AdminUserIdentityData): string {
   return `user:${user.id.slice(0, 8)}`;
 }
 
+function formatAdminFeedbackUser(user: AdminUserIdentityData | null): string {
+  return user ? formatAdminUserIdentity(user) : 'удаленный пользователь';
+}
+
+function formatAdminFeedbackUserButton(user: AdminUserIdentityData | null): string {
+  if (!user) {
+    return 'удален';
+  }
+
+  return getAdminUserPrimaryLabel(user);
+}
+
+function formatFeedbackTypeLabel(type: FeedbackType): string {
+  return FEEDBACK_TYPE_BY_KEY.get(type as FeedbackTypeKey)?.label ?? type;
+}
+
+function formatFeedbackStatus(status: FeedbackStatus): string {
+  return FEEDBACK_STATUS_LABELS[status] ?? status;
+}
+
+function formatFeedbackStatusShort(status: FeedbackStatus): string {
+  if (status === 'unread') {
+    return '●';
+  }
+
+  if (status === 'reviewed') {
+    return '✓';
+  }
+
+  return '×';
+}
+
+function formatAnnouncementTypeLabel(type: AnnouncementType): string {
+  const definition = ANNOUNCEMENT_TYPE_BY_KEY.get(type);
+  return definition ? `${definition.icon} ${definition.label}` : type;
+}
+
+function formatAnnouncementStatus(status: AnnouncementStatus): string {
+  return ANNOUNCEMENT_STATUS_LABELS[status] ?? status;
+}
+
+function formatAnnouncementStatusShort(status: AnnouncementStatus): string {
+  switch (status) {
+    case 'draft':
+      return '…';
+    case 'ready':
+      return '✓';
+    case 'sending':
+      return '↗';
+    case 'sent':
+      return '✓✓';
+    case 'partially_failed':
+      return '!';
+    case 'failed':
+      return '×';
+    case 'cancelled':
+      return '−';
+  }
+}
+
+function formatAnnouncementTitleExcerpt(title: string): string {
+  const normalized = title.replace(/\s+/g, ' ').trim() || 'без заголовка';
+  return normalized.length <= 34 ? normalized : `${normalized.slice(0, 33).trimEnd()}...`;
+}
+
+function formatFeedbackExcerpt(message: string): string {
+  const normalized = message.replace(/\s+/g, ' ').trim();
+  return normalized.length <= 90 ? normalized : `${normalized.slice(0, 89).trimEnd()}...`;
+}
+
 function formatAdminReminderStatus(user: AdminUserIdentityData): string {
   if (!user.remindersEnabled) {
     return 'выключены';
@@ -749,11 +1269,16 @@ function formatAdminDate(date: Date | null): string {
   return escapeHtml(formatDateKey(date));
 }
 
+function formatAdminDateTime(date: Date): string {
+  return escapeHtml(date.toISOString().replace('T', ' ').slice(0, 16));
+}
+
 export function formatCheckinConfirmation(data: CheckinConfirmationData): string {
+  const entryDateLabel = data.entryDateLabel ?? 'сегодня';
   const lines = [
     data.updated
-      ? '✅ <b>Запись за сегодня обновлена</b>'
-      : '✅ <b>Запись за сегодня сохранена</b>',
+      ? `✅ <b>Запись за ${escapeHtml(entryDateLabel)} обновлена</b>`
+      : `✅ <b>Запись за ${escapeHtml(entryDateLabel)} сохранена</b>`,
     '━━━━━━━━━━━━',
   ];
   const v2MetricLines = formatCheckinMetricLines(data.checkinMetrics);

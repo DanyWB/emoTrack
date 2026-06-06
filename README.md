@@ -17,6 +17,8 @@ The bot helps a user:
 - request 7-day, 30-day, or all-time stats
 - receive chart images in the stats flow
 - manage reminder toggle, reminder time, sleep mode, and tracked daily metrics
+- use support and feedback flows for operational contact and bug/idea/question/review submissions
+- let configured admins review feedback and send consent-only announcements, including image announcements and in-bot polls
 
 This MVP is:
 
@@ -65,7 +67,10 @@ Core modules:
 - `charts`: server-side PNG chart rendering
 - `reminders`: reminder scheduling/sending with graceful no-op behavior when jobs are disabled
 - `analytics`: internal product event tracking
+- `announcements`: admin announcement campaigns, delivery audit, image support, and in-bot poll voting
 - `admin`: hidden Telegram admin panel, env-based access control, and bot/user activity aggregates
+- `feedback`: user feedback storage and admin notification path
+- `support`: configured support-link presentation
 - `health`: liveness and readiness endpoints for operational checks
 - `database`: Prisma and optional Redis wiring
 
@@ -259,6 +264,7 @@ Main variables used by the app:
 - `TELEGRAM_WEBHOOK_SECRET`
 - `TELEGRAM_STARTUP_TIMEOUT_MS`
 - `ADMIN_TELEGRAM_IDS`
+- `SUPPORT_URL`
 - `DEFAULT_TIMEZONE`
 - `CHART_TEMP_DIR`
 
@@ -268,6 +274,7 @@ Validation rules are mode-aware:
 - `JOBS_ENABLED=true` requires Redis to be enabled
 - webhook URL is required only in webhook mode
 - `ADMIN_TELEGRAM_IDS` is optional and accepts comma-separated Telegram numeric user ids for the hidden `/admin` panel
+- `SUPPORT_URL` is optional and is shown by `/support` and the support menu button when configured
 
 ## Commands
 
@@ -341,6 +348,9 @@ Covered areas:
 - stats calculations
 - summary formatting
 - daily entry same-day upsert
+- yesterday check-in date targeting
+- feedback validation and persistence
+- announcement validation, BullMQ-backed delivery queue, atomic delivery claiming, stale sending recovery, image sending, and in-bot poll voting
 - validation helpers
 - onboarding flow
 - check-in flow
@@ -373,7 +383,7 @@ DB smoke test notes:
 - if `DATABASE_URL_TEST` is set, its database name must contain `test`, for example `emotrack_test`
 - the guard is intentional: DB smoke tests must never run against the normal local development database
 - apply Prisma migrations to the test database before running DB smoke tests
-- the smoke suite verifies real PostgreSQL behavior for repository connectivity, same-day `DailyEntry` uniqueness, metric catalog reads, and event overlap queries
+- the smoke suite verifies real PostgreSQL behavior for repository connectivity, same-day `DailyEntry` uniqueness, metric catalog reads, admin feedback reads, announcement delivery/vote uniqueness, and event overlap queries
 
 Example PowerShell setup for an isolated local test database:
 
@@ -388,10 +398,12 @@ npm run test:db
 
 Current access behavior is explicit and mandatory:
 
-- a new user must accept the user agreement before product usage
-- the agreement is available through `/terms`
+- a new user must accept the legal document package before product usage
+- `/terms` shows separate in-bot document screens for the user agreement, privacy policy, and data processing/data transfer policy
+- the consent button accepts all three documents as one package
 - before acceptance, product commands redirect into the consent flow instead of opening check-in, history, stats, or settings
 - the existing `consentGiven` onboarding step remains the acceptance source of truth; this step was not redesigned into a separate legal subsystem
+- existing accepted users are not forced through a re-consent migration; the current document revision remains available through `/terms`
 - after acceptance, onboarding offers daily reminder setup by time, but the user can defer it and still continue to the first check-in offer
 
 ## Telegram Commands
@@ -406,10 +418,13 @@ Current command list:
 - `/help`
 - `/terms`
 - `/checkin`
+- `/yesterday`
 - `/event`
 - `/history`
 - `/stats`
 - `/settings`
+- `/feedback`
+- `/support`
 
 Hidden operational command:
 
@@ -427,10 +442,10 @@ Runtime note:
 Current navigation is split by frequency:
 
 - the persistent bottom keyboard contains only `Отметить состояние` and `Добавить событие`
-- `/menu` opens a formatted navigation screen with inline buttons for statistics, history, settings, help, and the user agreement
+- `/menu` opens a formatted navigation screen with inline buttons for statistics, history, settings, feedback, support, help, and the user agreement
 - `/menu` is registered as the second Telegram command after `/start`
 - `/start` for an already onboarded user now opens the same inline navigation menu instead of only sending a passive ready-state message
-- slash commands remain available for direct access to `/checkin`, `/event`, `/history`, `/stats`, `/settings`, `/help`, and `/terms`
+- slash commands remain available for direct access to `/checkin`, `/yesterday`, `/event`, `/history`, `/stats`, `/settings`, `/feedback`, `/support`, `/help`, and `/terms`
 - key bot messages use Telegram HTML formatting for clearer headings, separators, and hints
 - safe callback-driven screens edit the current inline message where possible instead of appending duplicate messages; if Telegram cannot edit a stale message, the bot falls back to a normal reply
 - callback flows that must return the persistent bottom keyboard safely delete the current inline message before sending one new menu/confirmation message
@@ -448,6 +463,13 @@ The hidden `/admin` panel is intended for early operational monitoring without c
 - active users are users with at least one saved `DailyEntry`
 - an admin can open an active user, inspect account/data counters, request 7-day/30-day/all-time stats, receive the existing chart flow when enough data is available, and open history details with notes, tags, and events
 - admin-generated user stats use the existing summary pipeline with `persist=false`, so opening admin stats does not create stored summary rows
+- admins can open user feedback from `/admin`, inspect the message, and mark unread feedback as reviewed
+- admins can create announcements from `/admin`, choose a type, write a title/body, optionally attach a Telegram image, preview the exact user-facing text plus the image, and send immediately
+- announcements are delivered only to users with `consentGiven=true`; onboarding completion is not required for receiving them
+- announcement sending is claimed atomically before delivery rows are created, so repeated send callbacks do not duplicate a broadcast
+- when `REDIS_ENABLED=true` and `JOBS_ENABLED=true`, announcement deliveries are processed by the `announcements` BullMQ queue with retry/backoff and a finalize job; local no-Redis mode keeps the synchronous fallback
+- stale `sending` campaigns can be continued from the announcement detail after the recovery window; pending delivery rows are requeued without duplicating already processed deliveries
+- poll announcements use in-bot inline buttons and store one vote per user; voting is accepted only after the campaign is sending/sent/partially failed, and admins can reopen an announcement detail to see delivery counts and poll vote counts
 
 ## Onboarding UX Notes
 
@@ -455,6 +477,7 @@ Current first-run behavior is product-first:
 
 - `/start` shows one concise intro explaining what the bot tracks, how check-ins, notes, and events differ, and what the first route will do
 - consent is still required before saving user data
+- the consent screen includes buttons for the agreement, privacy policy, and data processing/data transfer policy before the acceptance button
 - accepting consent edits the current agreement/onboarding message into the reminder step where Telegram allows it
 - after consent, the user is offered daily reminder setup by entering a time such as `21:30`
 - reminder setup can be deferred with `Настрою позже`; in that case reminders are disabled until the user enables them in `/settings`
@@ -467,6 +490,7 @@ Current first-run behavior is product-first:
 Current check-in behavior is intentionally conservative:
 
 - `/checkin` resumes an active check-in instead of silently resetting progress
+- `/yesterday` starts the same Check-in v2 flow for the previous user-local day, so a missed daily entry can be restored without creating a second product mode
 - score prompts use semantic 1..5 labels, not visible numeric 1..10 scales
 - the fixed core metrics are `Настроение`, `Энергия`, and `Спокойствие`
 - each metric immediately opens its own predefined tag screen after the score; up to 3 tags can be selected per metric
@@ -484,6 +508,17 @@ Current check-in behavior is intentionally conservative:
 - metric tags are tuned as analytical qualifiers: unclear options exist for every metric, while scale duplicates such as `Спокойствие -> спокойно` are avoided
 - if the check-in FSM loses context, the user gets a safe restart message instead of a raw or ambiguous error
 - same-day upsert behavior remains unchanged: one normalized day key, one `DailyEntry`
+- yesterday upsert uses the previous normalized user-local day key, and events added from that check-in are attached to the same restored day
+
+## Support and Feedback
+
+Support and feedback are intentionally lightweight operational features:
+
+- `/support` opens the configured `SUPPORT_URL` when the env value is set
+- if `SUPPORT_URL` is empty, `/support` tells the user that direct support is not configured and points them to `/feedback`
+- `/feedback` asks for a type (`Ошибка`, `Идея`, `Вопрос`, `Отзыв`, `Другое`) and one message up to 1000 characters
+- feedback is stored in `feedback_items` and admins listed in `ADMIN_TELEGRAM_IDS` receive a best-effort Telegram notification
+- `/admin` includes a feedback list, detail view, and `Отметить просмотренным` action for unread feedback
 
 ## Configurable Check-in
 
@@ -525,6 +560,27 @@ Check-in v2 uses a code-defined product metric catalog and normalized metric sto
   - unique `(userId, metricKey)`
 
 Metric definitions live in code in `src/checkins/checkins-v2.catalog.ts`, not in the database. The catalog includes labels, prompts, semantic scale labels, tag metadata, core/optional flags, defaults, sort order, and max tag count.
+
+Feedback storage is separate from check-in data:
+
+- `feedback_items`
+  - optional `userId` with `onDelete: SetNull`
+  - `feedbackType`: `bug`, `idea`, `question`, `review`, or `other`
+  - `message`
+  - `status`: `unread`, `reviewed`, or `closed`
+
+Announcement storage is also separate from check-in data:
+
+- `announcement_campaigns`
+  - campaign type, title/body, status, consented audience marker, optional Telegram image `file_id`, optional poll token, and lifecycle timestamps
+- `announcement_deliveries`
+  - one row per campaign/user recipient with Telegram id, status, message ids, attempt count, and failure details
+- `announcement_poll_options`
+  - fixed poll options per campaign
+- `announcement_poll_votes`
+  - one vote per `(campaignId, userId)` with a foreign key to the chosen option
+
+Announcements are additive operational data. They do not change check-in/history/stats semantics.
 
 The migration is additive and backfills legacy data:
 
@@ -795,7 +851,7 @@ See the detailed plan in:
 - no advanced reminder UI beyond current settings
 - weekly digest uses the same d7 summary engine and does not yet have separate user-facing controls
 - no AI insights layer
-- admin interface is intentionally basic and read-only
+- admin interface is still Telegram-only and intentionally compact; it now supports feedback review and announcement broadcasting, but not a full web console
 - no production-grade observability stack yet
 
 ## Extension Points
