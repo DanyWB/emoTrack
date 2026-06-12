@@ -320,7 +320,7 @@ Do not open port `3000` publicly unless you intentionally expose it behind trust
 
 ### 11. Optional Redis/jobs setup
 
-Use this only when background reminders and weekly digests should run automatically.
+Use this only when background reminders, missed-yesterday recovery prompts, weekly digests, and queued admin announcements should run automatically.
 
 Install Redis:
 
@@ -348,6 +348,7 @@ journalctl -u emotrack -n 100 --no-pager
 Expected jobs signal:
 
 - startup logs include `event=reminder_jobs_reconciled`, or a clear warning explaining why reconciliation was skipped/failed
+- eligible users with reminders enabled schedule daily, missed-yesterday, and weekly digest repeatable jobs at the saved reminder time
 
 ### 12. Optional webhook mode with Nginx and HTTPS
 
@@ -589,6 +590,7 @@ Run these steps before and during a manual release.
    - create a short draft
    - preview it, including the image preview path if an image is attached
    - with `REDIS_ENABLED=true` and `JOBS_ENABLED=true`, send it only in a controlled staging/manual-test audience and verify the queued confirmation plus delivery counters
+   - if the test database has no consented audience, verify the skipped no-audience report and do not treat it as a delivery failure
    - cancel it instead of sending when a controlled staging/manual-test audience is not available
 
 ## Operational Log Search
@@ -695,6 +697,7 @@ Database rollback:
   - `announcement_poll_options` and `announcement_poll_votes` store in-bot poll options and one vote per user
   - sending uses an atomic campaign claim and delivery `skipDuplicates`
   - when Redis/jobs are enabled, the `announcements` BullMQ queue sends delivery jobs with retry/backoff and finalizes the campaign after pending deliveries finish
+  - a campaign with zero consented recipients is not claimed or marked sent; the admin receives a skipped no-audience report
   - the queue performance migration adds indexes on `users(consentGiven, id)` and `announcement_deliveries(campaignId, status, id)` for paged audience and delivery-job reads
   - if a process stops while a campaign is `sending`, reopen the announcement detail after the recovery window and use `Продолжить отправку`; pending deliveries are requeued
   - existing user/check-in/history/stats rows are not rewritten by this migration

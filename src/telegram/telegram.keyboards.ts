@@ -2,7 +2,11 @@
 import { Markup } from 'telegraf';
 
 import { TELEGRAM_CALLBACKS, TELEGRAM_MAIN_MENU_BUTTONS } from '../common/constants/app.constants';
-import { ANNOUNCEMENT_TYPES, type AnnouncementTypeKey } from '../announcements/announcements.types';
+import {
+  ANNOUNCEMENT_SENDING_RECOVERY_AFTER_MS,
+  ANNOUNCEMENT_TYPES,
+  type AnnouncementTypeKey,
+} from '../announcements/announcements.types';
 import type { CheckinV2ScaleOption, CheckinV2TagDefinition } from '../checkins/checkins-v2.catalog';
 import { FEEDBACK_TYPES, type FeedbackTypeKey } from '../feedback/feedback.types';
 import {
@@ -90,6 +94,18 @@ function getAnnouncementTypeButtonLabel(type: AnnouncementTypeKey): string {
   return definition ? `${definition.icon} ${definition.label}` : type;
 }
 
+function isAnnouncementResumeAvailable(campaign: AdminAnnouncementCampaignData): boolean {
+  if (campaign.status !== 'sending') {
+    return false;
+  }
+
+  if (!campaign.startedAt) {
+    return true;
+  }
+
+  return campaign.startedAt.getTime() <= Date.now() - ANNOUNCEMENT_SENDING_RECOVERY_AFTER_MS;
+}
+
 const TERMS_DOCUMENT_KEYS = Object.keys(TERMS_DOCUMENTS) as TermsDocumentKey[];
 
 export const telegramKeyboards = {
@@ -115,6 +131,12 @@ export const telegramKeyboards = {
         Markup.button.callback(telegramCopy.buttons.menuHelp, TELEGRAM_CALLBACKS.menuHelp),
       ],
       [Markup.button.callback(telegramCopy.buttons.menuTerms, TELEGRAM_CALLBACKS.menuTerms)],
+    ]),
+
+  activeFlowGuard: () =>
+    Markup.inlineKeyboard([
+      [Markup.button.callback(telegramCopy.buttons.flowContinue, TELEGRAM_CALLBACKS.flowContinue)],
+      [Markup.button.callback(telegramCopy.buttons.flowCancelToMenu, TELEGRAM_CALLBACKS.flowCancelToMenu)],
     ]),
 
   adminMenu: () =>
@@ -291,7 +313,7 @@ export const telegramKeyboards = {
       ]);
     }
 
-    if (campaign.status === 'sending') {
+    if (isAnnouncementResumeAvailable(campaign)) {
       rows.push([
         Markup.button.callback(
           telegramCopy.buttons.adminAnnouncementResume,
@@ -438,7 +460,7 @@ export const telegramKeyboards = {
         Markup.button.callback(telegramCopy.buttons.cancel, TELEGRAM_CALLBACKS.actionCancel),
       ]);
     } else if (options.showMenu) {
-      rows.push([Markup.button.callback(telegramCopy.buttons.toMenu, TELEGRAM_CALLBACKS.actionCancel)]);
+      rows.push([Markup.button.callback(telegramCopy.buttons.toMenu, TELEGRAM_CALLBACKS.menuHome)]);
     }
 
     return Markup.inlineKeyboard(rows);
@@ -539,7 +561,7 @@ export const telegramKeyboards = {
 
   checkinConfirmationActions: () =>
     Markup.inlineKeyboard([
-      [Markup.button.callback(telegramCopy.buttons.toMenu, TELEGRAM_CALLBACKS.actionCancel)],
+      [Markup.button.callback(telegramCopy.buttons.toMenu, TELEGRAM_CALLBACKS.menuHome)],
     ]),
 
   supportActions: (supportUrl?: string) => {
@@ -550,7 +572,7 @@ export const telegramKeyboards = {
     }
 
     rows.push([Markup.button.callback(telegramCopy.buttons.menuFeedback, TELEGRAM_CALLBACKS.menuFeedback)]);
-    rows.push([Markup.button.callback(telegramCopy.buttons.toMenu, TELEGRAM_CALLBACKS.actionCancel)]);
+    rows.push([Markup.button.callback(telegramCopy.buttons.toMenu, TELEGRAM_CALLBACKS.menuHome)]);
     return Markup.inlineKeyboard(rows);
   },
 
@@ -575,7 +597,7 @@ export const telegramKeyboards = {
 
   feedbackSaved: () =>
     Markup.inlineKeyboard([
-      [Markup.button.callback(telegramCopy.buttons.toMenu, TELEGRAM_CALLBACKS.actionCancel)],
+      [Markup.button.callback(telegramCopy.buttons.toMenu, TELEGRAM_CALLBACKS.menuHome)],
     ]),
 
   checkinReview: () =>
@@ -626,12 +648,15 @@ export const telegramKeyboards = {
       ]);
     }
 
+    rows.push([Markup.button.callback(telegramCopy.buttons.toMenu, TELEGRAM_CALLBACKS.menuHome)]);
+
     return rows.length > 0 ? Markup.inlineKeyboard(rows) : undefined;
   },
 
   historyDetail: (pageCursorToken: string) =>
     Markup.inlineKeyboard([
       [Markup.button.callback(telegramCopy.buttons.historyBackToList, `${TELEGRAM_CALLBACKS.historyBackPrefix}${pageCursorToken}`)],
+      [Markup.button.callback(telegramCopy.buttons.toMenu, TELEGRAM_CALLBACKS.menuHome)],
     ]),
 
   eventTypePicker: (options: { back?: boolean } = {}) =>
@@ -650,7 +675,7 @@ export const telegramKeyboards = {
       [Markup.button.callback(telegramCopy.buttons.stats7d, `${TELEGRAM_CALLBACKS.statsPeriodPrefix}d7`)],
       [Markup.button.callback(telegramCopy.buttons.stats30d, `${TELEGRAM_CALLBACKS.statsPeriodPrefix}d30`)],
       [Markup.button.callback(telegramCopy.buttons.statsAll, `${TELEGRAM_CALLBACKS.statsPeriodPrefix}all`)],
-      [Markup.button.callback(telegramCopy.buttons.toMenu, TELEGRAM_CALLBACKS.actionCancel)],
+      [Markup.button.callback(telegramCopy.buttons.toMenu, TELEGRAM_CALLBACKS.menuHome)],
     ]),
 
   statsMetricSelector: (metrics: Array<{ key: string; label: string }>) =>
@@ -662,14 +687,14 @@ export const telegramKeyboards = {
         2,
       ),
       [Markup.button.callback(telegramCopy.buttons.back, TELEGRAM_CALLBACKS.actionBack)],
-      [Markup.button.callback(telegramCopy.buttons.toMenu, TELEGRAM_CALLBACKS.actionCancel)],
+      [Markup.button.callback(telegramCopy.buttons.toMenu, TELEGRAM_CALLBACKS.menuHome)],
     ]),
 
   statsSummaryActions: () =>
     Markup.inlineKeyboard([
       [Markup.button.callback(telegramCopy.buttons.statsBackToMetrics, TELEGRAM_CALLBACKS.actionBack)],
       [Markup.button.callback(telegramCopy.buttons.statsChangePeriod, TELEGRAM_CALLBACKS.statsBackToPeriods)],
-      [Markup.button.callback(telegramCopy.buttons.toMenu, TELEGRAM_CALLBACKS.actionCancel)],
+      [Markup.button.callback(telegramCopy.buttons.toMenu, TELEGRAM_CALLBACKS.menuHome)],
     ]),
 
   settingsMenu: (options: {
@@ -685,6 +710,7 @@ export const telegramKeyboards = {
       [Markup.button.callback(telegramCopy.buttons.settingsEditReminderTime, TELEGRAM_CALLBACKS.settingsReminderTimeEdit)],
       [Markup.button.callback(telegramCopy.buttons.settingsSleepMode, TELEGRAM_CALLBACKS.settingsSleepModeSelect)],
       [Markup.button.callback(telegramCopy.buttons.settingsDailyMetrics, TELEGRAM_CALLBACKS.settingsDailyMetricsOpen)],
+      [Markup.button.callback(telegramCopy.buttons.toMenu, TELEGRAM_CALLBACKS.menuHome)],
     ]),
 
   settingsDailyMetrics: (metrics: SettingsMetricOptionData[]) => {

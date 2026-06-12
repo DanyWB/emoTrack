@@ -24,6 +24,7 @@ function createQueue() {
     getRepeatableJobs: jest.fn().mockResolvedValue([
       { id: 'daily-reminder:user-1', key: 'daily-key' },
       { id: 'weekly-summary:repeat:user-1', key: 'weekly-key' },
+      { id: 'missed-yesterday-reminder:user-1', key: 'missed-yesterday-key' },
       { id: 'daily-reminder:other-user', key: 'other-key' },
     ]),
     removeRepeatableByKey: jest.fn().mockResolvedValue(undefined),
@@ -57,6 +58,7 @@ describe('RemindersService', () => {
       expect(queue.add).not.toHaveBeenCalled();
       expect(queue.removeRepeatableByKey).toHaveBeenCalledWith('daily-key');
       expect(queue.removeRepeatableByKey).toHaveBeenCalledWith('weekly-key');
+      expect(queue.removeRepeatableByKey).toHaveBeenCalledWith('missed-yesterday-key');
       expect(queue.removeRepeatableByKey).not.toHaveBeenCalledWith('other-key');
       expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('event=invalid_reminder_time_skipped'));
     } finally {
@@ -107,5 +109,102 @@ describe('RemindersService', () => {
     expect(telegramCopy.reminders.dailyPrompt).toContain('⏰');
     expect(telegramCopy.reminders.dailyPrompt).toContain('👉 /checkin');
     expect(analyticsService.track).toHaveBeenCalledWith('reminder_sent', {}, user.id);
+  });
+
+  it('sends a missed-yesterday reminder when the previous local day has no check-in', async () => {
+    const user = buildUser({
+      id: 'user-1',
+      telegramId: BigInt(1001),
+      remindersEnabled: true,
+      onboardingCompleted: true,
+      reminderTime: '21:30',
+      createdAt: new Date('2026-06-01T10:00:00.000Z'),
+    });
+    const sendMessage = jest.fn().mockResolvedValue(undefined);
+    const usersService = {
+      findById: jest.fn().mockResolvedValue(user),
+    };
+    const checkinsService = {
+      buildRelativeEntryDate: jest.fn().mockReturnValue(new Date('2026-06-06T00:00:00.000Z')),
+      buildEntryDate: jest.fn().mockReturnValue(new Date('2026-06-01T00:00:00.000Z')),
+      countTodayEntry: jest.fn().mockResolvedValue(1),
+      countYesterdayEntry: jest.fn().mockResolvedValue(0),
+    };
+    const analyticsService = {
+      track: jest.fn().mockResolvedValue(undefined),
+    };
+    const service = new RemindersService(
+      createConfigService({
+        'telegram.botToken': 'test-token',
+      }) as never,
+      usersService as never,
+      checkinsService as never,
+      {} as never,
+      analyticsService as never,
+      createQueue() as never,
+    );
+
+    (service as unknown as { telegramApi: { sendMessage: typeof sendMessage } }).telegramApi = {
+      sendMessage,
+    };
+
+    await service.sendMissedYesterdayReminder(user.id);
+
+    expect(checkinsService.countTodayEntry).toHaveBeenCalledWith(user.id, {
+      date: expect.any(Date),
+      timezone: user.timezone,
+    });
+    expect(checkinsService.countYesterdayEntry).toHaveBeenCalledWith(user.id, {
+      date: expect.any(Date),
+      timezone: user.timezone,
+    });
+    expect(sendMessage).toHaveBeenCalledWith(String(user.telegramId), telegramCopy.reminders.missedYesterdayPrompt);
+    expect(telegramCopy.reminders.missedYesterdayPrompt).toContain('👉 /yesterday');
+    expect(analyticsService.track).toHaveBeenCalledWith('missed_yesterday_reminder_sent', {}, user.id);
+  });
+
+  it('does not send a separate missed-yesterday reminder when the daily reminder should cover today', async () => {
+    const user = buildUser({
+      id: 'user-1',
+      telegramId: BigInt(1001),
+      remindersEnabled: true,
+      onboardingCompleted: true,
+      reminderTime: '21:30',
+      createdAt: new Date('2026-06-01T10:00:00.000Z'),
+    });
+    const sendMessage = jest.fn().mockResolvedValue(undefined);
+    const usersService = {
+      findById: jest.fn().mockResolvedValue(user),
+    };
+    const checkinsService = {
+      buildRelativeEntryDate: jest.fn().mockReturnValue(new Date('2026-06-06T00:00:00.000Z')),
+      buildEntryDate: jest.fn().mockReturnValue(new Date('2026-06-01T00:00:00.000Z')),
+      countTodayEntry: jest.fn().mockResolvedValue(0),
+      countYesterdayEntry: jest.fn().mockResolvedValue(0),
+    };
+    const analyticsService = {
+      track: jest.fn().mockResolvedValue(undefined),
+    };
+    const service = new RemindersService(
+      createConfigService({
+        'telegram.botToken': 'test-token',
+      }) as never,
+      usersService as never,
+      checkinsService as never,
+      {} as never,
+      analyticsService as never,
+      createQueue() as never,
+    );
+
+    (service as unknown as { telegramApi: { sendMessage: typeof sendMessage } }).telegramApi = {
+      sendMessage,
+    };
+
+    await service.sendMissedYesterdayReminder(user.id);
+
+    expect(checkinsService.countTodayEntry).toHaveBeenCalled();
+    expect(checkinsService.countYesterdayEntry).not.toHaveBeenCalled();
+    expect(sendMessage).not.toHaveBeenCalled();
+    expect(analyticsService.track).not.toHaveBeenCalled();
   });
 });

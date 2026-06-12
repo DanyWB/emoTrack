@@ -32,13 +32,13 @@ import {
   type AnnouncementFinalizeJobData,
   type AnnouncementSendReport,
   type AnnouncementTypeKey,
+  ANNOUNCEMENT_SENDING_RECOVERY_AFTER_MS,
   ANNOUNCEMENT_JOB_NAMES,
 } from './announcements.types';
 
 const TELEGRAM_PHOTO_CAPTION_LIMIT = 1024;
 const MAX_POLL_OPTIONS = 6;
 const MIN_POLL_OPTIONS = 2;
-const SENDING_RECOVERY_AFTER_MS = 10 * 60 * 1000;
 const DELIVERY_BATCH_SIZE = 25;
 const DELIVERY_BATCH_PAUSE_MS = 1000;
 const AUDIENCE_PAGE_SIZE = 1000;
@@ -230,6 +230,24 @@ export class AnnouncementsService {
   }
 
   async sendCampaign(campaignId: string): Promise<AnnouncementSendReport | null> {
+    const campaign = await this.announcementsRepository.findCampaignWithOptions(campaignId);
+
+    if (!campaign || !this.isCampaignReady(campaign) || !this.canSendCampaign(campaign)) {
+      return null;
+    }
+
+    const audienceCount = await this.announcementsRepository.countConsentedAudience();
+
+    if (audienceCount === 0) {
+      return {
+        campaignId,
+        audienceCount: 0,
+        deliveryCounts: this.emptyDeliveryCounts(),
+        queued: false,
+        skippedReason: 'no_audience',
+      };
+    }
+
     if (this.isBackgroundDeliveryAvailable()) {
       return this.enqueueCampaign(campaignId);
     }
@@ -550,7 +568,7 @@ export class AnnouncementsService {
     }
 
     if (this.isStaleSendingCampaign(campaign)) {
-      const staleBefore = new Date(Date.now() - SENDING_RECOVERY_AFTER_MS);
+      const staleBefore = new Date(Date.now() - ANNOUNCEMENT_SENDING_RECOVERY_AFTER_MS);
       return this.announcementsRepository.claimStaleSendingCampaign(campaign.id, staleBefore);
     }
 
@@ -699,7 +717,16 @@ export class AnnouncementsService {
       return true;
     }
 
-    return campaign.startedAt.getTime() <= Date.now() - SENDING_RECOVERY_AFTER_MS;
+    return campaign.startedAt.getTime() <= Date.now() - ANNOUNCEMENT_SENDING_RECOVERY_AFTER_MS;
+  }
+
+  private emptyDeliveryCounts(): AnnouncementDeliveryCounts {
+    return {
+      pending: 0,
+      sent: 0,
+      failed: 0,
+      blocked: 0,
+    };
   }
 
   private toDeliveryFailure(error: unknown): DeliveryFailure {

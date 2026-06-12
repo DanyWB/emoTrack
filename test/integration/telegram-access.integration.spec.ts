@@ -321,8 +321,13 @@ describe('Telegram access integration', () => {
 
     await (router as any).handleHelpCommand(telegramCtx);
 
-    const [message] = telegramCtx.reply.mock.calls[0] as [string];
+    const [message, extra] = telegramCtx.reply.mock.calls[0] as [
+      string,
+      { reply_markup?: { inline_keyboard?: unknown } },
+    ];
     expect(message).toContain('/terms');
     expect(message).toContain('/checkin');
+    expect(extra.reply_markup?.inline_keyboard).toBeUndefined();
+    expect(await ctx.usersService.findByTelegramId(BigInt(8106))).toBeNull();
   });
 });

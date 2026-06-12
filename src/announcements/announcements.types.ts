@@ -46,11 +46,14 @@ export interface AnnouncementDeliveryCounts {
   blocked: number;
 }
 
+export const ANNOUNCEMENT_SENDING_RECOVERY_AFTER_MS = 10 * 60 * 1000;
+
 export interface AnnouncementSendReport {
   campaignId: string;
   audienceCount: number;
   deliveryCounts: AnnouncementDeliveryCounts;
   queued: boolean;
+  skippedReason?: 'no_audience';
 }
 
 export interface AnnouncementPollVoteResult {

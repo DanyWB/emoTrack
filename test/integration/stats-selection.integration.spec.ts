@@ -281,7 +281,7 @@ describe('Stats metric selection integration', () => {
     expect(buttons.map((button) => button.callback_data)).toEqual([
       TELEGRAM_CALLBACKS.actionBack,
       TELEGRAM_CALLBACKS.statsBackToPeriods,
-      TELEGRAM_CALLBACKS.actionCancel,
+      TELEGRAM_CALLBACKS.menuHome,
     ]);
     expect(session?.payloadJson).toMatchObject({
       statsPeriodType: SummaryPeriodType.d7,

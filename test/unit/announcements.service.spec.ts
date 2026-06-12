@@ -128,6 +128,7 @@ describe('AnnouncementsService', () => {
     const { service, repository, telegramApi } = createService();
 
     repository.findCampaignWithOptions.mockResolvedValue(baseCampaign);
+    repository.countConsentedAudience.mockResolvedValue(1);
     repository.findConsentedAudienceUsers.mockResolvedValue([
       { id: 'user-1', telegramId: 8901n },
     ]);
@@ -169,10 +170,36 @@ describe('AnnouncementsService', () => {
     expect(repository.markCampaignFinished).toHaveBeenCalledWith('announcement-1', AnnouncementStatus.sent);
   });
 
+  it('does not claim or mutate a ready announcement when the consented audience is empty', async () => {
+    const { service, repository, telegramApi } = createService();
+
+    repository.findCampaignWithOptions.mockResolvedValue(baseCampaign);
+    repository.countConsentedAudience.mockResolvedValue(0);
+
+    await expect(service.sendCampaign('announcement-1')).resolves.toMatchObject({
+      audienceCount: 0,
+      queued: false,
+      skippedReason: 'no_audience',
+      deliveryCounts: {
+        pending: 0,
+        sent: 0,
+        failed: 0,
+        blocked: 0,
+      },
+    });
+
+    expect(repository.claimCampaignForSending).not.toHaveBeenCalled();
+    expect(repository.findConsentedAudienceUsers).not.toHaveBeenCalled();
+    expect(repository.createAudienceDeliveries).not.toHaveBeenCalled();
+    expect(repository.markCampaignFinished).not.toHaveBeenCalled();
+    expect(telegramApi.sendMessage).not.toHaveBeenCalled();
+  });
+
   it('does not send if another process already claimed the announcement', async () => {
     const { service, repository, telegramApi } = createService();
 
     repository.findCampaignWithOptions.mockResolvedValue(baseCampaign);
+    repository.countConsentedAudience.mockResolvedValue(1);
     repository.claimCampaignForSending.mockResolvedValue(false);
 
     await expect(service.sendCampaign('announcement-1')).resolves.toBeNull();
@@ -206,6 +233,7 @@ describe('AnnouncementsService', () => {
     const { service, repository } = createService();
 
     repository.findCampaignWithOptions.mockResolvedValue(staleCampaign);
+    repository.countConsentedAudience.mockResolvedValue(1);
     repository.claimStaleSendingCampaign.mockResolvedValue(true);
     repository.findConsentedAudienceUsers.mockResolvedValue([{ id: 'user-1', telegramId: 8901n }]);
     repository.findPendingDeliveries.mockResolvedValue([delivery]);
@@ -253,6 +281,7 @@ describe('AnnouncementsService', () => {
     );
 
     repository.findCampaignWithOptions.mockResolvedValue(baseCampaign);
+    repository.countConsentedAudience.mockResolvedValue(1);
     repository.findConsentedAudienceUsersPage.mockResolvedValueOnce([{ id: 'user-1', telegramId: 8901n }]);
     repository.findPendingDeliveriesPage.mockResolvedValueOnce([delivery]);
     repository.getDeliveryCounts.mockResolvedValue({
@@ -351,6 +380,7 @@ describe('AnnouncementsService', () => {
     );
 
     repository.findCampaignWithOptions.mockResolvedValue(baseCampaign);
+    repository.countConsentedAudience.mockResolvedValue(1001);
     repository.findConsentedAudienceUsersPage
       .mockResolvedValueOnce(usersPageOne)
       .mockResolvedValueOnce(usersPageTwo);
@@ -450,6 +480,7 @@ describe('AnnouncementsService', () => {
     const { service, repository, telegramApi } = createService();
 
     repository.findCampaignWithOptions.mockResolvedValue(campaign);
+    repository.countConsentedAudience.mockResolvedValue(1);
     repository.findConsentedAudienceUsers.mockResolvedValue([{ id: 'user-1', telegramId: 8901n }]);
     repository.findPendingDeliveries.mockResolvedValue([delivery]);
     repository.getDeliveryCounts.mockResolvedValue({

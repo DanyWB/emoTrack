@@ -59,6 +59,7 @@ export class RemindersService {
     if (!isValidTimeFormat(user.reminderTime)) {
       await this.removeExistingDailyReminder(userId);
       await this.removeExistingWeeklyDigest(userId);
+      await this.removeExistingMissedYesterdayReminder(userId);
       this.logger.warn(formatLogEvent('invalid_reminder_time_skipped', {
         userId,
         reminderTime: user.reminderTime,
@@ -68,6 +69,7 @@ export class RemindersService {
 
     await this.removeExistingDailyReminder(userId);
     await this.removeExistingWeeklyDigest(userId);
+    await this.removeExistingMissedYesterdayReminder(userId);
 
     const [hour, minute] = user.reminderTime.split(':').map((value) => Number(value));
     const dailyPattern = `0 ${minute} ${hour} * * *`;
@@ -100,8 +102,23 @@ export class RemindersService {
       },
     );
 
+    await this.remindersQueue.add(
+      'missed-yesterday-reminder',
+      { userId } satisfies ReminderJobData,
+      {
+        jobId: this.missedYesterdayJobId(userId),
+        removeOnComplete: 50,
+        removeOnFail: 50,
+        repeat: {
+          pattern: dailyPattern,
+          tz: user.timezone,
+        },
+      },
+    );
+
     this.logger.log(`Scheduled daily reminder for user ${userId} at ${user.reminderTime} (${user.timezone})`);
     this.logger.log(`Scheduled weekly digest for user ${userId} at ${user.reminderTime} (${user.timezone}) on Sundays`);
+    this.logger.log(`Scheduled missed-yesterday reminder for user ${userId} at ${user.reminderTime} (${user.timezone})`);
   }
 
   async rescheduleDailyReminder(userId: string): Promise<void> {
@@ -112,6 +129,7 @@ export class RemindersService {
 
     await this.removeExistingDailyReminder(userId);
     await this.removeExistingWeeklyDigest(userId);
+    await this.removeExistingMissedYesterdayReminder(userId);
     await this.scheduleDailyReminder(userId);
   }
 
@@ -123,8 +141,10 @@ export class RemindersService {
 
     await this.removeExistingDailyReminder(userId);
     await this.removeExistingWeeklyDigest(userId);
+    await this.removeExistingMissedYesterdayReminder(userId);
     this.logger.log(`Cancelled daily reminder for user ${userId}`);
     this.logger.log(`Cancelled weekly digest for user ${userId}`);
+    this.logger.log(`Cancelled missed-yesterday reminder for user ${userId}`);
   }
 
   async enqueueWeeklySummary(userId: string): Promise<void> {
@@ -167,6 +187,34 @@ export class RemindersService {
       this.logger.log(`Sent daily reminder to user ${userId}`);
     } catch (error) {
       this.logger.warn(formatErrorLogEvent('daily_reminder_send_failed', error, {
+        userId,
+      }));
+    }
+  }
+
+  async sendMissedYesterdayReminder(userId: string): Promise<void> {
+    if (!this.telegramEnabled) {
+      return;
+    }
+
+    const user = await this.usersService.findById(userId);
+
+    if (!user) {
+      return;
+    }
+
+    const shouldSend = await this.shouldSendMissedYesterdayReminder(userId, new Date());
+
+    if (!shouldSend) {
+      return;
+    }
+
+    try {
+      await this.telegramApi.sendMessage(String(user.telegramId), telegramCopy.reminders.missedYesterdayPrompt);
+      await this.analyticsService.track('missed_yesterday_reminder_sent', {}, userId);
+      this.logger.log(`Sent missed-yesterday reminder to user ${userId}`);
+    } catch (error) {
+      this.logger.warn(formatErrorLogEvent('missed_yesterday_reminder_send_failed', error, {
         userId,
       }));
     }
@@ -220,6 +268,43 @@ export class RemindersService {
     return todayEntriesCount === 0;
   }
 
+  async shouldSendMissedYesterdayReminder(userId: string, date: Date): Promise<boolean> {
+    const user = await this.usersService.findById(userId);
+
+    if (!user || !user.onboardingCompleted || !user.remindersEnabled || !user.reminderTime) {
+      return false;
+    }
+
+    const yesterdayEntryDate = this.checkinsService.buildRelativeEntryDate(-1, {
+      date,
+      timezone: user.timezone,
+    });
+    const userCreatedEntryDate = this.checkinsService.buildEntryDate({
+      date: user.createdAt,
+      timezone: user.timezone,
+    });
+
+    if (yesterdayEntryDate.getTime() < userCreatedEntryDate.getTime()) {
+      return false;
+    }
+
+    const todayEntriesCount = await this.checkinsService.countTodayEntry(userId, {
+      date,
+      timezone: user.timezone,
+    });
+
+    if (todayEntriesCount === 0) {
+      return false;
+    }
+
+    const yesterdayEntriesCount = await this.checkinsService.countYesterdayEntry(userId, {
+      date,
+      timezone: user.timezone,
+    });
+
+    return yesterdayEntriesCount === 0;
+  }
+
   async shouldSendWeeklyDigest(userId: string): Promise<boolean> {
     try {
       const payload = await this.buildWeeklyDigest(userId);
@@ -238,6 +323,10 @@ export class RemindersService {
 
   private async removeExistingWeeklyDigest(userId: string): Promise<void> {
     await this.removeRepeatableJob(userId, this.weeklyJobId(userId));
+  }
+
+  private async removeExistingMissedYesterdayReminder(userId: string): Promise<void> {
+    await this.removeRepeatableJob(userId, this.missedYesterdayJobId(userId));
   }
 
   private async removeRepeatableJob(userId: string, targetJobId: string): Promise<void> {
@@ -259,6 +348,10 @@ export class RemindersService {
 
   private weeklyJobId(userId: string): string {
     return `weekly-summary:repeat:${userId}`;
+  }
+
+  private missedYesterdayJobId(userId: string): string {
+    return `missed-yesterday-reminder:${userId}`;
   }
 
   private async buildWeeklyDigest(userId: string) {

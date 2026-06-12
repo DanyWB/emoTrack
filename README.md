@@ -227,7 +227,7 @@ Rules:
 - local `.env` is loaded before conditional BullMQ module wiring, so `JOBS_ENABLED=true` works from the normal local `.env` workflow as well as from externally injected process env
 - reminder settings still persist even if background jobs are disabled
 - reminder scheduling methods degrade to no-op when jobs are disabled
-- when jobs are enabled, startup reconciles repeatable reminder and weekly digest jobs for users with completed onboarding, enabled reminders, and a saved reminder time
+- when jobs are enabled, startup reconciles repeatable daily reminder, missed-yesterday reminder, and weekly digest jobs for users with completed onboarding, enabled reminders, and a saved reminder time
 
 If you want local reminder jobs, set:
 
@@ -245,6 +245,7 @@ Reminder UX note:
 - weekly digest delivery stays disabled when jobs are unavailable locally; the app still boots and settings still persist
 - weekly digest v1 reuses the accepted `d7` summary pipeline with a weekly wrapper instead of a separate stats engine
 - weekly digest is sent only when the last 7 normalized user-local days include at least 3 entries
+- the missed-yesterday reminder uses the same user reminder time and nudges the user to `/yesterday` only when today already has a check-in and the previous user-local day does not
 - when jobs are enabled, the weekly digest is scheduled for Sunday at the user's reminder time
 
 ## Environment Variables
@@ -466,6 +467,7 @@ The hidden `/admin` panel is intended for early operational monitoring without c
 - admins can open user feedback from `/admin`, inspect the message, and mark unread feedback as reviewed
 - admins can create announcements from `/admin`, choose a type, write a title/body, optionally attach a Telegram image, preview the exact user-facing text plus the image, and send immediately
 - announcements are delivered only to users with `consentGiven=true`; onboarding completion is not required for receiving them
+- if the consented audience is empty, the send action returns a clear skipped report and does not claim, mutate, or finish the campaign
 - announcement sending is claimed atomically before delivery rows are created, so repeated send callbacks do not duplicate a broadcast
 - when `REDIS_ENABLED=true` and `JOBS_ENABLED=true`, announcement deliveries are processed by the `announcements` BullMQ queue with retry/backoff and a finalize job; local no-Redis mode keeps the synchronous fallback
 - stale `sending` campaigns can be continued from the announcement detail after the recovery window; pending delivery rows are requeued without duplicating already processed deliveries
@@ -491,6 +493,7 @@ Current check-in behavior is intentionally conservative:
 
 - `/checkin` resumes an active check-in instead of silently resetting progress
 - `/yesterday` starts the same Check-in v2 flow for the previous user-local day, so a missed daily entry can be restored without creating a second product mode
+- trying to open secondary sections or old inline navigation while a check-in/event flow is active shows a guard with `Продолжить текущее` and `Отменить и в меню`
 - score prompts use semantic 1..5 labels, not visible numeric 1..10 scales
 - the fixed core metrics are `Настроение`, `Энергия`, and `Спокойствие`
 - each metric immediately opens its own predefined tag screen after the score; up to 3 tags can be selected per metric
@@ -722,6 +725,14 @@ Current weekly digest behavior stays deliberately small and explicit:
   - the last 7 normalized user-local days include at least 3 entries
 - when the threshold is not met, the weekly digest is skipped instead of sending a weak summary
 - when jobs are disabled, weekly digest scheduling and enqueueing degrade to safe no-op behavior
+
+## Missed-Yesterday Reminder Notes
+
+- a second repeatable reminder job is scheduled at the user's normal reminder time when Redis/jobs are enabled
+- it checks today and the previous normalized user-local day, then sends a short `/yesterday` recovery prompt only when today is already saved but yesterday is missing
+- if today is also missing, the normal daily reminder is enough because it already mentions `/yesterday`; this avoids two reminder messages at the same time
+- users created today are not reminded about days before their account existed
+- disabling reminders or saving an invalid reminder time removes stale daily, missed-yesterday, and weekly repeatable jobs
 
 ## Logging and Error Handling
 

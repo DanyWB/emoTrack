@@ -116,6 +116,8 @@ Use this checklist before a local handoff or release candidate review.
 
 - `Отмена` clears active onboarding flow safely
 - `Отмена` clears active check-in flow safely and returns to navigation instead of only saying “cancelled”
+- trying to open `/history`, `/stats`, `/settings`, `/feedback`, `/support`, `/help`, `/terms`, or stale inline navigation while a check-in/event flow is active shows a guard instead of silently discarding progress
+- the active-flow guard offers `Продолжить текущее` and `Отменить и в меню`; continuing restores the current prompt, while cancelling clears the flow and opens navigation
 - `Назад` works on multi-step check-in
 - running `/checkin` during an active check-in resumes the current step instead of resetting progress
 - check-in score prompts have bold step titles that name the active metric, such as `1/5 · Настроение`
@@ -274,6 +276,8 @@ Use this checklist before a local handoff or release candidate review.
 - reminder time can be updated
 - invalid reminder time is rejected
 - delivered daily reminder text is readable and includes the polished emoji/check-in call to action
+- delivered missed-yesterday reminder text is readable and points to `/yesterday` only when today has a check-in and the previous local day does not
+- if both today and yesterday are missing, only the normal daily reminder should be sent at that reminder time
 - reminder-time editing uses `Назад`, not generic `Отмена`
 - after a valid reminder time update, the refreshed settings screen is shown again
 - reminder messages distinguish between “saved” and “background delivery unavailable in this environment”
@@ -317,8 +321,10 @@ Use this checklist before a local handoff or release candidate review.
 - poll option parsing keeps legitimate numeric prefixes such as `24/7 support` and strips only real list markers such as `1.`, `1)`, `-`, `*`, or `•`
 - announcement delivery targets only users who accepted the agreement, including users who have not completed onboarding yet
 - with `JOBS_ENABLED=true`, sending an announcement returns a queued confirmation while deliveries continue through the `announcements` BullMQ queue
+- if no users have accepted the agreement, sending an announcement returns a clear skipped report and does not mark the campaign as sent
 - announcement queue migrations include indexes for paged audience and delivery-job reads
 - repeated send callbacks do not create duplicate deliveries or send duplicate Telegram messages for the same announcement
+- a fresh `sending` announcement does not show `Продолжить отправку` before the recovery window
 - a stale announcement stuck in `sending` can be reopened from `/admin -> Оповещения -> Последние оповещения` and continued with `Продолжить отправку`
 - user can vote in an announcement poll through inline buttons inside the bot
 - after a successful poll vote, the poll message is removed where Telegram allows deletion
@@ -352,12 +358,12 @@ Run this section only when Redis is available and enabled.
 - app boots with `REDIS_ENABLED=true`
 - app boots with `JOBS_ENABLED=true`
 - reminder scheduling does not crash startup
-- startup reconciles repeatable daily reminder and weekly digest jobs for users with completed onboarding, enabled reminders, and a saved reminder time
+- startup reconciles repeatable daily reminder, missed-yesterday reminder, and weekly digest jobs for users with completed onboarding, enabled reminders, and a saved reminder time
 - admin announcement sending registers the `announcements` queue and processes pending delivery jobs without blocking the admin callback until the whole audience is delivered
 - transient Telegram delivery failures are retried by BullMQ; blocked users are marked as `blocked` without wasting retries
 - announcement finalize jobs close the campaign only after pending delivery rows are no longer pending
 - per-user reconciliation failures log `event=reminder_job_reconcile_failed` and do not stop the remaining eligible users from being attempted
-- invalid persisted reminder times remove stale repeatable reminder and weekly digest jobs before the user is skipped
+- invalid persisted reminder times remove stale repeatable daily reminder, missed-yesterday reminder, and weekly digest jobs before the user is skipped
 - disabling reminders cancels scheduling path cleanly
 - `GET /health/ready` returns `200` and includes Redis `up`
 

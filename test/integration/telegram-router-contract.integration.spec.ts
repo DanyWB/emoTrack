@@ -803,6 +803,46 @@ describe('Telegram router contract integration', () => {
     expect(telegramCtx.reply).not.toHaveBeenCalled();
   });
 
+  it('guards menu navigation while a check-in flow is active', async () => {
+    const user = await createReadyUser('user-router-contract-active-guard', 8917);
+    await ctx.fsmService.setState(user.id, FSM_STATES.checkin_metric_score, {
+      metricKeys: ['mood'],
+      activeMetricKey: 'mood',
+      metricScores: {},
+      metricTags: {},
+    });
+    const router = createRouter();
+    const telegramCtx = {
+      ...buildBaseContext(8917),
+      callbackQuery: {
+        data: TELEGRAM_CALLBACKS.menuHistory,
+      },
+      answerCbQuery: jest.fn().mockResolvedValue(undefined),
+      editMessageText: jest.fn().mockResolvedValue(undefined),
+      reply: jest.fn().mockResolvedValue(undefined),
+    };
+
+    await (router as any).handleCallbackQuery(telegramCtx);
+
+    expect(telegramCtx.editMessageText).toHaveBeenCalledWith(
+      telegramCopy.common.activeFlowGuard,
+      expect.objectContaining({ parse_mode: 'HTML' }),
+    );
+
+    const [, extra] = telegramCtx.editMessageText.mock.calls[0] as [
+      string,
+      { reply_markup?: { inline_keyboard?: Array<Array<{ callback_data: string }>> } },
+    ];
+    const callbacks = extra.reply_markup?.inline_keyboard?.flat().map((button) => button.callback_data) ?? [];
+
+    expect(callbacks).toEqual([
+      TELEGRAM_CALLBACKS.flowContinue,
+      TELEGRAM_CALLBACKS.flowCancelToMenu,
+    ]);
+    expect(await ctx.fsmService.getState(user.id)).toBe(FSM_STATES.checkin_metric_score);
+    expect(telegramCtx.reply).not.toHaveBeenCalled();
+  });
+
   it('deletes the current check-in callback screen before the final confirmation', async () => {
     const user = await createReadyUser('user-router-contract-checkin-delete', 8915);
     await ctx.fsmService.setState(user.id, FSM_STATES.checkin_note_prompt, {
@@ -837,7 +877,7 @@ describe('Telegram router contract integration', () => {
     expect(message).toContain('Запись за сегодня сохранена');
     expect(buttons).toEqual([
       expect.objectContaining({
-        callback_data: TELEGRAM_CALLBACKS.actionCancel,
+        callback_data: TELEGRAM_CALLBACKS.menuHome,
         text: telegramCopy.buttons.toMenu,
       }),
     ]);

@@ -26,6 +26,16 @@ export class RemindersProcessor extends WorkerHost {
       return;
     }
 
+    if (job.name === 'missed-yesterday-reminder') {
+      const userId = (job.data as { userId?: string }).userId;
+
+      if (userId) {
+        await this.remindersService.sendMissedYesterdayReminder(userId);
+      }
+
+      return;
+    }
+
     if (job.name === 'weekly-summary') {
       const userId = (job.data as { userId?: string }).userId;
 

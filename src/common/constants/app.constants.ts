@@ -31,6 +31,10 @@ export const TELEGRAM_CALLBACKS = {
   menuTerms: 'menu:terms',
   menuSupport: 'menu:support',
   menuFeedback: 'menu:feedback',
+  menuHome: 'menu:home',
+
+  flowContinue: 'flow:continue',
+  flowCancelToMenu: 'flow:cancel-menu',
 
   termsDocuments: 'terms:documents',
   termsDocumentPrefix: 'terms:doc:',

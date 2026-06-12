@@ -4,6 +4,7 @@ import type { FeedbackStatus, FeedbackType } from '@prisma/client';
 import type { AnnouncementStatus, AnnouncementType } from '@prisma/client';
 
 import {
+  ANNOUNCEMENT_SENDING_RECOVERY_AFTER_MS,
   ANNOUNCEMENT_STATUS_LABELS,
   ANNOUNCEMENT_TYPE_BY_KEY,
   type AnnouncementDeliveryCounts,
@@ -231,6 +232,8 @@ export const telegramCopy = {
     addEvent: 'Добавить событие',
     reviewContinue: 'Продолжить',
     reviewEdit: 'Изменить ответы',
+    flowContinue: 'Продолжить текущее',
+    flowCancelToMenu: 'Отменить и в меню',
     addMetricTagsSkip: '🚫 Без тегов',
     historyMore: 'Еще',
     stats7d: '7 дней',
@@ -301,6 +304,11 @@ export const telegramCopy = {
       '<b>🧭 Действие остановлено</b>\n━━━━━━━━━━━━\nВернул тебя в меню. Можно выбрать следующий раздел ниже.',
     backUnavailable: 'Назад на этом шаге недоступно.',
     actionNotAllowed: 'Это действие сейчас недоступно. Продолжим текущий шаг.',
+    activeFlowGuard: [
+      '<b>Есть незавершенное действие</b>',
+      '━━━━━━━━━━━━',
+      'Сейчас открыт check-in или событие. Чтобы не потерять данные, сначала продолжи текущий шаг или отмени его.',
+    ].join('\n'),
     updated: 'Сохранено.',
     unexpectedError: 'Что-то пошло не так. Попробуй еще раз.',
   },
@@ -573,6 +581,15 @@ export const telegramCopy = {
       '',
       '👉 /checkin',
     ].join('\n'),
+    missedYesterdayPrompt: [
+      '↩️ Можно восстановить вчерашний день',
+      '',
+      'Вчерашний check-in не найден. Если просто не успел или не было сил, запись можно аккуратно добавить сейчас.',
+      '',
+      'Это займет около минуты и сохранится именно за вчера.',
+      '',
+      '👉 /yesterday',
+    ].join('\n'),
     weeklyDigestTitle: 'Еженедельная сводка',
     weeklyDigestLead: 'Краткий итог за последние 7 дней.',
   },
@@ -640,7 +657,7 @@ export const telegramCopy = {
   },
   validation: {
     invalidTime: 'Некорректное время. Используй формат HH:mm, например 09:15.',
-    invalidScore: 'Нужно целое число от 0 до 10.',
+    invalidScore: 'Выбери оценку кнопкой или отправь целое число от 1 до 5.',
     invalidSleepHours: 'Нужно число от 0 до 24. Можно с дробной частью, например 7.5.',
     invalidNoteLength: 'Заметка слишком длинная или пустая. Отправь более короткий текст.',
     invalidTagSelection: 'Не удалось сохранить теги. Выбери теги из списка и попробуй снова.',
@@ -839,6 +856,7 @@ export interface AdminAnnouncementCampaignData {
   imageTelegramFileId?: string | null;
   pollToken?: string | null;
   createdAt: Date;
+  startedAt?: Date | null;
   finishedAt?: Date | null;
   pollOptions: Array<{
     id: string;
@@ -1079,6 +1097,13 @@ export function formatAdminAnnouncementDetail(data: AdminAnnouncementDetailData)
     }
   }
 
+  if (campaign.status === 'sending' && !isAnnouncementResumeAvailable(campaign)) {
+    lines.push(
+      '',
+      '<i>Если отправка зависла, продолжить ее можно через 10 минут после старта. До этого бот защищает кампанию от дублей.</i>',
+    );
+  }
+
   lines.push('', '<b>Сообщение</b>', formatAnnouncementUserMessage(campaign));
   return lines.join('\n');
 }
@@ -1103,7 +1128,18 @@ export function formatAdminAnnouncementSendReport(data: {
   audienceCount: number;
   deliveryCounts: AnnouncementDeliveryCounts;
   queued?: boolean;
+  skippedReason?: 'no_audience';
 }): string {
+  if (data.skippedReason === 'no_audience') {
+    return [
+      '<b>📣 Оповещение не отправлено</b>',
+      '━━━━━━━━━━━━',
+      'Нет пользователей, которые приняли документы сервиса.',
+      '',
+      'Кампания осталась готовой к отправке. Когда появятся получатели, ее можно отправить из последних оповещений.',
+    ].join('\n');
+  }
+
   if (data.queued) {
     return [
       '<b>📣 Оповещение поставлено в очередь</b>',
@@ -1123,6 +1159,18 @@ export function formatAdminAnnouncementSendReport(data: {
     `• Ошибки: <b>${data.deliveryCounts.failed}</b>`,
     `• Бот заблокирован: <b>${data.deliveryCounts.blocked}</b>`,
   ].join('\n');
+}
+
+function isAnnouncementResumeAvailable(campaign: Pick<AdminAnnouncementCampaignData, 'status' | 'startedAt'>): boolean {
+  if (campaign.status !== 'sending') {
+    return false;
+  }
+
+  if (!campaign.startedAt) {
+    return true;
+  }
+
+  return campaign.startedAt.getTime() <= Date.now() - ANNOUNCEMENT_SENDING_RECOVERY_AFTER_MS;
 }
 
 export function formatAdminUserButtonLabel(item: AdminActiveUserItemData): string {
